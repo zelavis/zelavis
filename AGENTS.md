@@ -2023,7 +2023,8 @@ starts directly from alpha.39, the last pre-survival Agent, until that conversio
 is retired. Both run with 2 CPUs and 4 GiB rather than the Mac's full resources.
 `pnpm release:qualify:history` qualifies a
 server with a history: apps made by old releases (`distribution/history.json`: a
-hand-written WordPress from alpha.25, a contract-1 DokuWiki from alpha.29), opened so
+hand-written WordPress from alpha.25, a contract-1 DokuWiki from alpha.29, a native App from alpha.42,
+the last release writing data layout 2), opened so
 their integration hosts start, carried by live updates (never the installer) through the
 previous release onto the candidate, a recipe left only listed, then every recipe
 upgrade under traffic with zero failed requests, and exactly one of each process after a

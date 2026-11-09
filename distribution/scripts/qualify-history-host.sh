@@ -55,13 +55,16 @@ hop() {
   printf 'PASS: live update to %s; every site still serves.\n' "$1"
 }
 FIRST=yes
+LAST_VIA=$(printf '%s\n' $VIA | tail -n 1)
 for VERSION in $VIA; do
   hop "$VERSION"
   if [ "$FIRST" = yes ]; then check create-dokuwiki; printf 'PASS: %s made a DokuWiki site in its layout, and opened it.\n' "$VERSION"; FIRST=no; fi
+  # The native App is made by the last release on the way, the last one that writes layout 2 (distribution/history.json), so
+  # its upgrade onto the candidate migrates its data whichever release made the layout change.
+  if [ "$VERSION" = "$LAST_VIA" ]; then check create-native; fi
 done
 [ "$ZELAVIS_HISTORY_PREVIOUS" = "$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /opt/zelavis/installation.json)" ] || hop "$ZELAVIS_HISTORY_PREVIOUS"
 check open
-check create-native
 # The candidate, through the installed release's own updater, as the update gate does.
 env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_HISTORY_TO="$TO" "$NODE" /workspace/distribution/scripts/qualify-history.mjs candidate
 NODE=/opt/zelavis/current/runtime/node/bin/node

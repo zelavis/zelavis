@@ -149,14 +149,17 @@ if (phase === 'create-wordpress') {
   console.log('PASS: historical Agent conversion is explicit and desired Projects recovered.');
 
 } else if (phase === 'held') {
-  // The Platform moved to an engine that writes another data layout. A managed app's bound App must not follow it: its data stays
-  // in the layout it was written in, on the engine that wrote it, and the Project says it can be upgraded.
+  // The Platform moved to an engine that writes another data layout, at the candidate or at any release before it. A managed
+  // app's bound App does not follow it: its data stays in the layout it was written in, on the engine that wrote it (the last
+  // layout-2 engine the host ran, which need not be the previous release), and the Project says it can be upgraded.
   const { client } = await sdk();
+  const releaseFormat = async (version) => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
   for (const site of sites(await readState())) {
     const project = await client.projects.get(site.id);
     assert.deepEqual(project.dataLayout, { state: 'upgradeRequired', from: 2, to: 4 }, `${site.id} offers the layout migration`);
     const held = await bound(site.id);
-    assert.equal(held.engine, process.env.ZELAVIS_HISTORY_PREVIOUS, `${site.id}: its host still runs the engine that wrote its data`);
+    assert.notEqual(held.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host does not follow the Platform across the layout change`);
+    assert.equal(await releaseFormat(held.engine), 2, `${site.id}: its host still runs an engine that writes the layout its data is in (${held.engine})`);
     assert.equal(held.layout, undefined, `${site.id}: nothing has been migrated`);
     console.log(`PASS: ${site.id} stays on ${held.engine} with its format-2 data; the Project offers the migration.`);
   }
@@ -176,7 +179,7 @@ if (phase === 'create-wordpress') {
     console.log(`PASS: ${site.id} runs on ${after.engine} with migrated data; the format-2 data is kept in ${kept[0]}.`);
   }
 } else if (phase === 'create-native') {
-  // A native Zelavis App made by the previous release, with documents and a schema in its own database (format 2).
+  // A native Zelavis App made by the last release on the way (the last that writes layout 2), with documents in its own database.
   const { client } = await sdk();
   await client.projects.create({ id: 'nexus', name: 'Nexus' });
   await running(client, 'nexus');
