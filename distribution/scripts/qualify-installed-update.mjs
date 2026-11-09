@@ -180,9 +180,13 @@ if (agentBefore?.survivable) assert.equal(catalogueAfterConversion, catalogueDes
 else {
   // A deliberate restart prepares the same frozen recipe again with the
   // restored Project's current timestamp. Every other descriptor field stays.
-  const { updatedAt: beforeTimestamp, ...beforeDescriptor } = JSON.parse(catalogueDescriptor);
-  const { updatedAt: afterTimestamp, ...afterDescriptor } = JSON.parse(catalogueAfterConversion);
+  // `recipeStatus` is derived from the Marketplace listing the Platform now holds, not part of the lock: the candidate lists a newer
+  // recipe, so the Project reads as upgradeable, and the Platform never upgrades a Project on its own (the lock below is unchanged).
+  const { updatedAt: beforeTimestamp, recipeStatus: beforeStatus, ...beforeDescriptor } = JSON.parse(catalogueDescriptor);
+  const { updatedAt: afterTimestamp, recipeStatus: afterStatus, ...afterDescriptor } = JSON.parse(catalogueAfterConversion);
   assert.deepEqual(afterDescriptor, beforeDescriptor, 'Conversion must preserve the frozen recipe and runtime configuration');
+  assert.equal(beforeStatus.state, 'current');
+  assert.equal(afterStatus.state, 'upgradeAvailable', 'The candidate lists a newer recipe, which the Project is offered but not moved to');
   assert.ok(Date.parse(afterTimestamp) > Date.parse(beforeTimestamp), 'Conversion records its deliberate restart');
 }
 // The published previous Agent cannot preserve processes on its first
