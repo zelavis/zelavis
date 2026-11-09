@@ -94,8 +94,8 @@ installation inventory and update watcher.
 
 Installations without this host/protocol need one full local installer run with
 a restart. Unsupported live handovers are refused; no compatibility restart
-fallback is retained. Public older-version controls and multi-host handover remain
-planned. See [the update architecture](../website/src/content/docs/architecture/updates.md).
+fallback is retained. Multi-host handover remains planned. See
+[the update architecture](../website/src/content/docs/architecture/updates.md).
 
 ## Releasing
 
@@ -113,6 +113,25 @@ The website (`website/`) is deployed separately to Cloudflare Pages and serves
 `/install.sh`, the Install page and `/allowlist.json`. Publish a refreshed allow-list
 with `pnpm allowlist update` (before qualifying and publishing) and `pnpm allowlist publish`
 (after publishing), then deploy the website.
+
+### Release gates in disposable guests
+
+The update, conversion, history, backups, failover and shards gates run in disposable Docker guests (Debian/systemd for
+the installed ones) limited to 2 CPUs and 4 GiB. Run one gate at a time, never beside another gate or a build.
+`ZELAVIS_HARNESS_KEEP=1` keeps a failed guest for inspection.
+
+- **The MariaDB dump client on ARM.** On a non-x86_64 guest, the update gate installs `mariadb-client` from Debian before
+  the Platform update (`qualify-installed-update.mjs`). The earlier release's package set lacks `mariadb-dump`, converting an
+  earlier Agent restarts the WordPress processes, and the candidate recipe will not start them without it. An operator
+  updating such a host does the same (`apt-get install mariadb-client`). x86_64 recipes bring their own MariaDB.
+- **GitHub downloads.** Traefik (fetched by the installer, `scripts/runtime-assets.mjs`) and Caddy (fetched by the
+  Platform service as a recipe runtime) come from GitHub release URLs and are checked against their pinned digests.
+  GitHub sometimes answers 504. Neither the harness nor the product retries them: a failed download fails the gate.
+  Read the log before rerunning. A failure whose cause is an HTTP 5xx or a timeout from `github.com` or
+  `objects.githubusercontent.com` for one of those archives is a network failure. Rerun the gate; the failed run does
+  not count, and neither does a rerun that passed only some phases. Anything else is a real failure. Do not pass a gate
+  through a download shim or cache: one in the harness's own processes does not reach the systemd services that also
+  download, and a mirror would stop the gate proving acquisition from the real origin.
 
 ## Build commands
 

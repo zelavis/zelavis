@@ -149,6 +149,12 @@ The [distribution guide](../../../distribution/README.md) defines its scope,
 focused phases and proof output. The unpublished-candidate release gates below
 remain part of `release:check`.
 
+Run the Docker gates one at a time, never beside another gate or a build. Two harness facts
+are in `distribution/README.md` ("Release gates in disposable guests"): the update gate installs
+`mariadb-client` from Debian in a non-x86_64 guest before the Platform update, and a GitHub 504
+on the Traefik or Caddy download fails the gate with no retry. Read the log: such a failure is a
+network failure to rerun, and only a complete pass counts.
+
 `pnpm release:check` includes `release:qualify:update` against the actual previous
 npm release in disposable Linux/systemd. Docker is required for this release gate,
 not for ordinary workspace verification. Before publication, the disposable
