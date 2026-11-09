@@ -140,6 +140,18 @@ async function run(command, args) {
   try { const result = await execute(command, args, { maxBuffer: 16 * 1024 * 1024, timeout: 300_000 }); return { code: 0, output: result.stdout + result.stderr }; }
   catch (error) { return { code: typeof error.code === 'number' ? error.code : 1, output: String(error.stdout ?? '') + String(error.stderr ?? '') + error.message }; }
 }
+// An older Debian ARM install may have the database server without the dump
+// client the candidate recipe needs. Prepare the candidate's fixed package set before the update: a Platform update that converts an
+// earlier Agent restarts the WordPress app processes, and the candidate recipe refuses to start them without it.
+if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() => true, () => false))) {
+  let record = await client.hostOperations.submit({ operation: 'zelavis.packages-install', version: 'v1', arguments: { set: 'mariadb-server' } });
+  for (let attempt = 0; attempt < 300 && ['queued', 'running'].includes(record.agent?.status); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    record = await client.hostOperations.get(record.operationId);
+  }
+  assert.equal(record.agent?.status, 'succeeded', 'Install the candidate recipe’s MariaDB package set');
+  await access('/usr/bin/mariadb-dump');
+}
 await underTraffic(async () => {
   if (mode === 'npm') {
     const checked = await client.updates.check();
@@ -273,17 +285,6 @@ for (const capability of ['database', 'identity', 'storage', 'workloads']) {
 }
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
-// An older Debian ARM install may have the database server without the dump
-// client the candidate recipe needs. Prepare the candidate's fixed package set.
-if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() => true, () => false))) {
-  let record = await client.hostOperations.submit({ operation: 'zelavis.packages-install', version: 'v1', arguments: { set: 'mariadb-server' } });
-  for (let attempt = 0; attempt < 300 && ['queued', 'running'].includes(record.agent?.status); attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    record = await client.hostOperations.get(record.operationId);
-  }
-  assert.equal(record.agent?.status, 'succeeded', 'Install the candidate recipe’s MariaDB package set');
-  await access('/usr/bin/mariadb-dump');
-}
 const integrationBefore = await identities();
 const appIdentitiesBefore = identities(value => !isBoundHost(value));
 const hostIdentitiesBefore = await identities(isBoundHost);
