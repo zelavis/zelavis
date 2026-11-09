@@ -140,16 +140,12 @@ async function run(command, args) {
   try { const result = await execute(command, args, { maxBuffer: 16 * 1024 * 1024, timeout: 300_000 }); return { code: 0, output: result.stdout + result.stderr }; }
   catch (error) { return { code: typeof error.code === 'number' ? error.code : 1, output: String(error.stdout ?? '') + String(error.stderr ?? '') + error.message }; }
 }
-// An older Debian ARM install may have the database server without the dump
-// client the candidate recipe needs. Prepare the candidate's fixed package set before the update: a Platform update that converts an
-// earlier Agent restarts the WordPress app processes, and the candidate recipe refuses to start them without it.
+// An older Debian ARM install may have the database server without the dump client the candidate recipe needs (x64 recipes bring
+// their own MariaDB). A Platform update that converts an earlier Agent restarts the WordPress app processes, and the candidate recipe
+// refuses to start them without it. The earlier release's own package set does not include the client, so this disposable guest gets
+// it from Debian directly, before the update, the way an operator would before updating such a host.
 if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() => true, () => false))) {
-  let record = await client.hostOperations.submit({ operation: 'zelavis.packages-install', version: 'v1', arguments: { set: 'mariadb-server' } });
-  for (let attempt = 0; attempt < 300 && ['queued', 'running'].includes(record.agent?.status); attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    record = await client.hostOperations.get(record.operationId);
-  }
-  assert.equal(record.agent?.status, 'succeeded', 'Install the candidate recipe’s MariaDB package set');
+  await promisify(execFile)('apt-get', ['install', '-y', '--no-install-recommends', 'mariadb-client'], { env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' }, maxBuffer: 16 * 1024 * 1024, timeout: 300_000 });
   await access('/usr/bin/mariadb-dump');
 }
 await underTraffic(async () => {
