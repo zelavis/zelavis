@@ -315,6 +315,21 @@ contained dependency-link graph. Tags, ranges, redirected release directories,
 unqualified protocols and altered artifacts are refused. This is integrity
 within the existing HTTPS distribution trust model, not a release signature.
 
+What is checked, and when:
+
+- Before an engine runs, its whole file inventory and dependency links are compared with its manifest, and each
+  file's SHA-256 with the manifest's.
+- A Platform process reads each file's bytes once. Afterwards it re-reads a file only when the file's status has changed
+  since it was hashed: device, inode, size, modification and change times, mode, owner or link count. Any write,
+  rename, `chmod` or replacement changes at least one of these, and a program cannot set the change time back. A
+  restarted Platform hashes every file again.
+- One operation that names the same release twice (a start, or a data migration and the start after it) verifies it
+  once. A data migration verifies both engines before requests are held. That result is used only by the same
+  Project's next start, and only within five minutes.
+- Not caught until the Platform restarts: a change below the filesystem that leaves the file's status alone, such as
+  a raw write to the block device or media corruption. On system installations the releases are root-owned and the
+  Platform runs unprivileged, so it cannot change them itself.
+
 Each host holds a kernel journal lock and each writable engine holds an exclusive
 kernel ownership lock. Journals and inventory writes flush files and directories.
 Recovery proves previous engines are fenced before granting a new generation;

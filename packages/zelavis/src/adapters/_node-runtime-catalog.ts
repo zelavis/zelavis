@@ -27,7 +27,7 @@ export type VerifiedRuntimeArtifacts = Map<string, Effect.Success<ReturnType<typ
 /**
  * Pass `remembered` for one operation (a start, a migration) that names the same immutable release more than once: a
  * release whose every byte was just verified is not hashed again by that operation. Never keep one beyond the
- * operation; the next operation, and every execution it starts, verifies afresh.
+ * operation; the next operation verifies the release again (see `verifyNodeRuntimeArtifact` for what that re-reads).
  */
 export function createNodeRuntimeCatalog(options: { readonly directory: string; readonly rootOwned: boolean }, remembered?: VerifiedRuntimeArtifacts) {
   const directory = resolve(options.directory);
@@ -59,8 +59,10 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     });
   });
   const catalog = {
-    /** Advertised selections; execution always re-verifies every byte and link.
-     * Invalid releases remain visible so operator repair has an explicit reason. */
+    /** Advertised selections; nothing here is verified. `select` and `resolve` verify the release before it is used:
+     * its whole inventory and links, and each file's digest, re-reading only files whose status changed since this
+     * process hashed them (see `verifyNodeRuntimeArtifact`). Invalid releases remain visible so operator repair has an
+     * explicit reason. */
     list: Effect.fn("RuntimeCatalog.list")(function* () {
       const directories = yield* integration(() => readdir(directory, { withFileTypes: true }));
       if (directories.length > 4096) return yield* new IntegrationFailure(new Error("Runtime catalog exceeds its entry bound."));

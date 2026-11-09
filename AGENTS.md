@@ -542,7 +542,11 @@ Preparation runs on every start and keeps a verified artifact rather than
 re-taking it from the Platform's copy. Installed native Apps also pin the
 complete engine artifact in their host descriptor and execute its private Node
 through the verified installed release catalog; parent updates never rewrite
-that selection. Checkout execution supports only its current development
+that selection. Verification precedes every execution, but a process hashes an
+unchanged file once (stat fingerprint, ctime included) and one operation verifies a
+release once; the guarantee and its limits are in `website/.../architecture/updates.md`
+("Integrity and recovery"). Never keep a release's verification beyond one operation,
+and never share any of it across processes or persist it. Checkout execution supports only its current development
 engine. Public controls select exact qualified installed engines and freeze
 that engine's matching App recipe, including older versions. A recipe lock with
 no verified frozen copy or exact trusted source is refused, never run with the

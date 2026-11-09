@@ -511,7 +511,8 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }));
             const catalogOptions = yield* catalogConfiguration();
             // Both the engine this start selects and the host it executes are the same immutable tree when the Project follows the
-            // Platform: it is hashed once for this start, and verified again by the next one.
+            // Platform: it is verified once for this start (or reused from `prepareData`, at most five minutes old), and the
+            // next start verifies it again.
             const verifiedHere = prefetchedFor(project.id);
             let heldReason: string | undefined;
             const engine = options.integrationOnly
