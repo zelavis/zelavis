@@ -39,7 +39,7 @@ process.env.ZELAVIS_APP_SHARDS_URL = `http://127.0.0.1:${server.address().port}/
 
 zv = new Zelavis({ adapter: nodeAdapter({
   dataDirectory: "/data/platform",
-  projects: { remoteDispatch: { localNodeId: "node-a", nodes: { "node-b": { url: "https://agent:8443", agentId: "agent-b", caFile: "/certs/tls.crt" } } } },
+  projects: { remoteDispatch: { localNodeId: "node-a", nodes: { "node-b": { url: process.env.ZELAVIS_DRILL_AGENT_URL ?? "https://agent:8443", agentId: "agent-b", caFile: "/certs/tls.crt" } } } },
 }) });
 const client = createZelavisClient({ baseUrl: "http://localhost", rootPath: "/zelavis", fetch: (input, init) => zv.fetch(new Request(input, init), OWNER) });
 const call = async (method, path, body) => {

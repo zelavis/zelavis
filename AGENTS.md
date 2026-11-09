@@ -890,8 +890,8 @@ committed, releasing, released; epochs only rise) and an operator allocation dec
 fences by epoch and the store by writer generation. `client.shards`, `zelavis shards`, `client.shardPlacement` and
 `zelavis shard-placement` carry it, and the Project's Database → Shards page is a client of the same routes. A remote
 shard whose Agent is not answering at open does not stop the Project (its Tenants are refused, whole-database questions
-refuse, a background loop reopens it). `pnpm release:qualify:shards` runs the Agent in a separate container on the same host; no drill on physically separate
-machines has been run. Limits:
+refuse, a background loop reopens it). `pnpm release:qualify:shards` runs the Agent in a separate container on the same host; with
+`ZELAVIS_QUALIFY_SHARDS_AGENT_SSH` the Agent runs on another machine (passed once, 2026-11-09; not a release gate). Limits:
 eligible Tenant reads in `src/db/tenant-reads.ts` run on the shard's Node, each under a work budget (stored bytes, entries
 and posting identifiers, checked before data is copied) whose exhaustion refuses the whole read as `ReadBudgetExceeded`
 (HTTP 422 `read-budget-exceeded`), never a partial answer and never a retry on the writer; similarity/hybrid queries, writes,

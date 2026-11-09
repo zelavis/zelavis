@@ -120,6 +120,12 @@ The update, conversion, history, backups, failover and shards gates run in dispo
 the installed ones) limited to 2 CPUs and 4 GiB. Run one gate at a time, never beside another gate or a build.
 `ZELAVIS_HARNESS_KEEP=1` keeps a failed guest for inspection.
 
+- **The shard drill across machines.** `ZELAVIS_QUALIFY_SHARDS_AGENT_SSH=<user>@<host>` (with
+  `ZELAVIS_QUALIFY_SHARDS_SSH_KEY=<key file>`) runs `pnpm release:qualify:shards` with its Agent on that machine. The packed
+  candidate goes into a directory of its own under `/var/tmp` there and runs as `nobody` in a transient systemd unit capped
+  at 512 MiB and half a CPU, listening on 127.0.0.1 only. This machine reaches it through an SSH tunnel, and killing the
+  tunnel is the network cut. It needs root there and an installed Zelavis release's private Node, touches nothing else, and
+  removes everything when it ends.
 - **The MariaDB dump client on ARM.** On a non-x86_64 guest, the update gate installs `mariadb-client` from Debian before
   the Platform update (`qualify-installed-update.mjs`). The earlier release's package set lacks `mariadb-dump`, converting an
   earlier Agent restarts the WordPress processes, and the candidate recipe will not start them without it. An operator

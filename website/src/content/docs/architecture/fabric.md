@@ -128,9 +128,9 @@ Limits:
 - A database image or backup holds every shard's keys and opens as an all-local database.
 - A shard that holds a cross-Tenant index's entries cannot be released until the index is dropped or defined on other shards.
 - The proof runs a Platform and Project in one container and the Agent in another with the Agent's network cut
-  (`pnpm release:qualify:shards`), and in-process through a proxy, both on one machine. No drill with the Agent on a
-  physically separate machine has been run, so real network latency, clock skew between hosts and the loss of a physical
-  link are not qualified.
+  (`pnpm release:qualify:shards`), and in-process through a proxy, both on one machine. The same drill has also passed
+  once with the Agent on a separate machine over the internet, its network cut by killing the SSH tunnel it was reached
+  through. That is not a release gate, and a physical link failing or a partition between several hosts is not qualified.
 
 ### App shard allocation
 
