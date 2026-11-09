@@ -18,6 +18,7 @@ PREVIOUS="${ZELAVIS_HISTORY_PREVIOUS:-$(node -e 'fetch("https://registry.npmjs.o
 docker build -q -t "$IMAGE" -f "$REPO_ROOT/zelavis-services/wordpress/scripts/Dockerfile.provisioning" "$REPO_ROOT/zelavis-services/wordpress/scripts" >/dev/null
 (cd "$REPO_ROOT" && pnpm --filter zelavis pack --pack-destination "$STAGE" >/dev/null)
 mv "$STAGE"/zelavis-*.tgz "$STAGE/zelavis.tgz"
+node "$REPO_ROOT/distribution/scripts/lib/candidate-registry.mjs" "$REPO_ROOT" "$STAGE/candidate-registry"
 docker run -d --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \

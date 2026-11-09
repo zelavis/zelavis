@@ -28,13 +28,13 @@ ln -s .. /opt/prepared/platform/node_modules/zelavis
 NODE=/opt/zelavis/current/runtime/node/bin/node
 ready() { for attempt in $(seq 1 120); do curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null && return 0; sleep 1; done; return 1; }
 ready
-# Each release in the history keeps the allow-list it shipped with, as the servers that made these apps did.
-# The list zelavis.com serves today names recipes an old release cannot run; entries carry no minimum Platform
-# version yet (an open item), so a history fed from it would fail on that, not on what this gate proves.
+# Each historical release uses the allow-list it shipped with, so the fixtures
+# are created with the recipes that were available on that release.
 systemctl stop zelavis.service zelavis.socket
 mkdir -p /etc/systemd/system/zelavis.service.d
 printf '[Service]\nEnvironment=ZELAVIS_ALLOWLIST_SOURCES=https://127.0.0.1:9/allowlist.json\n' > /etc/systemd/system/zelavis.service.d/history.conf
 "$NODE" -e 'const { DatabaseSync } = require("node:sqlite"); const d = new DatabaseSync("/var/lib/zelavis/system/zelavis.sqlite"); d.prepare("DELETE FROM zelavis_system_records WHERE namespace = ?").run("marketplace-allowlist"); d.close();' 2>/dev/null
+sh /workspace/distribution/scripts/lib/candidate-registry-host.sh
 systemctl daemon-reload
 systemctl start zelavis.socket zelavis.service
 ready

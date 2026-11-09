@@ -151,9 +151,13 @@ remain part of `release:check`.
 
 `pnpm release:check` includes `release:qualify:update` against the actual previous
 npm release in disposable Linux/systemd. Docker is required for this release gate,
-not for ordinary workspace verification. Before publication only candidate
-acquisition is substituted. After publication qualify the ordinary authenticated
-API/systemd action with real npm acquisition using `ZELAVIS_QUALIFY_UPDATE=npm`
+not for ordinary workspace verification. Before publication, the disposable
+update and history guests use the packed Platform candidate. They serve each
+unpublished service from its exact local pack after checking its digest against
+the shipped allow-list. Published versions still come from npm, and the normal
+package acquisition and allow-list checks run for both. After publication qualify
+the ordinary authenticated API/systemd action with real npm acquisition using
+`ZELAVIS_QUALIFY_UPDATE=npm`
 and `ZELAVIS_PROVISIONING_FROM_NPM=<previous exact version>`. Preserve continuous
 HTTP traffic, Project process custody, preview URLs, locks and data; prove App
 selection in both directions across real distinct published engine versions.

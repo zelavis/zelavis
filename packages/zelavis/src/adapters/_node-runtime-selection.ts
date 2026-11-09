@@ -3,7 +3,8 @@ import { open, readFile, realpath, rename, rm, symlink } from "node:fs/promises"
 import { dirname, join } from "node:path";
 import { Deferred, Effect } from "effect";
 import { installationInstanceScope } from "../core/runtime/installation-instance.js";
-import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, IntegrationFailure, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { isRecord } from "../core/json-validation.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
 import { planZelavisRuntimeHostAssetsProgram, readNativeInstallationReceiptProgram } from "../core/runtime/installation-plan.js";
@@ -78,8 +79,30 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
       Effect.ignore,
     ));
     const acknowledged = new Set<string>();
-    while (!(yield* Deferred.isDone(completed))) {
+    let disconnected: TaggedFailure | undefined;
+    let committedGeneration: number | undefined;
+    for (;;) {
+      if (disconnected === undefined && (yield* Deferred.isDone(completed))) {
+        const answer = yield* Effect.result(Deferred.await(completed));
+        if (answer._tag === "Success") return answer.success;
+        const cause = unwrapFailure(answer.failure);
+        if (!isRecord(cause) || cause.code !== "ECONNRESET") return yield* Effect.fail(answer.failure);
+        // Losing the response does not cancel the host's transition. Continue
+        // handling inventory acknowledgements and verify the committed generation.
+        disconnected = answer.failure;
+      }
       const status = yield* requestNodeRuntimeControl(endpoint, { action: "status" });
+      if (disconnected !== undefined && status.pendingCommit === undefined) {
+        if (status.requiresRecovery === true) {
+          return yield* new IntegrationFailure(new Error("Platform handover requires fenced recovery after the control connection closed.", { cause: disconnected }));
+        }
+        if (status.ready === true && status.requiresRecovery === false &&
+            committedGeneration !== undefined && status.generation === committedGeneration &&
+            isRecord(status.release) && status.release.version === options.version &&
+            isRecord(status.admission) && status.admission.paused === false && status.admission.closed === false) {
+          return { release: status.release, generation: committedGeneration, cleanupFailures: status.cleanupFailures };
+        }
+      }
       const pending = status.pendingCommit as { nonce: string; release: RuntimeRelease; generation: number } | undefined;
       if (pending && !acknowledged.has(pending.nonce)) {
         const committed = yield* Effect.result(Effect.gen(function* () {
@@ -122,10 +145,10 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
         yield* requestNodeRuntimeControl(endpoint, { action: "commit", nonce: pending.nonce, version: pending.release.version,
           generation: pending.generation, accepted: committed._tag === "Success" });
         acknowledged.add(pending.nonce);
+        if (committed._tag === "Success" && pending.release.version === options.version) committedGeneration = pending.generation;
       }
       yield* Effect.sleep(20);
     }
-    return yield* Deferred.await(completed);
   })).pipe(Effect.timeoutOrElse({ duration: 150_000,
     orElse: () => Effect.fail(new IntegrationFailure(new Error("Runtime inventory selection did not complete within its bounded handover window."))),
   }));

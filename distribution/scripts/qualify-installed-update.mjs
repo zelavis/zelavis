@@ -317,7 +317,7 @@ const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpre
 assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
 await client.projects.remove(freshManaged.id);
-// A recipe the Marketplace only lists is acquired from npm; the Project created from it is locked with the
+// A recipe the Marketplace only lists is acquired through the registry; the Project created from it is locked with the
 // package's install methods, starts and serves. A second Project of the same recipe, created after the first
 // is deleted, must still run: they share one recipe driver, which must not run from the deleted Project's files.
 await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/dokuwiki');
@@ -330,7 +330,7 @@ for (const wikiId of ['installed-catalogue-dokuwiki', 'recreated-catalogue-dokuw
   await page.arrayBuffer();
   await client.projects.remove(wikiId);
 }
-console.log('PASS: a catalogue recipe installed from npm runs, and runs again for a Project created after the first was deleted.');
+console.log('PASS: an acquired catalogue recipe runs again for a Project created after the first was deleted.');
 await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
@@ -339,7 +339,7 @@ const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated 
   parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
-  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchangedAfterConversion: true, conversionRefreshedTimestamp: agentBefore?.survivable !== true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchangedAfterConversion: true, conversionRefreshedTimestamp: agentBefore?.survivable !== true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,

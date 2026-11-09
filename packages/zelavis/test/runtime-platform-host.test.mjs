@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { createServer, request } from "node:http";
 import { Effect, Exit, Scope } from "effect";
 import { createNodePlatformHost } from "../dist/adapters/_node-platform-host.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
@@ -75,9 +77,48 @@ test("Agent conversion keeps the dashboard, authentication, Project status and r
   finally { await Effect.runPromise(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const failedActivation of [false, true]) test(`Platform ${failedActivation ? "rollback" : "handover"} preserves the running App, Fabric custody and public preview socket`, { timeout: 60_000 }, async () => {
+const dropSelectionReply = async (endpoint, realEndpoint) => {
+  await rename(endpoint, realEndpoint);
+  let dropped = false;
+  const relay = createServer(async (incoming, outgoing) => {
+    const chunks = [];
+    for await (const chunk of incoming) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    const selecting = JSON.parse(body).action === "select";
+    const forwarded = request({
+      socketPath: realEndpoint, method: incoming.method, path: incoming.url, headers: incoming.headers, agent: false,
+    }, (response) => {
+      if (selecting) return response.resume();
+      outgoing.writeHead(response.statusCode, response.headers);
+      response.pipe(outgoing);
+    });
+    forwarded.once("error", (error) => { if (!selecting) outgoing.destroy(error); });
+    forwarded.end(body, () => {
+      if (!selecting) return;
+      dropped = true;
+      outgoing.destroy();
+    });
+  });
+  relay.listen(endpoint);
+  await once(relay, "listening");
+  return {
+    dropped: () => dropped,
+    close: async () => {
+      const closed = once(relay, "close");
+      relay.close();
+      relay.closeAllConnections();
+      await closed;
+      await rename(realEndpoint, endpoint);
+    },
+  };
+};
+
+for (const [failedActivation, lostReply] of [[false, false], [true, false], [false, true]]) test(
+  `Platform ${failedActivation ? "rollback" : lostReply ? "handover after a dropped selection reply" : "handover"} preserves the running App, Fabric custody and public preview socket`,
+  { timeout: 60_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "zv-platform-host-"));
   const scope = Scope.makeUnsafe(), logs = [];
+  let relay;
   try {
     const prefix = join(directory, "installation");
     for (const release of [old, next]) await mkdir(join(prefix, "releases", release.version), { recursive: true });
@@ -117,9 +158,11 @@ for (const failedActivation of [false, true]) test(`Platform ${failedActivation 
     const traffic = Promise.all(Array.from({ length: 40 }, async () => {
       const response = await fetch(preview).catch(error => { throw new Error("PREVIEW TRAFFIC", { cause: error }); }); assert.equal(response.status, 200); assert.equal(await response.text(), body);
     }));
+    if (lostReply) relay = await dropSelectionReply(host.endpoint, join(directory, "r.sock"));
     const selection = selectNodeInstallationRuntime({ prefix, instance: "default", dataDirectory: directory, version: next.version });
     const [selected, served] = await Promise.allSettled([Effect.runPromise(selection), traffic]);
     assert.equal(served.status, "fulfilled", String(served.reason));
+    if (lostReply) assert.equal(relay.dropped(), true);
     if (failedActivation) { assert.equal(selected.status, "rejected"); assert.match(String(selected.reason.message), /Runtime handover failed/); }
     else assert.equal(selected.status, "fulfilled", String(selected.reason?.message));
     assert.equal(JSON.parse(await readFile(join(prefix, "installation.json"), "utf8")).version, failedActivation ? old.version : next.version);
@@ -137,6 +180,7 @@ for (const failedActivation of [false, true]) test(`Platform ${failedActivation 
     assert.equal((await Effect.runPromise(requestNodeRuntimeControl(host.endpoint, { action: "status" }))).release.version, failedActivation ? old.version : next.version);
     assert.equal((await fetch(`${url}/`, { headers: { "x-zelavis-runtime-preview": "one", "x-zelavis-runtime-preview-key": "forged" }, redirect: "manual" })).status, 307);
   } catch (error) { console.error(JSON.stringify(logs.filter(entry => entry.stream === "stderr"), null, 2)); throw error; } finally {
+    await relay?.close();
     await Effect.runPromise(Scope.close(scope, Exit.void));
     await rm(directory, { recursive: true, force: true });
   }

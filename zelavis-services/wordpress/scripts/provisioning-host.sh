@@ -38,6 +38,11 @@ if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
   systemctl daemon-reload
   systemctl restart zelavis.service
 fi
+if [ -f /input/candidate-registry/index.json ]; then
+  sh /workspace/distribution/scripts/lib/candidate-registry-host.sh
+  systemctl daemon-reload
+  systemctl restart zelavis.service
+fi
 for attempt in $(seq 1 60); do
   if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
   sleep 1

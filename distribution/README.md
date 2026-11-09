@@ -145,6 +145,11 @@ selection. Two-instance rounds exercise both installation/removal orders and
 authenticated **Update now** through npm and systemd, checking continuous HTTP,
 unchanged neighbouring processes, and retained App processes and data.
 
+The prepublication update and history gates serve unpublished service tarballs from the
+qualification workspace. The harness checks each local pack against its exact entry in the
+candidate allow-list. The installed Platform still runs its registry, integrity and allow-list
+checks. Requests for published versions go to npm.
+
 Proof JSON and sanitized progress logs stay under
 `distribution/.tmp/installer-matrix/` (override `ZELAVIS_QUALIFY_PROOF_DIR`).
 Select `ZELAVIS_QUALIFY_DISTROS=debian` or `ubuntu` for one distribution;
