@@ -25,6 +25,8 @@ export class DataMigrationFailure extends Data.TaggedError("DataMigrationFailure
 export interface DataMigrationInput {
   /** The earlier layout's shard directory. Copied, never opened in place. */
   readonly sourceShards: string;
+  /** The layout the earlier engine wrote (`metadata.dataFormat` of its release): how its records are named. */
+  readonly sourceFormat: number;
   /** Must not exist yet; the staging and the migrated shards live here. */
   readonly workDirectory: string;
   /** The earlier release's private Node and the `platform` directory of its release tree. */
@@ -84,9 +86,35 @@ const treeBytes = (directory: string): Effect.Effect<number, DataMigrationFailur
 const STAGING_FACTOR = 3.5;
 const WRITE_BATCH = 500;
 const MAX_TENANT_FILE_BYTES = 512 * 1024 * 1024;
-/** Held by the earlier engine per Tenant and rebuilt or short-lived here: idempotency receipts and projection checkpoints. */
-const DROPPED_PREFIXES = ["zv.idempotency/", "zv.checkpoint"];
-const COLLECTION_FIELDS = ["surface", "metadata", "indexes", "checks", "references", "analyzer", "spatial", "embedding", "edges", "measures"] as const;
+const COLLECTION_FIELDS = ["surface", "metadata", "indexes", "checks", "references", "analyzer", "spatial", "embedding", "edges", "measures", "columns"] as const;
+
+/**
+ * How an earlier layout names what this migration recreates, per Tenant.
+ *
+ * Layout 2 put the tenant into every name (`zv.collection/<tenant>`, an active schema keyed `<tenant>/<collection>`,
+ * `zv.idempotency/<tenant>`). Layout 4 keeps each Tenant in a partition of its own, so its names carry no tenant. Documents
+ * and saved schemas are read from their bodies, which name their collection in both. Idempotency receipts and projection
+ * checkpoints are held per Tenant and short-lived or rebuilt here, so they are dropped. A layout not listed here is
+ * refused before anything is read.
+ */
+interface SourceNames {
+  readonly isCollection: (namespace: string) => boolean;
+  /** The collection an active-schema record names, or nothing for one this layout would not have written. */
+  readonly activeCollection: (tenant: string, key: string) => string | undefined;
+  readonly droppedPrefixes: ReadonlyArray<string>;
+}
+const SOURCE_NAMES: Readonly<Record<number, SourceNames>> = {
+  2: {
+    isCollection: (namespace) => namespace.startsWith("zv.collection/"),
+    activeCollection: (tenant, key) => key.startsWith(`${tenant}/`) ? key.slice(tenant.length + 1) : undefined,
+    droppedPrefixes: ["zv.idempotency/", "zv.checkpoint"],
+  },
+  4: {
+    isCollection: (namespace) => namespace === "zv.collection",
+    activeCollection: (_tenant, key) => key.length > 0 ? key : undefined,
+    droppedPrefixes: ["zv.idempotency", "zv.checkpoint"],
+  },
+};
 
 const fail = (message: string, cause?: unknown) => new DataMigrationFailure({ message, ...(cause === undefined ? {} : { cause }) });
 const attempt = <A>(message: string, operation: () => A | PromiseLike<A>): Effect.Effect<A, DataMigrationFailure> =>
@@ -171,6 +199,8 @@ const liveRecords = (events: ReadonlyArray<ExportedEvent>) => {
 };
 
 export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (input: DataMigrationInput): Effect.fn.Return<DataMigrationReport, DataMigrationFailure | IntegrationFailure> {
+  const names = SOURCE_NAMES[input.sourceFormat];
+  if (names === undefined) return yield* fail(`Data written in layout ${input.sourceFormat} cannot be migrated: this release reads layouts ${Object.keys(SOURCE_NAMES).join(" and ")}. Nothing was changed.`);
   const work = resolve(input.workDirectory), source = join(work, "source"), exported = join(work, "export"), migrated = join(work, "shards");
   const existing = yield* Effect.result(integration(() => stat(work)));
   if (existing._tag === "Success") return yield* fail(`The staging directory ${work} already exists; a migration never reuses one.`);
@@ -205,7 +235,7 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
         const live = liveRecords(exportedTenant.events);
         const tenantDocuments = opened.database.forTenant(entry.tenant).documents;
 
-        const isCollection = (e: ExportedEvent) => e.identity?.namespace.startsWith("zv.collection/") === true;
+        const isCollection = (e: ExportedEvent) => e.identity !== undefined && names.isCollection(e.identity.namespace);
         const isSchema = (e: ExportedEvent) => e.identity?.namespace === "zv.schema";
         const isActiveSchema = (e: ExportedEvent) => e.identity?.namespace === "zv.schema.active";
         const isDocument = (e: ExportedEvent) => e.identity?.namespace.startsWith("doc/") === true;
@@ -213,7 +243,7 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
         for (const event of live) {
           if (isCollection(event) || isDocument(event) || isSchema(event) || isActiveSchema(event)) continue;
           const namespace = event.identity?.namespace ?? "(no identity)";
-          if (DROPPED_PREFIXES.some((prefix) => namespace.startsWith(prefix))) dropped[namespace.split("/")[0]!] = (dropped[namespace.split("/")[0]!] ?? 0) + 1;
+          if (names.droppedPrefixes.some((prefix) => namespace.startsWith(prefix))) dropped[namespace.split("/")[0]!] = (dropped[namespace.split("/")[0]!] ?? 0) + 1;
           else unknown[namespace.split("/")[0]!] = (unknown[namespace.split("/")[0]!] ?? 0) + 1;
         }
         if (Object.keys(unknown).length > 0) return yield* fail(`Tenant "${entry.tenant}" holds records this migration cannot recreate yet: ${JSON.stringify(unknown)}. Nothing was changed.`);
@@ -289,9 +319,8 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
             .pipe(Effect.mapError((error) => fail(`Schema ${schema.collection}@${schema.version} of Tenant "${entry.tenant}" could not be recreated: ${error._tag}.`, error)));
           schemas += 1;
         }
-        const prefix = `${entry.tenant}/`;
         for (const record of live.filter(isActiveSchema)) {
-          const collection = (record.identity?.key ?? "").startsWith(prefix) ? (record.identity?.key ?? "").slice(prefix.length) : undefined;
+          const collection = names.activeCollection(entry.tenant, record.identity?.key ?? "");
           const version = (decode(record) as { version?: number }).version;
           if (collection === undefined || version === undefined) return yield* fail(`Tenant "${entry.tenant}" has an active-schema record this migration cannot read.`);
           yield* tenantSchemas.activate(collection, version)

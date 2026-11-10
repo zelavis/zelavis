@@ -9,7 +9,8 @@ import { openNodeDatabase } from "../dist/db/node-host.js";
 
 // The earlier engine is replaced by a stand-in release tree whose database "opens" whatever `fake.json` in the shard
 // directory says it holds. That exercises the real worker process, the export files, recreation and verification; the
-// earlier engine's real layout is covered by distribution/scripts/format-migration/harness.mjs against alpha.42.
+// earlier engines' real layouts are covered by distribution/scripts/format-migration/harness.mjs against alpha.42 (layout 2)
+// and alpha.44 (layout 4). The fixtures below are written in layout 2's names unless a test says otherwise.
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64");
 const collection = (tenant, name, extra = {}) => ({ kind: "put", seq: 1, version: 1, at: 0, identity: { namespace: `zv.collection/${tenant}`, key: name }, body: b64({ name, surface: "database", ...extra }) });
 const document = (tenant, name, seq, id, data, version = 1, extra = {}) => ({ kind: "put", seq, version, at: 0, identity: { namespace: `doc/${tenant}/${name}`, key: id }, body: b64({ id, collection: name, data, version, ...extra }) });
@@ -32,13 +33,13 @@ export const openNodeDatabase = async ({ directory }) => {
   return platform;
 }
 
-async function fixture(contents, { crash = false } = {}) {
+async function fixture(contents, { crash = false, sourceFormat = 2 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-data-migration-"));
   const source = join(root, "old-shards");
   await mkdir(source, { recursive: true });
   await writeFile(join(source, "fake.json"), JSON.stringify(contents));
   const oldPlatform = await earlierRelease(join(root, "old-release"), crash);
-  const input = { sourceShards: source, workDirectory: join(root, "work"), oldNode: process.execPath, oldPlatform, exportWorker: new URL("../dist/adapters/_data-export-worker.js", import.meta.url).pathname };
+  const input = { sourceShards: source, sourceFormat, workDirectory: join(root, "work"), oldNode: process.execPath, oldPlatform, exportWorker: new URL("../dist/adapters/_data-export-worker.js", import.meta.url).pathname };
   return { root, source, input };
 }
 const listing = async (dir) => (await readdir(dir)).sort().join(",");
@@ -98,6 +99,47 @@ test("a database written by an earlier layout is recreated through the documents
       const versions = await Effect.runPromise(opened.database.forTenant(t).schemas.listVersions("posts"));
       assert.deepEqual(versions.map((v) => [v.version, v.active]), [[1, true], [2, false]], "the active schema stays the active one");
     } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a database written in layout 4 names nothing by its tenant, and is recreated the same way", async () => {
+  const t = "tenant-a";
+  // Layout 4 as alpha.43 and alpha.44 export it: a partition per Tenant, so no name carries the tenant.
+  const { root, input } = await fixture({
+    [t]: [
+      { kind: "put", seq: 1, version: 1, at: 0, identity: { namespace: "zv.collection", key: "users" }, body: b64({ name: "users", surface: "database", columns: ["email", "age"], referencedBy: [{ collection: "posts", reference: "author" }] }) },
+      { kind: "put", seq: 2, version: 1, at: 0, identity: { namespace: "zv.collection", key: "posts" }, body: b64({ name: "posts", surface: "database", references: [{ name: "author", path: "author", collection: "users", onDelete: "restrict" }] }) },
+      { kind: "put", seq: 3, version: 2, at: 0, identity: { namespace: "doc/users", key: "u1" }, body: b64({ id: "u1", collection: "users", data: { email: "a@x.test", age: 30 }, version: 2, createdAt: CREATED, updatedAt: UPDATED, expiresAt: EXPIRES }) },
+      { kind: "put", seq: 4, version: 1, at: 0, identity: { namespace: "doc/posts", key: "p1" }, body: b64({ id: "p1", collection: "posts", data: { title: "hello", author: "u1" }, version: 1, createdAt: CREATED, updatedAt: CREATED }) },
+      { kind: "put", seq: 5, version: 1, at: 0, identity: { namespace: "zv.idempotency", key: "key-1" }, body: b64({ done: true }) },
+      { kind: "put", seq: 6, version: 1, at: 0, identity: { namespace: "zv.schema", key: "posts/1" }, body: b64({ collection: "posts", version: 1, active: false, fields: [{ name: "title", field: { _tag: "TextField", label: "Title", required: false } }] }) },
+      { kind: "put", seq: 7, version: 1, at: 0, identity: { namespace: "zv.schema.active", key: "posts" }, body: b64({ version: 1 }) },
+    ],
+  }, { sourceFormat: 4 });
+  try {
+    const report = await Effect.runPromise(migrateDataLayout(input));
+    assert.deepEqual([report.tenants, report.collections, report.schemas, report.documents, report.documentsWithHistoryDropped], [1, 2, 1, 2, 1]);
+    assert.deepEqual(report.dropped, { "zv.idempotency": 1 });
+    const opened = await openNodeDatabase({ directory: report.shardsDirectory });
+    try {
+      const tenant = opened.database.forTenant(t);
+      const u1 = await Effect.runPromise(tenant.documents.findById({ collection: "users", id: "u1" }));
+      assert.deepEqual([u1.version, u1.createdAt, u1.updatedAt, u1.expiresAt, u1.data.age], [2, CREATED, UPDATED, EXPIRES, 30]);
+      const users = (await Effect.runPromise(tenant.documents.listCollections)).find((c) => c.name === "users");
+      assert.deepEqual([...users.columns].sort(), ["age", "email"], "declared columns are carried");
+      const older = await Effect.runPromise(tenant.documents.findMany({ collection: "users", where: [{ path: "age", op: "gte", value: 18 }] }));
+      assert.deepEqual(older.map((d) => d.id), ["u1"]);
+      const versions = await Effect.runPromise(tenant.schemas.listVersions("posts"));
+      assert.deepEqual(versions.map((v) => [v.version, v.active]), [[1, true]], "the active schema, keyed by collection alone, is active again");
+    } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a layout this release cannot read is refused before anything is copied", async () => {
+  const { root, input } = await fixture({ "tenant-a": [collection("tenant-a", "users")] }, { sourceFormat: 3 });
+  try {
+    assert.match(await failure(migrateDataLayout(input)), /layout 3 cannot be migrated.*layouts 2 and 4.*Nothing was changed/);
+    await assert.rejects(stat(input.workDirectory), "nothing was staged");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

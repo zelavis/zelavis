@@ -4,7 +4,10 @@
 // released engine. It never opens the data it is given: every run works on throwaway copies.
 //
 //   node harness.mjs --old-host <dir with node_modules/zelavis@released> [--repo <checkout>] [--seed 1] [--scale 1]
-//                    [--from <shards dir of real old data>]
+//                    [--from <shards dir of real old data>] [--source-format <layout the released engine writes>]
+//
+// The source layout is the released engine's own `CURRENT_FORMAT` unless `--source-format` names it (alpha.42 and earlier
+// exported none and wrote layout 2).
 //
 // Without --from it generates seeded data with the released engine (many collections, indexes, text, measures, edges,
 // updates, deletes). With --from it runs the same checks over real data. Exit code 1 on any difference.
@@ -22,6 +25,7 @@ const { values: args } = parseArgs({
     seed: { type: "string", default: "1" },
     scale: { type: "string", default: "1" },
     from: { type: "string" },
+    "source-format": { type: "string" },
     keep: { type: "boolean", default: false },
   },
 });
@@ -43,7 +47,9 @@ const words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", 
 const sentence = (n) => Array.from({ length: n }, () => pick(words)).join(" ");
 
 const earlierVersion = JSON.parse((await import("node:fs")).readFileSync(join(args["old-host"], "node_modules/zelavis/package.json"), "utf8")).version;
-console.log(`earlier engine: zelavis ${earlierVersion}`);
+const sourceFormat = args["source-format"] !== undefined ? Number(args["source-format"]) : (await load(args["old-host"], "zelavis", "dist/db/kv-store.js")).CURRENT_FORMAT;
+if (!Number.isSafeInteger(sourceFormat)) throw new Error("The released engine exports no CURRENT_FORMAT: name its layout with --source-format.");
+console.log(`earlier engine: zelavis ${earlierVersion}, layout ${sourceFormat}`);
 const work = mkdtempSync(join(tmpdir(), "zv-format-migration-"));
 const log = (...a) => console.log(...a);
 const timings = {};
@@ -158,7 +164,7 @@ symlinkSync(join(args["old-host"], "node_modules/zelavis/dist"), join(earlierPla
 symlinkSync(join(args["old-host"], "node_modules"), join(earlierPlatform, "node_modules"));
 let report;
 await timed("migrate", async () => {
-  report = await runNew(migrateDataLayout({ sourceShards: sourceDir, workDirectory: join(work, "migration"), oldNode: process.execPath,
+  report = await runNew(migrateDataLayout({ sourceShards: sourceDir, sourceFormat, workDirectory: join(work, "migration"), oldNode: process.execPath,
     oldPlatform: earlierPlatform, exportWorker: join(args.repo, "packages/zelavis/dist/adapters/_data-export-worker.js") }));
 });
 log("migration report:", JSON.stringify({ ...report, shardsDirectory: undefined }));

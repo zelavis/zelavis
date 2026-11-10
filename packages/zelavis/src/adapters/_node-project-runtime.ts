@@ -414,7 +414,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         const earlier = yield* catalog.resolve(previous, "project", {}, {});
         onPhase?.("verify the earlier engine");
         const work = join(root, `migration-${stamp}`);
-        const report = yield* migrateDataLayout({ sourceShards: shards, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"), ...(onPhase ? { onPhase } : {}),
+        const report = yield* migrateDataLayout({ sourceShards: shards, sourceFormat: from, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"), ...(onPhase ? { onPhase } : {}),
             exportWorker: fileURLToPath(new URL("./_data-export-worker.js", import.meta.url)) });
         onPhase?.("recreate and verify the data");
         const { retained } = yield* swapInMigratedData(paths, { migratedShards: report.shardsDirectory, from, to, stamp, engine: previous.version }).pipe(Effect.onError(() => undoDataSwap(paths, stamp).pipe(Effect.orElseSucceed(() => false))));
