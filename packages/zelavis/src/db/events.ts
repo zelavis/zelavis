@@ -57,7 +57,7 @@ export interface ObjectRetracted {
  */
 export type DbEvent = ObjectPut | ObjectRetracted;
 
-const ManifestWire = Schema.Struct({
+export const IndexManifestWire = Schema.Struct({
   terms: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
   columns: Schema.Array(
     Schema.Tuple([
@@ -80,7 +80,7 @@ export const DbEventWire = Schema.Union([
     seq: Schema.Finite,
     version: Schema.Finite,
     bytes: Schema.Uint8Array,
-    manifest: ManifestWire,
+    manifest: IndexManifestWire,
     identity: Schema.optional(
       Schema.Struct({ namespace: Schema.String, key: Schema.String }),
     ),

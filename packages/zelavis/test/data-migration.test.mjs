@@ -42,6 +42,9 @@ export const openNodeDatabase = async ({ directory }) => {
   return { close: async () => {}, database: {
     tenants: () => tenants,
     shardOf: () => "shard-0",
+    followers: { source: (partition) => ({ stats: () => ({
+      head: fake[partition].length, compactedTo: fake.__compactedTo ?? 0, lineage: fake.__lineage,
+    }) }) },
     maintenance: { status: () => sourceFormat === 2
       ? [{ shard: "shard-0", records: 0, bytes: 0, compactedTo: fake.__compactedTo ?? 0 }]
       : tenants.map((partition) => ({ shard: "shard-0", partition, compactedTo: fake.__compactedTo ?? 0 })) },
@@ -171,7 +174,8 @@ test("a database written in layout 4 names nothing by its tenant, and is recreat
       { kind: "put", seq: 2, version: 1, at: 0, identity: { namespace: "zv.collection", key: "posts" }, body: b64({ name: "posts", surface: "database", references: [{ name: "author", path: "author", collection: "users", onDelete: "restrict" }] }) },
       { kind: "put", seq: 3, version: 2, at: 0, identity: { namespace: "doc/users", key: "u1" }, body: b64({ id: "u1", collection: "users", data: { email: "a@x.test", age: 30 }, version: 2, createdAt: CREATED, updatedAt: UPDATED, expiresAt: EXPIRES }) },
       { kind: "put", seq: 4, version: 1, at: 0, identity: { namespace: "doc/posts", key: "p1" }, body: b64({ id: "p1", collection: "posts", data: { title: "hello", author: "u1" }, version: 1, createdAt: CREATED, updatedAt: CREATED }) },
-      { kind: "put", seq: 5, version: 1, at: 0, identity: { namespace: "zv.idempotency", key: "key-1" }, body: b64({ done: true }) },
+      { kind: "put", seq: 5, version: 1, at: 0, identity: { namespace: "zv.idempotency", key: "key-1" }, body: b64({ done: true }),
+        manifest: { terms: [], columns: [], measures: [], edges: [] } },
       { kind: "put", seq: 6, version: 1, at: 0, identity: { namespace: "zv.schema", key: "posts/1" }, body: b64({ collection: "posts", version: 1, active: false, fields: [{ name: "title", field: { _tag: "TextField", label: "Title", required: false } }] }) },
       { kind: "put", seq: 7, version: 1, at: 0, identity: { namespace: "zv.schema.active", key: "posts" }, body: b64({ version: 1 }) },
     ],
@@ -179,10 +183,12 @@ test("a database written in layout 4 names nothing by its tenant, and is recreat
   try {
     const report = await Effect.runPromise(migrateDataLayout(input));
     assert.deepEqual([report.tenants, report.collections, report.schemas, report.documents, report.documentsWithHistoryDropped], [1, 2, 1, 2, 1]);
-    assert.deepEqual(report.dropped, { "zv.idempotency": 1 });
+    assert.deepEqual(report.dropped, {});
     const opened = await openNodeDatabase({ directory: report.shardsDirectory });
     try {
       const tenant = opened.database.forTenant(t);
+      const backup = await Effect.runPromise(tenant.backups.exportTenant);
+      assert.equal(backup.events.find((e) => e.identity?.namespace === "zv.idempotency")?.body, b64({ done: true }));
       const u1 = await Effect.runPromise(tenant.documents.findById({ collection: "users", id: "u1" }));
       assert.deepEqual([u1.version, u1.createdAt, u1.updatedAt, u1.expiresAt, u1.data.age], [2, CREATED, UPDATED, EXPIRES, 30]);
       const users = (await Effect.runPromise(tenant.documents.listCollections)).find((c) => c.name === "users");
@@ -192,6 +198,16 @@ test("a database written in layout 4 names nothing by its tenant, and is recreat
       const versions = await Effect.runPromise(tenant.schemas.listVersions("posts"));
       assert.deepEqual(versions.map((v) => [v.version, v.active]), [[1, true]], "the active schema, keyed by collection alone, is active again");
     } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a layout-4 Tenant branch is refused instead of being detached from its source", async () => {
+  const { root, input } = await fixture({
+    "branch": [], __lineage: [{ partition: "original", upTo: 2 }],
+  }, { sourceFormat: 4 });
+  try {
+    assert.match(await failure(migrateDataLayout(input)), /branch.*cannot carry its lineage/);
+    await assert.rejects(stat(input.workDirectory), { code: "ENOENT" });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

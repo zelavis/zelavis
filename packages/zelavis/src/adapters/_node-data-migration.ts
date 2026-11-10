@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -6,10 +7,14 @@ import { Data, Effect, Stream } from "effect";
 import { evaluate, integration, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { arrayOf, isJsonObject, isSafeInteger, isString, isUnknown, objectFields, optional, parseJson, type JsonValidator } from "../core/json-validation.js";
 import { CARRY_COLLECTION, CARRY_DOCUMENTS, REPLAY_HISTORY, type CarriedDocument, type CarryCollectionInput, type CarryDocumentsInput, type ReplayedChange, type ReplayHistoryInput } from "../db/document-writes.js";
+import { ZELAVIS_DB_BACKUP_V1, type BackupEvent, type BackupsApi } from "../db/backup.js";
+import { crossTenantIndexDefinitionOf } from "../db/cross-tenant-index.js";
+import { GLOBAL_TENANT } from "../db/topology.js";
+import { SYSTEM_PLACEMENTS } from "../db/topology-store.js";
 import type { DocumentsApi } from "../db/document-model.js";
-import { openNodeDatabase } from "../db/node-host.js";
+import { openNodeDatabase, readShardLocations } from "../db/node-host.js";
 import {
-  comparableDocument, EXPORT_EVENT_CAP, exportedDocument, exportedEvent, exportHeader, exportManifest, isExportTime, MAX_EXPORT_LINE_CHARS,
+  comparableDocument, EXPORT_EVENT_CAP, exportedDocument, exportedEvent, exportHeader, exportManifest, isExportTime, isLayout4DurableRecord, MAX_EXPORT_LINE_CHARS,
   readableLayouts, sourceNamesOf, type ExportedDocument, type ExportedEvent, type ExportHeader, type SourceNames,
 } from "./_data-export-format.js";
 
@@ -32,11 +37,12 @@ import {
  * Not carried: log positions, so a cursor issued before the migration is refused and its consumer reads from the start;
  * collection events in place (each collection is created once, in its final definition, at the time of the Tenant's
  * first event); the history of collections that no longer exist, or of an earlier collection of the same name
- * (counted); schema history (saved versions are recreated, then the active one activated); idempotency receipts and
- * projection checkpoints (counted in `dropped`).
+ * (counted); schema history (saved versions are recreated, then the active one activated); projection checkpoints,
+ * time-series state, and layout-2 idempotency receipts (counted in `dropped`). Layout 4 also carries durable
+ * workload, workflow, outbox, aggregate and idempotency records and rebuilds cross-Tenant indexes from their definitions.
  *
- * Each Tenant's export is read as a stream, three times (index, write, verify), so memory holds one entry per distinct
- * record, one batch and one line, whatever the history's length.
+ * Each partition's export is streamed for indexing, document replay, verification and durable restore. The working
+ * memory is one index entry per distinct record plus one batch and one line, independent of the history's length.
  *
  * It only reads the source and writes under `workDirectory`, so a failure leaves the source exactly as it was and removes
  * the staging it made. Swapping the result in, and keeping the old data, belong to the caller.
@@ -227,7 +233,7 @@ interface TenantIndex {
   readonly firstAt: number | undefined;
 }
 
-const indexTenant = (file: string, tenant: string, names: SourceNames): Effect.Effect<TenantIndex, DataMigrationFailure> => Effect.gen(function* () {
+const indexTenant = (file: string, tenant: string, names: SourceNames, carryDurable: boolean): Effect.Effect<TenantIndex, DataMigrationFailure> => Effect.gen(function* () {
   const collectionNamespace = names.collectionNamespace(tenant), documentPrefix = names.documentPrefix(tenant);
   const records = new Map<number, RecordTrack>();
   // The last body of every record whose content the migration reads whole: collections and schemas, never documents.
@@ -281,7 +287,7 @@ const indexTenant = (file: string, tenant: string, names: SourceNames): Effect.E
     else if (track.namespace.startsWith(documentPrefix)) {
       const collection = track.namespace.slice(documentPrefix.length);
       documents.set(collection, (documents.get(collection) ?? 0) + 1);
-    } else {
+    } else if (!carryDurable || !isLayout4DurableRecord(track.namespace)) {
       const kind = track.namespace.split("/")[0]!;
       const counted = names.droppedPrefixes.some((prefix) => track.namespace.startsWith(prefix)) ? dropped : unknown;
       counted[kind] = (counted[kind] ?? 0) + 1;
@@ -420,6 +426,72 @@ const verifyDocuments = (file: string, index: TenantIndex, documents: DocumentsA
   }
 });
 
+/**
+ * The durable namespaces of layout 4 use the same keys and lenses in layout 5. The backup API can restore them
+ * beside recreated documents because they have no edges into other records. It assigns internal identifiers in the
+ * destination; the stored identities, application IDs, revisions, and payloads survive. Layout 2 uses no such restore.
+ */
+const restoreDurableRecords = (file: string, tenant: string, index: TenantIndex, backups: BackupsApi) => Effect.gen(function* () {
+  const expected = new Map<string, string>();
+  const keyOf = (identity: NonNullable<BackupEvent["identity"]>) => JSON.stringify([identity.namespace, identity.key]);
+  const fingerprint = (event: BackupEvent) =>
+    createHash("sha256").update(JSON.stringify([event.version, event.body, event.manifest])).digest("hex");
+  let batch: BackupEvent[] = [];
+  const restore = Effect.gen(function* () {
+    if (batch.length === 0) return;
+    const result = yield* backups.restoreTenant({
+      format: ZELAVIS_DB_BACKUP_V1, tenantId: tenant, exportedAt: iso(Date.now()), events: batch,
+    }, { into: "merge" }).pipe(Effect.mapError((error) => fail(`Durable records of "${tenant}" could not be restored: ${error._tag}.`, error)));
+    if (result.events !== batch.length || result.superseded !== 0) {
+      return yield* fail(`Durable records of "${tenant}" did not restore as new records.`);
+    }
+    batch = [];
+  });
+
+  yield* readExport(file, tenant, (event, position) => Effect.gen(function* () {
+    const { identity } = event;
+    if (event.kind !== "put" || identity === undefined || !isLayout4DurableRecord(identity.namespace)) return;
+    const tracked = index.records.get(event.seq);
+    if (!tracked?.live || tracked.lastPut !== position) return;
+    if (event.body === undefined || event.manifest === undefined || event.manifest.edges.length !== 0) {
+      return yield* fail(`Durable record "${identity.namespace}/${identity.key}" of "${tenant}" cannot be restored without its body and independent lenses.`);
+    }
+    let body = event.body;
+    if (identity.namespace === "zv.aggregate") {
+      // Keep the last published result even if it is stale. Its old cursor would point into a different log.
+      const aggregate = yield* bodyOf(body, isJsonObject, `Aggregate "${identity.key}" of "${tenant}"`);
+      const { checkpoint: _checkpoint, ...retained } = aggregate;
+      body = Buffer.from(JSON.stringify(retained)).toString("base64");
+    }
+    const kept = { kind: "put", seq: event.seq, version: event.version, at: event.at, identity, body, manifest: event.manifest } satisfies BackupEvent;
+    const key = keyOf(identity);
+    if (expected.has(key)) return yield* fail(`Durable record "${identity.namespace}/${identity.key}" occurs twice in "${tenant}".`);
+    expected.set(key, fingerprint(kept));
+    batch.push(kept);
+    if (batch.length >= WRITE_BATCH) yield* restore;
+  }));
+  yield* restore;
+  if (expected.size === 0) return;
+
+  let cursor: string | undefined;
+  for (;;) {
+    const page = yield* backups.exportPage({ ...(cursor === undefined ? {} : { cursor }), limit: WRITE_BATCH })
+      .pipe(Effect.mapError((error) => fail(`Durable records of "${tenant}" could not be verified: ${error._tag}.`, error)));
+    for (const event of page.entries) {
+      const { identity } = event;
+      if (identity === undefined || !isLayout4DurableRecord(identity.namespace)) continue;
+      const key = keyOf(identity);
+      if (event.kind !== "put" || expected.get(key) !== fingerprint(event)) {
+        return yield* fail(`Durable record "${identity.namespace}/${identity.key}" of "${tenant}" differs after restore.`);
+      }
+      expected.delete(key);
+    }
+    if (page.consistent) break;
+    cursor = page.cursor;
+  }
+  if (expected.size > 0) return yield* fail(`Verification did not find ${expected.size} restored durable records of "${tenant}".`);
+});
+
 export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (input: DataMigrationInput): Effect.fn.Return<DataMigrationReport, DataMigrationFailure | IntegrationFailure> {
   const names = sourceNamesOf(input.sourceFormat);
   if (names === undefined) return yield* fail(`Data written in layout ${input.sourceFormat} cannot be migrated: this release reads layouts ${readableLayouts()}. Nothing was changed.`);
@@ -429,6 +501,10 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
   const sourceStats = yield* attempt("The data to migrate cannot be read.", () => stat(resolve(input.sourceShards)));
   if (!sourceStats.isDirectory()) return yield* fail("The data to migrate is not a directory.");
 
+  const locations = yield* evaluate(() => readShardLocations(resolve(input.sourceShards)));
+  if (locations.remote.length > 0 || locations.replicas.length > 0) {
+    return yield* fail("The database has shards or replicas on other Nodes. This migration requires local shards. Nothing was changed.");
+  }
   const sourceBytes = yield* treeBytes(resolve(input.sourceShards));
   const fileSystem = input.freeBytes === undefined ? yield* attempt("The free space cannot be read.", () => statfs(dirname(work))) : undefined;
   const free = input.freeBytes ?? Number(fileSystem!.bavail) * Number(fileSystem!.bsize);
@@ -443,20 +519,28 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
     const manifestSource = yield* attempt("The export is incomplete.", () => readFile(join(exported, "manifest.json"), "utf8"));
     const manifest = yield* evaluate(() => parseJson(manifestSource, exportManifest, "Data export manifest"));
 
-    const opened = yield* attempt("The migrated database could not be created.", () => openNodeDatabase({ directory: migrated }));
+    const opened = yield* attempt("The migrated database could not be created.", () => openNodeDatabase({ directory: migrated, crossTenantRefresh: false }));
     input.onPhase?.("create the migrated database");
     return yield* Effect.gen(function* () {
-      let collections = 0, schemas = 0, documents = 0, eventsCarried = 0, tenantsWithoutHistory = 0, historyDropped = 0, eventsOfDroppedCollections = 0;
+      for (const [collection, placement] of Object.entries(manifest.placements ?? {})) {
+        if (Object.hasOwn(SYSTEM_PLACEMENTS, collection)) continue;
+        yield* opened.database.topology.placement.declare(collection, placement)
+          .pipe(Effect.mapError((error) => fail(`Collection placement "${collection}" could not be carried: ${error._tag}.`, error)));
+      }
+      const carryDurable = input.sourceFormat === 4;
+      let tenants = 0, collections = 0, schemas = 0, documents = 0, eventsCarried = 0, tenantsWithoutHistory = 0, historyDropped = 0, eventsOfDroppedCollections = 0;
       const dropped: Record<string, number> = {};
       for (const entry of manifest.tenants) {
         const tenant = entry.tenant;
         const file = join(exported, entry.file);
-        const index = yield* indexTenant(file, tenant, names);
+        const tenantApi = tenant === GLOBAL_TENANT ? opened.database.global : opened.database.forTenant(tenant);
+        if (tenant !== GLOBAL_TENANT) tenants += 1;
+        const index = yield* indexTenant(file, tenant, names, carryDurable);
         if (index.header.history !== entry.history || index.header.events !== entry.events) {
           return yield* fail(`The export of Tenant "${tenant}" has a header that differs from the export's manifest.`);
         }
         for (const [kind, count] of Object.entries(index.dropped)) dropped[kind] = (dropped[kind] ?? 0) + count;
-        const tenantDocuments = opened.database.forTenant(tenant).documents;
+        const tenantDocuments = tenantApi.documents;
 
         // Collections first, in their final definition, a collection that references another after it; each at the time
         // of the Tenant's first event, so the log that follows reads in time order.
@@ -489,7 +573,7 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
           for (const count of index.documents.values()) documents += count;
         } else {
           const recreated = yield* recreateState(file, index, tenantDocuments, tenant, names);
-          tenantsWithoutHistory += 1;
+          if (tenant !== GLOBAL_TENANT) tenantsWithoutHistory += 1;
           documents += recreated.documents;
           historyDropped += recreated.documentsWithHistoryDropped;
         }
@@ -497,7 +581,7 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
 
         // Schemas go in last, saved inactive and then activated: an active schema would judge the documents as they come in, and the
         // earlier engine never checked what it already held when a schema was activated.
-        const tenantSchemas = opened.database.forTenant(tenant).schemas;
+        const tenantSchemas = tenantApi.schemas;
         const savedSchemas: Array<{ readonly collection: string; readonly version: number; readonly fields: ReadonlyArray<unknown> }> = [];
         for (const body of index.schemas.values()) savedSchemas.push(yield* bodyOf(body, schemaBody, `A schema of Tenant "${tenant}"`));
         for (const schema of savedSchemas.sort((a, b) => a.collection.localeCompare(b.collection) || a.version - b.version)) {
@@ -513,10 +597,36 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
             .pipe(Effect.mapError((error) => fail(`Schema ${collection}@${version} of Tenant "${tenant}" could not be activated: ${error._tag}.`, error)));
         }
         const readBack = yield* tenantSchemas.listCollections.pipe(Effect.mapError((error) => fail(`Schemas of Tenant "${tenant}" cannot be read back.`, error)));
-        if (savedSchemas.length > 0 && readBack.length === 0) return yield* fail(`Verification failed for "${tenant}": its schemas were not found after recreation.`);
+        for (const schema of savedSchemas) {
+          const restored = yield* tenantSchemas.getVersion(schema.collection, schema.version);
+          if (restored === undefined || JSON.stringify(restored.fields) !== JSON.stringify(schema.fields)) {
+            return yield* fail(`Verification failed for "${tenant}": schema "${schema.collection}"@${schema.version} differs after recreation.`);
+          }
+        }
+        for (const record of index.activeSchemas.values()) {
+          const collection = names.activeCollection(tenant, record.key)!;
+          const { version } = yield* bodyOf(record.body, activeSchemaBody, `The active schema of "${collection}" of Tenant "${tenant}"`);
+          if (!readBack.some((schema) => schema.collection === collection && schema.activeVersion === version)) {
+            return yield* fail(`Verification failed for "${tenant}": schema "${collection}"@${version} is not active.`);
+          }
+        }
+        if (carryDurable) yield* restoreDurableRecords(file, tenant, index, tenantApi.backups);
+      }
+      const indexes = opened.database.crossTenantIndexes;
+      for (const definition of manifest.crossTenantIndexes ?? []) {
+        const restored = yield* indexes.define(definition)
+          .pipe(Effect.mapError((error) => fail(`Cross-Tenant index "${definition.name}" could not be recreated: ${error._tag}.`, error)));
+        if (JSON.stringify(crossTenantIndexDefinitionOf(restored)) !== JSON.stringify(definition)) {
+          return yield* fail(`Cross-Tenant index "${definition.name}" differs after recreation.`);
+        }
+        const results = yield* indexes.refresh(definition.name)
+          .pipe(Effect.mapError((error) => fail(`Cross-Tenant index "${definition.name}" could not be rebuilt: ${error._tag}.`, error)));
+        if (results.length !== 1 || results[0]!.failures.length > 0) {
+          return yield* fail(`Cross-Tenant index "${definition.name}" could not be rebuilt for every Tenant: ${JSON.stringify(results[0]?.failures ?? [])}.`);
+        }
       }
       return {
-        shardsDirectory: migrated, tenants: manifest.tenants.length, collections, schemas, documents, eventsCarried, tenantsWithoutHistory,
+        shardsDirectory: migrated, tenants, collections, schemas, documents, eventsCarried, tenantsWithoutHistory,
         documentsWithHistoryDropped: historyDropped, eventsOfDroppedCollections, dropped,
       } satisfies DataMigrationReport;
     }).pipe(Effect.ensuring(Effect.promise(() => opened.close()).pipe(Effect.orDie)));

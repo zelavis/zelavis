@@ -193,7 +193,8 @@ The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/pr
 `zelavis projects upgrade <id>`, the card's **Update recipe**) is the migration. It is never a live handover:
 
 1. The Project (a managed app's bound App) is stopped. A managed app's own processes keep serving.
-2. The engine that wrote the data exports every Tenant, under its own Node.
+2. The engine that wrote the data exports the Tenant and App-wide partitions under its own Node. Layout 4 supplies each
+   partition's full log when available and the definitions of its cross-Tenant indexes.
 3. The current engine recreates collections, then replays each Tenant's document history in order through the documents
    API (every put and deletion at its original time, with the document's version and times), checks the final state
    against the collections' constraints, and checks that the counts and every document match. Schemas are recreated last.
@@ -209,56 +210,55 @@ The response carries a `dataMigration` report: the layouts, how many Tenants, co
 `documentsWithHistoryDropped` (documents of those Tenants past their first version), and the directory that keeps the
 original.
 
-What is carried: each document keeps its id, data, version, creation and update times and expiry, so a version a client
-read before the migration still names the same document state: a stale `expectedVersion` is still refused, never matched
-again later by a restarted count. The document change history is carried too: the change feed holds the same document
-events in the same order, with the same times, revisions and data, so a time series the app registers again and rebuilds
-has the same points. A series' definition is code the app registers at run time, so it is registered again after a
-migration, as after any restart.
+The migration keeps collection definitions, including declared columns. Documents keep their IDs, data, versions,
+creation and update times, and expiry. A stale `expectedVersion` stays stale. For a collection that still exists, the
+migration replays document puts and deletions from an uncompacted log in their original order, with the original times,
+revisions, and data. A time series registered again from that history can rebuild the same points.
 
-The replay refuses nothing the earlier engine accepted: every event was a write that engine judged under the rules of its
-time (two users could share an email before a unique index existed), and a delete's cascade or cleared reference is in the
-history as events of its own, so it is not run again. The final state is then held to the collections' constraints as they
-stand, and a final state that breaks one fails the migration with nothing changed.
+The replay applies changes the earlier engine already accepted. A cascade or cleared reference is replayed as the
+document events that the earlier engine recorded. The current engine checks the final document state against the
+collection constraints and verifies its contents. Saved schema versions and the active version are recreated.
 
-What is not carried:
+For layout 4, the migration also carries pending outbox messages, durable entity messages and state for jobs, schedules
+and webhooks, workflow executions and their recorded steps, idempotency receipts, and any saved schema activation
+intents. It keeps aggregate definitions and their last published results and refresh times. A later refresh produces a
+checkpoint in the new log. App-wide collections keep their placement declarations. Cross-Tenant index definitions are
+recreated and their entries rebuilt from the migrated Tenants before the database is swapped in.
 
-- Log positions. A change-feed cursor issued before the migration is refused as `ForeignCursor` because it has no
-  Tenant life. A cursor from another layout-5 life is refused as `CursorFromAnotherLife` (HTTP 409). Consumers read from the start. Event ids and the
-  node an event names are the new database's.
-- Collection events. Each collection is created once, in its final definition, so the feed starts with one
-  `collection.created` per collection at the time of the Tenant's first carried event; the earlier index, check and
-  reference changes are not events.
-- The history of collections that no longer exist, and of an earlier collection of the same name.
-- Schema history: saved versions are recreated and the active one activated. An active schema that implies a lens the
-  earlier engine never declared (an analyzer, measure, edge, spatial or embedding index derived from its fields) is
-  applied then, which writes that collection's documents back once and adds one event each at the migration's time.
-- Idempotency receipts and projection checkpoints.
-- The history of a Tenant whose earlier log was compacted: it is recreated from its final documents, one event each.
+The following state starts fresh or is omitted:
 
-The earlier engine's export is checked against that engine's own reads before anything is recreated. Releases up to
-alpha.42 read at most 1,000,000 entries of a shard's log for an export and stop there silently, so a shard whose log
-reached that limit is refused with nothing changed, instead of migrated with writes missing. Compacting it on the earlier
-engine first (`maintenance.compact`) lets it migrate from its state.
+- A layout-2 or layout-4 event cursor is refused as `ForeignCursor` by layout 5. A layout-5 cursor from another Tenant
+  life is refused as `CursorFromAnotherLife` (HTTP 409). Read from the beginning of the new log. Log positions, event
+  IDs, and the recorded writer of a replayed event belong to the new database.
+- Collections are created once in their final definition. Earlier collection-definition events and document events
+  from dropped or earlier incarnations of collections are omitted. Schema history is also omitted. Activating a
+  saved schema that adds a lens can rewrite the collection's documents and add events at migration time.
+- A compacted partition is restored from its final state. The earlier events and the time-series points that depend
+  on them cannot be recreated. Projection checkpoints, materialized time-series state, aggregate checkpoint cursors,
+  and cross-Tenant index entries and cursors are omitted. The app registers time-series definitions again at runtime.
+- Layout-2 idempotency receipts are omitted. Layout-4 receipts keep durable retries from applying a write again.
 
-A migration refuses to run when the
-free space beside the data is under about 3.5 times its size, and it fails, naming them, on record kinds it cannot recreate yet.
+The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44). The next engine writes layout 5, which binds
+event cursors to the Tenant life that issued them. Apps on either source layout cross it through an explicit Project
+upgrade. See [Events and cursors](/api/database/#events-and-cursors).
+
+The upgrade is refused if the source has divided Tenants, shards or replicas on other Nodes, or layout-4 Tenant
+branches or unfinished copies. Recreating a branch without its lineage would prevent it from merging back into its
+source. Unsupported layouts, unknown live record kinds, or index placements unavailable in the migrated database also
+cause a refusal. The Project keeps its old engine and data if any check fails.
+
+The earlier engine's export is checked before recreation. Releases up to alpha.42 stop after reading 1,000,000 log
+entries per shard for a backup export. The migration refuses an export at that limit or one that differs from the
+engine's own document reads. Compacting on the earlier engine allows a final-state migration when the compacted
+export fits. The migration also requires free space of about 3.5 times the size of the source.
+
 The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
 `GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
 `client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
 `zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
-`project.runtime.manage`; removal cannot be undone, is refused while a migration is unsettled or the Project has an unfinished update,
+`project.runtime.manage`. Removal cannot be undone. It is refused while a migration is unsettled or the Project has an unfinished update,
 and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
 its exact name is typed.
-
-The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44); it refuses any other before copying
-anything. Layout 5, written by the first release after 2.0.0-alpha.44, binds every event cursor to the life of the Tenant
-that issued it, so a cursor kept from before a Tenant was removed and written again is refused instead of silently skipping
-events (see [Events and cursors](/api/database/#events-and-cursors)). Apps on layout 4 cross it the same way as the
-checklist below, with that release in place of alpha.43. What a migration recreates is collections (their declared columns
-included), documents and schemas; a Tenant that also holds outbox messages, durable entities (the queues of jobs,
-schedules and webhooks), workflow state, aggregates, time-series definitions, cross-Tenant indexes or schema activations is
-refused, naming them, and its App stays on the engine it has, unchanged.
 
 ### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
 

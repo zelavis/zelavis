@@ -1273,6 +1273,11 @@ Key rules:
   already judged and its cascades are events of their own. Its `Settle` request then holds the final state to today's
   constraints inside a transaction. Nothing else stamps a time or skips a check, and both stay symbol-keyed so no
   transport can reach them.
+- The layout-4-to-5 migration exports App-wide data explicitly and restores live durable records with their
+  names, versions and lenses. Keep idempotency receipts alongside workflows so a resumed step cannot duplicate a
+  committed write. Rebuild cross-Tenant indexes from their definitions and omit checkpoints into the old log.
+  Refuse branch lineage that the new log cannot represent. Verify both published source layouts, including
+  layout 4 with outbox, entities, workflows, aggregates and cross-Tenant indexes.
 - A read that joins two collections answers the named collection's query first
   and turns the ids it returns into an equality union over the referencing
   field's own postings (`relatedFilters` in `document-reads.ts`), so a join stays a

@@ -235,11 +235,15 @@ const cursorOf = (data: JsonObject): StoredCursor => ({
 
 type StoredDefinition = CrossTenantIndexDefinition & { readonly createdAt: string; readonly incarnation: string };
 
-const isStoredDefinition: JsonValidator<StoredDefinition> = objectFields<StoredDefinition>({
+const definitionFields = {
   name: isString, collection: isString, columns: optional(arrayOf(isString)),
-  analyzer: optional(analyzerRecord), createdAt: isTimestamp, incarnation: isString,
+  analyzer: optional(analyzerRecord),
   shards: optional(arrayOf(isString)), spatial: optional(spatialRecord), embedding: optional(embeddingRecord),
   indexes: optional(arrayOf((value): value is IndexDefinition => typeof value === "object" && value !== null && "name" in value && typeof value.name === "string" && "fields" in value && Array.isArray(value.fields))),
+};
+export const isCrossTenantIndexDefinition = objectFields<CrossTenantIndexDefinition>(definitionFields);
+const isStoredDefinition: JsonValidator<StoredDefinition> = objectFields<StoredDefinition>({
+  ...definitionFields, createdAt: isTimestamp, incarnation: isString,
 });
 
 /** A stored definition, checked rather than trusted: it was written by an earlier process. */
@@ -262,7 +266,7 @@ const validate = (definition: CrossTenantIndexDefinition): Effect.Effect<void, I
 };
 
 /** The definition with only what it declares, so an index reads back as it was given. */
-const normalized = (definition: CrossTenantIndexDefinition): CrossTenantIndexDefinition => ({
+export const crossTenantIndexDefinitionOf = (definition: CrossTenantIndexDefinition): CrossTenantIndexDefinition => ({
   name: definition.name,
   collection: definition.collection,
   ...(definition.columns === undefined ? {} : { columns: [...definition.columns] }),
@@ -390,7 +394,7 @@ export const crossTenantIndexesOver = (options: {
   const summaryOf = (definition: StoredDefinition): CrossTenantIndexSummary => {
     const held = status.get(definition.name);
     return {
-      ...normalized(definition),
+      ...crossTenantIndexDefinitionOf(definition),
       createdAt: definition.createdAt,
       ...(held?.refreshedAt === undefined ? {} : { refreshedAt: held.refreshedAt }),
       partitions: held?.partitions ?? 0,
@@ -710,7 +714,7 @@ export const crossTenantIndexesOver = (options: {
             ...(input.indexes === undefined ? {} : { indexes }),
           };
         }).pipe(Effect.catchTags({ InvalidConstraint: error => Effect.fail(new InvalidCrossTenantIndex({ name: input.name, reason: error.reason })), InvalidIndex: error => Effect.fail(new InvalidCrossTenantIndex({ name: input.name, reason: error.reason })) }));
-        const stored: StoredDefinition = { ...normalized(input), ...checked, shards: [...requested], createdAt: new Date().toISOString(), incarnation: crypto.randomUUID() };
+        const stored: StoredDefinition = { ...crossTenantIndexDefinitionOf(input), ...checked, shards: [...requested], createdAt: new Date().toISOString(), incarnation: crypto.randomUUID() };
         yield* ensure(registry, DEFINITIONS, { name: DEFINITIONS });
         yield* ensure(registry, STATUSES, { name: STATUSES, columns: [] });
         yield* Effect.orDie(registry.write({
