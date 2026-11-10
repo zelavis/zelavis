@@ -375,7 +375,8 @@ export const startFromOutbox = <Payload extends Workflow.AnyStructSchema>(option
   readonly interval: Duration.Input;
 }) =>
   Effect.gen(function* () {
-    const page = yield* options.outbox.read({ topic: options.topic, limit: 100 });
+    // Read from the start every time, so no cursor is ever refused.
+    const page = yield* Effect.orDie(options.outbox.read({ topic: options.topic, limit: 100 }));
     for (const message of page.messages) {
       yield* options.workflow.execute(options.payloadOf(message), { discard: true });
       yield* options.outbox.remove({ ids: [message.id] }).pipe(Effect.orDie);

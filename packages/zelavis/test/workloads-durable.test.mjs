@@ -194,6 +194,28 @@ test("an outbound webhook delivers outbox messages at least once with a stable I
   assert.deepEqual(logs.map((log) => log.status).sort(), ["completed", "failed"]);
 });
 
+test("an outbound webhook goes on delivering after its Tenant is removed and written again", async (t) => {
+  const { api, group, create } = await open(t);
+  const received = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => { received.push(JSON.parse(body).payload); response.statusCode = 200; response.end("{}"); });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  await create({ type: "webhook", name: "orders", tenant: "acme", url: `http://127.0.0.1:${server.address().port}/in`, secret: "outbound-secret-123456" });
+  const serving = serveDurableWorkloads(api, group.context);
+  t.after(() => serving.stop());
+  // Enough messages that the runner's cursor stands past where the next life's first message will be.
+  for (let order = 1; order <= 6; order++) await api.forTenant("acme").outbox.emit({ topic: "webhook.orders", payload: { order } });
+  await until(() => received.length === 6, "the first life's messages are delivered");
+
+  await api.dropTenant("acme");
+  await api.forTenant("acme").outbox.emit({ topic: "webhook.orders", payload: { order: "again" } });
+  await until(() => received.some((payload) => payload.order === "again"), "the new life's message is delivered, not skipped by the old cursor");
+});
+
 test("a timestamped signature covers its time and the body, and a stale or altered one is refused", async (t) => {
   const { api, group, create } = await open(t);
   const secret = "whsec_timestamped_0123456789";

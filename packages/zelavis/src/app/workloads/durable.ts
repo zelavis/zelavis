@@ -2,7 +2,7 @@ import { Clock, Cron, Effect, Fiber, Queue, Result } from "effect";
 import { unrefSleep, type EntityStep } from "../../db/entities.js";
 import type { DeliveredMessage } from "../../db/outbox.js";
 import type { DatabaseRuntimeApi, RuntimeEntityHandler } from "../../db/runtime-api.js";
-import { integration, present } from "../../core/runtime/effect-boundary.js";
+import { integration, present, unwrapFailure } from "../../core/runtime/effect-boundary.js";
 import type { WorkloadDefinition, WorkloadsApi } from "./workloads-service.js";
 
 /**
@@ -303,6 +303,10 @@ export function serveDurableWorkloads(
       ...(responseStatus === undefined ? {} : { responseStatus }),
     })).pipe(Effect.catchCause(() => Effect.void));
 
+  /** A refusal of the outbox cursor that reading from the start answers. */
+  const restarts = (failure: unknown) => typeof failure === "object" && failure !== null && "_tag" in failure &&
+    (failure._tag === "CursorFromAnotherLife" || failure._tag === "CursorCompacted");
+
   /** Read a webhook's outbox when `reason` says there may be something new, and deliver what is owed a retry. */
   const deliverFor = (workload: WorkloadDefinition, read: boolean) => Effect.gen(function* () {
     const tenant = workload.tenant;
@@ -330,7 +334,14 @@ export function serveDurableWorkloads(
     for (const [, owed] of [...queue.retry]) if (owed.at <= at) yield* attempt(owed.message, owed.attempts);
     if (!read || queue.retry.size >= DELIVERY_BACKLOG) return;
     for (let pages = 0; pages < 4; pages++) {
-      const page = yield* integration(() => outbox.read({ topic, limit: DELIVERY_PAGE, ...(queue.cursor === undefined ? {} : { after: queue.cursor as never }) }));
+      const page = yield* integration(() => outbox.read({ topic, limit: DELIVERY_PAGE, ...(queue.cursor === undefined ? {} : { after: queue.cursor as never }) })).pipe(
+        // The Tenant was removed and written again, or its log compacted past the cursor: what the outbox still holds
+        // is what is owed, so it is read again from the start.
+        Effect.catchIf((failure) => restarts(unwrapFailure(failure)), () => {
+          queue.cursor = undefined;
+          return integration(() => outbox.read({ topic, limit: DELIVERY_PAGE }));
+        }),
+      );
       for (const message of page.messages) if (!queue.retry.has(message.id)) yield* attempt(message, 0);
       if (page.cursor !== undefined) queue.cursor = page.cursor as string;
       if (!page.more) break;

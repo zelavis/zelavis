@@ -1,7 +1,7 @@
 import { Clock, Effect, Stream } from "effect";
 import { isJsonObject, isString, objectFields, parseJson } from "../core/json-validation.js";
 import type { DocumentsApi, OutboxEmit } from "./document-model.js";
-import { dieUnlessMoving, type IdempotencyKeyReused, InvalidMessage, MessageExists, type TenantMoving } from "./errors.js";
+import { type CursorCompacted, type CursorFromAnotherLife, dieUnlessMoving, type IdempotencyKeyReused, InvalidMessage, MessageExists, type TenantMoving } from "./errors.js";
 import type { EventCursor } from "./events.js";
 import type { JsonObject } from "./json.js";
 import { emptyManifest } from "./model.js";
@@ -61,13 +61,15 @@ export interface OutboxApi {
   /**
    * Messages in the order they were committed, after `after`, up to `limit`
    * (1 to 1000, default 100) — those the outbox still holds: a removed message
-   * is not read again.
+   * is not read again. A cursor the read can no longer continue is refused, as
+   * an event read's is (`CursorCompacted`, `CursorFromAnotherLife`), and the
+   * reader reads the outbox again from the start.
    */
   readonly read: (input?: {
     readonly after?: EventCursor;
     readonly limit?: number;
     readonly topic?: string;
-  }) => Effect.Effect<OutboxPage>;
+  }) => Effect.Effect<OutboxPage, CursorCompacted | CursorFromAnotherLife>;
   /** Remove handled messages by id, up to 1000 at a time; ids the outbox does not hold are skipped. */
   readonly remove: (input: { readonly ids: ReadonlyArray<string> }) => Effect.Effect<{ readonly removed: number }, InvalidMessage | TenantMoving>;
 }
@@ -166,7 +168,7 @@ export const outboxFor = (store: ObjectStoreApi, documents: DocumentsApi): Outbo
     }),
 
   read: (input) =>
-    dieUnlessMoving(store.reading(Effect.gen(function* () {
+    store.reading(Effect.gen(function* () {
       const limit = input?.limit ?? 100;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MESSAGE_LIMIT) {
         return yield* Effect.die(new RangeError(`an outbox read takes 1 to ${MESSAGE_LIMIT} messages, not ${limit}`));
@@ -195,7 +197,8 @@ export const outboxFor = (store: ObjectStoreApi, documents: DocumentsApi): Outbo
         if (step.length < READ_STEP) return page(false);
         if (scanned >= READ_SCAN_LIMIT) return page(true);
       }
-    }))).pipe(Effect.orDie),
+    })).pipe(Effect.catch((error) =>
+      error._tag === "CursorCompacted" || error._tag === "CursorFromAnotherLife" ? Effect.fail(error) : Effect.die(error))),
 
   remove: ({ ids }) =>
     Effect.gen(function* () {
