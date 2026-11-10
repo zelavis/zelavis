@@ -27,7 +27,8 @@ const run = promisify(execFile);
 const OWNER = { principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] } };
 const API = "http://127.0.0.1/zelavis/api/v1/runtime";
 const MAP = { virtualRanges: 256 };
-const RESOURCES = { cpuCores: 1, memoryBytes: 2 ** 30, diskBytes: 8 * 2 ** 30 };
+// The Agent reports actual free disk. This small SQLite fixture needs no multi-gigabyte reservation.
+const RESOURCES = { cpuCores: 1, memoryBytes: 2 ** 30, diskBytes: 512 * 2 ** 20 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (read, accept, what, deadline = 60_000) => {
   const end = Date.now() + deadline;
