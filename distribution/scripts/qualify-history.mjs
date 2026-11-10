@@ -90,6 +90,8 @@ async function bound(id) {
   return { engine: journal.selected.version, layout, retained, root };
 }
 
+const releaseFormat = async (version) => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
+
 const sites = (state) => Object.values(state.sites ?? {});
 
 if (phase === 'create-wordpress') {
@@ -153,10 +155,11 @@ if (phase === 'create-wordpress') {
   // app's bound App does not follow it: its data stays in the layout it was written in, on the engine that wrote it (the last
   // layout-2 engine the host ran, which need not be the previous release), and the Project says it can be upgraded.
   const { client } = await sdk();
-  const releaseFormat = async (version) => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
+  const targetFormat = await releaseFormat(process.env.ZELAVIS_HISTORY_TO);
+  assert.notEqual(targetFormat, 2, 'this fixture must cross a layout change');
   for (const site of sites(await readState())) {
     const project = await client.projects.get(site.id);
-    assert.deepEqual(project.dataLayout, { state: 'upgradeRequired', from: 2, to: 4 }, `${site.id} offers the layout migration`);
+    assert.deepEqual(project.dataLayout, { state: 'upgradeRequired', from: 2, to: targetFormat }, `${site.id} offers the layout migration`);
     const held = await bound(site.id);
     assert.notEqual(held.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host does not follow the Platform across the layout change`);
     assert.equal(await releaseFormat(held.engine), 2, `${site.id}: its host still runs an engine that writes the layout its data is in (${held.engine})`);
@@ -170,7 +173,7 @@ if (phase === 'create-wordpress') {
     assert.equal(project.dataLayout, undefined, `${site.id} no longer offers the migration`);
     const after = await bound(site.id);
     assert.equal(after.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host now follows the Platform's engine`);
-    assert.deepEqual(after.layout, { format: 4 }, `${site.id}: the data layout is recorded`);
+    assert.deepEqual(after.layout, { format: await releaseFormat(after.engine) }, `${site.id}: the data layout is recorded`);
     const kept = after.retained.filter((name) => name.startsWith('data.format-2-'));
     assert.equal(kept.length, 1, `${site.id}: the format-2 data is kept (${after.retained})`);
     const shards = await readdir(join(after.root, kept[0], 'primary', 'shards'));
@@ -211,7 +214,7 @@ if (phase === 'create-wordpress') {
   assert.notEqual(upgraded.engineVersion, before.engineVersion, 'it moved to the newer engine');
   assert.ok(upgraded.dataMigration, `the response reports the migration: ${JSON.stringify(upgraded).slice(0, 400)}`);
   assert.equal(upgraded.dataMigration.from, 2);
-  assert.equal(upgraded.dataMigration.to, 4);
+  assert.equal(upgraded.dataMigration.to, await releaseFormat(upgraded.engineVersion));
   assert.equal(upgraded.dataMigration.documents, Object.keys(native.notes).length);
   assert.ok(upgraded.dataMigration.eventsCarried >= Object.keys(native.notes).length, "every note's history is carried");
   assert.equal(upgraded.dataMigration.tenantsWithoutHistory, 0, "the App's log was whole");
@@ -226,7 +229,7 @@ if (phase === 'create-wordpress') {
   // Writes work on the migrated data.
   await client.data(native.id).documents.insert('notes', { id: `after-${Date.now()}`, data: { text: 'written on the new engine' } });
   const root = join(projects, native.id, '.zelavis');
-  assert.deepEqual(JSON.parse(await readFile(join(root, 'data-layout.json'), 'utf8')), { format: 4 });
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'data-layout.json'), 'utf8')), { format: await releaseFormat(project.engineVersion) });
   const kept = (await readdir(root)).filter((name) => name.startsWith('data.format-2-'));
   assert.equal(kept.length, 1, `the format-2 data is kept (${kept})`);
   const shards = await readdir(join(root, kept[0], 'primary', 'shards'));

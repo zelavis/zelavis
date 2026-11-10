@@ -103,7 +103,7 @@ if (args.from) {
   cpSync(args.from, sourceDir, { recursive: true });
 } else {
   await timed("generate", async () => {
-    const db = await oldDb.openNodeDatabase({ directory: sourceDir });
+    const db = await oldDb.openNodeDatabase({ directory: sourceDir, ...(proveLayout4 ? { crossTenantRefresh: false } : {}) });
     for (const tenant of ["tenant-a", "tenant-b", "tenant-empty"]) {
       const d = db.database.forTenant(tenant).documents;
       if (tenant === "tenant-empty") continue;
@@ -179,9 +179,18 @@ if (args.from) {
     await runOld(db.database.global.documents.insert({ collection: "settings", id: "site", data: { theme: "dark" } }));
     if (proveLayout4) {
       assert.equal(await runWorkflow(db.database, oldEffect, oldWorkflow), 1);
-      await runOld(db.database.crossTenantIndexes.define({ name: "migration-posts", collection: "posts", columns: ["views"] }));
+      await runOld(db.database.crossTenantIndexes.define({ name: "migration-posts", collection: "posts", columns: ["title", "views"] }));
       const [index] = await runOld(db.database.crossTenantIndexes.refresh("migration-posts"));
       assert.deepEqual(index.failures, []);
+      // Deliberately leave the persisted index stale. A migration that copied its entries instead of rebuilding
+      // would miss this post. The expected answer comes from refreshing the earlier engine's separate copy.
+      await runOld(db.database.forTenant("tenant-a").documents.insert({
+        collection: "posts", id: "migration-after-refresh", data: { title: "migration-after-refresh-proof" },
+      }));
+      const stale = await runOld(db.database.crossTenantIndexes.query({
+        index: "migration-posts", where: [{ path: "title", value: "migration-after-refresh-proof" }],
+      }));
+      assert.deepEqual(stale.matches, [], "the source index must be stale for this fixture");
     }
     await db.close();
   });
@@ -219,7 +228,7 @@ const answer = async (runner, documents, collections) => {
   return battery(documents, run)(collections);
 };
 
-const open = async (dbModule, directory) => dbModule.openNodeDatabase({ directory });
+const open = async (dbModule, directory) => dbModule.openNodeDatabase({ directory, ...(proveLayout4 ? { crossTenantRefresh: false } : {}) });
 const tenantsOf = async (db, runner) => runner(db.database.tenants);
 
 const layout4Answers = async (database, run, migrated) => {
@@ -251,7 +260,7 @@ const layout4Answers = async (database, run, migrated) => {
     if (!page.next) break;
     after = page.next;
   }
-  assert.ok(matches.length > 0);
+  assert.ok(matches.some(({ id }) => id === "migration-after-refresh"), "rebuilt entries must include the post missing from the old index");
   matches.sort((a, b) => a.tenant.localeCompare(b.tenant) || a.id.localeCompare(b.id));
   const workflows = await run(database.workflowExecutions());
   assert.deepEqual(workflows.map(({ workflow, complete, activities }) => [workflow, complete, activities]), [["MigrationProof", true, 1]]);
@@ -277,7 +286,11 @@ await timed("old-answers", async () => {
     oldGlobal = await runOld(old.database.global.documents.findById({ collection: "settings", id: "site" }));
     assert.equal(oldGlobal?.data.theme, "dark");
   }
-  if (proveLayout4) oldLayout4Answers = await layout4Answers(old.database, runOld, false);
+  if (proveLayout4) {
+    const [index] = await runOld(old.database.crossTenantIndexes.refresh("migration-posts"));
+    assert.deepEqual(index.failures, []);
+    oldLayout4Answers = await layout4Answers(old.database, runOld, false);
+  }
   await old.close();
 });
 
