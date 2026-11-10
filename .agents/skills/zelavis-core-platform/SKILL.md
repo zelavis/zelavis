@@ -488,8 +488,12 @@ before editing.
 - A branch (`db.branchTenant`, `seed(source, { branch: true })`) copies a
   Tenant as of one source position: records, then the source's log up to the
   position read after them, under the target's writer. It records its lineage,
-  the only way a partition accepts another's cursor (up to the branch point),
-  which keeps copied checkpoints valid without rewriting them. An unfinished
+  the only way a partition accepts another's cursor (up to the branch point, and
+  only from the source life it was branched from), which keeps copied
+  checkpoints valid without rewriting them. An event cursor names its
+  partition's life (`incarnation`); a read refuses one of another life
+  (`CursorFromAnotherLife`), since a Tenant removed and written again restarts
+  its log, and the cursor encoding is part of the data layout. An unfinished
   branch refuses reads and writes (`TenantBranching`) until run again or the
   database reopens. Only the target is leased; the source is read a page per
   routed call so it can move meanwhile. The outbox is left behind by default

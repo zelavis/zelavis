@@ -44,7 +44,9 @@ Each Tenant is a partition of its shard: everything it stores lives in its own
 range of keys, with its own identifiers and its own event log. Nothing written
 for one Tenant is reachable through another Tenant's handle, and a Tenant moved
 to another shard keeps its identifiers and log positions, so its cursors and
-projection checkpoints carry on.
+projection checkpoints carry on. A Tenant removed and written again is a new
+life of it: its log starts over, and a cursor from before is refused
+(`CursorFromAnotherLife`) rather than read as a place in the new log.
 
 A transaction is atomic within one Tenant. A batch (`documents.write`) commits
 together or not at all; there is no write that spans Tenants. Work that must
@@ -117,7 +119,9 @@ yield* writeAcknowledged(yield* leaderDb.followers.source('acme'), yield* leader
   taken on one side continues on the other, and everything the follower applies is checked as it is applied
   (`EventGap`, `ReplicaDiverged`) whatever carried it. The failures a follower acts on cross the transport as
   themselves (a 409 carrying `code` and `detail`): a compacted cursor is `CursorCompacted` on the follower too, and it
-  copies the partition again.
+  copies the partition again. A follower is the leader's partition in the same life, so a Tenant removed and written
+  again on the leader refuses the follower's cursor (`CursorFromAnotherLife`), and the follower copies it afresh
+  (`seed: "recreated"`).
 - **Holds on the leader's own placement.** A remote follower's hold is taken where the partition is placed when the call
   arrives, and moves with the partition: a move takes the source's live holds on the target before routing points
   there, and again before the source is dropped.
@@ -579,6 +583,18 @@ and pass it back unchanged. Do not parse, compare, increment, or assume it is a
 global integer: it names a position in the Tenant's own log, which moves with
 the Tenant and means nothing in another Tenant's.
 
+A cursor also names the life of the Tenant it was issued in. Removing a Tenant
+and writing to it again starts a new life whose log begins over, so a cursor
+kept from the earlier life names a place in a log that is gone. A read refuses
+it rather than skipping the new life's events up to its old position: the JS
+call fails with `CursorFromAnotherLife`, and HTTP answers 409 with
+`code: "cursor-from-another-life"`, which the SDK raises as a
+`ZelavisClientHttpError` with that status and body and the CLI prints as its
+error. The consumer reads the feed again from the start, without `after`. A
+cursor the log was compacted past is refused the same way (`CursorCompacted`).
+A move, a follower and a copy keep the life, so their cursors carry on; a
+cursor naming position 0, the start of the log, is accepted in any life.
+
 A read of several steps — a query resolving its matches and then reading the
 documents — answers from one snapshot of its shard, so it sees one moment
 however many writes land while it runs. Writes always see the shard as it is:
@@ -900,7 +916,9 @@ gives you a second database to try something on. It needs `database.restore`, ca
 - **History carries on.** The branch keeps the source's identifiers, versions and log positions. A cursor the source
   handed out up to the branch point names the same place in the branch, so a consumer or checkpoint carries on; one
   from after it is refused (`ForeignCursor`). A branch of a branch accepts cursors of both ancestors, each up to its
-  own branch point.
+  own branch point. The branch is a life of its own, and its lineage names the life of each ancestor it was taken
+  from: once the source is removed and written again, a cursor of the source's new life is refused in the branch
+  (`CursorFromAnotherLife`), and the branch can no longer be merged back into it.
 - **Divided Tenants.** A Tenant divided into parts branches into one divided into the same parts, each part copied
   from its counterpart as of a position of its own. The guarantee is per part: each part of the branch is the source
   part as of one position, but the parts are as of different moments, so a write that landed on two parts (a saga) can
@@ -1283,4 +1301,5 @@ zelavis data schema-types --project PROJECT --json
 Collection `documents.count` reads a persisted namespace counter in constant time.
 The counter commits with the document changes and is rebuilt by replication,
 restore and lens maintenance. Expired documents remain counted until removed.
-The pre-release shard layout is v4; older development layouts must be recreated.
+The pre-release shard layout is 5: event cursors name the life of the Tenant that issued them. A Project on an earlier
+layout reaches it through the data-layout migration ([Updates](/architecture/updates/#data-layout-changes)).

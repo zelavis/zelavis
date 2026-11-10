@@ -1373,6 +1373,20 @@ Key rules:
   cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
   `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
   postings, a state-derived export for backups) are what still work.
+- An event cursor names its partition, the life of that partition
+  (`PartitionStats.incarnation`: set by the first write, kept by a copy, a
+  move or a follower, new once the partition is removed and written again) and
+  a position in that life's log. A read refuses a cursor of another life with
+  `CursorFromAnotherLife`; never read its position as a place in the new log,
+  which skips every event of the new life up to it and tells nobody. Do not try
+  to make positions unique across lives instead: a removal leaves nothing
+  behind and a new life may be routed to another shard, so only the cursor can
+  say which log it belongs to. A branch's lineage names each ancestor's life,
+  so a source cursor carries on in the branch only up to the branch point of
+  the life it was branched from. Position 0 is the start of every life.
+  Cursors are stored inside the data (projection checkpoints, time-series
+  state), so their encoding is part of the data layout (`CURRENT_FORMAT`), and
+  changing it is a layout change crossed through the data-layout migration.
 - The log is the transactional outbox: every write's event is in the batch
   that makes the change. A tenant's event read (and the KV change feed built on
   it) looks at a bounded stretch of the log and returns `{ events, cursor,

@@ -206,8 +206,9 @@ many documents were past their first version (their earlier versions' change his
 keeps the original. Each document keeps its id, data, version, creation and update times and expiry, so a version a client
 read before the migration still names the same document state: a stale `expectedVersion` is still refused, never matched
 again later by a restarted count. What does not carry over: the change history restarts with one event per document at new
-positions, so a change-feed cursor issued before the migration is refused (`ForeignCursor`, since it names the earlier
-layout's shard) and its consumer reads the feed again from the start; idempotency receipts are dropped. Time series are not carried: a series'
+positions, and every Tenant starts a new life, so a change-feed cursor issued before the migration is refused
+(`CursorFromAnotherLife`, 409; one from a layout before 5, which names no life, as `ForeignCursor`) and its consumer reads
+the feed again from the start; idempotency receipts are dropped. Time series are not carried: a series'
 definition is code the app registers at run time and its points are derived from the event log, which restarts, so after a migration
 the app registers the series again and rebuilds it from the migrated documents; the earlier points and the history they were built from
 are not recreated. A migration refuses to run when the
@@ -219,6 +220,11 @@ The kept data is never removed automatically. List it with `client.projects.reta
 `project.runtime.manage`; removal cannot be undone, is refused while a migration is unsettled or the Project has an unfinished update,
 and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
 its exact name is typed.
+
+Layout 5, written by the first release after 2.0.0-alpha.44, binds every event cursor to the life of the Tenant that issued
+it, so a cursor kept from before a Tenant was removed and written again is refused instead of silently skipping events
+(see [Events and cursors](/api/database/#events-and-cursors)). Apps on layout 4 cross it the same way as the checklist below,
+with that release in place of alpha.43.
 
 ### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
 
