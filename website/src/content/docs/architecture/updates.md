@@ -221,10 +221,14 @@ The kept data is never removed automatically. List it with `client.projects.reta
 and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
 its exact name is typed.
 
-Layout 5, written by the first release after 2.0.0-alpha.44, binds every event cursor to the life of the Tenant that issued
-it, so a cursor kept from before a Tenant was removed and written again is refused instead of silently skipping events
-(see [Events and cursors](/api/database/#events-and-cursors)). Apps on layout 4 cross it the same way as the checklist below,
-with that release in place of alpha.43.
+The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44); it refuses any other before copying
+anything. Layout 5, written by the first release after 2.0.0-alpha.44, binds every event cursor to the life of the Tenant
+that issued it, so a cursor kept from before a Tenant was removed and written again is refused instead of silently skipping
+events (see [Events and cursors](/api/database/#events-and-cursors)). Apps on layout 4 cross it the same way as the
+checklist below, with that release in place of alpha.43. What a migration recreates is collections (their declared columns
+included), documents and schemas; a Tenant that also holds outbox messages, durable entities (the queues of jobs,
+schedules and webhooks), workflow state, aggregates, time-series definitions, cross-Tenant indexes or schema activations is
+refused, naming them, and its App stays on the engine it has, unchanged.
 
 ### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
 
