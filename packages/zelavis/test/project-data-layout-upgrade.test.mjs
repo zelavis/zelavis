@@ -31,7 +31,7 @@ async function platform(t, { failPrepare = false } = {}) {
       if (before !== undefined && formats[before] !== formats[project.engineVersion]) {
         if (failPrepare) throw Error("migration failed");
         data.set(project.id, formats[project.engineVersion]);
-        reports.set(project.id, { from: formats[before], to: formats[project.engineVersion], tenants: 1, collections: 1, documents: 3, documentsWithHistoryDropped: 1, retained: "data.format-2-x" });
+        reports.set(project.id, { from: formats[before], to: formats[project.engineVersion], tenants: 1, collections: 1, documents: 3, eventsCarried: 7, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 1, retained: "data.format-2-x" });
       }
       selected.set(project.id, project.engineVersion);
     },
@@ -65,7 +65,7 @@ test("an upgrade across a data-layout change stops the Project, migrates in prep
   assert.equal(upgraded.runtime.status, "running");
   assert.equal(selected.get("old"), "2.0.1");
   assert.equal(data.get("old"), 4, "the driver migrated the data");
-  assert.deepEqual(upgraded.dataMigration, { from: 2, to: 4, tenants: 1, collections: 1, documents: 3, documentsWithHistoryDropped: 1, retained: "data.format-2-x" }, "the upgrade response carries the report");
+  assert.deepEqual(upgraded.dataMigration, { from: 2, to: 4, tenants: 1, collections: 1, documents: 3, eventsCarried: 7, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 1, retained: "data.format-2-x" }, "the upgrade response carries the report");
   const order = calls.map(call => call[0]);
   assert.ok(order.indexOf("stop") < order.indexOf("prepare") && order.indexOf("prepare") < order.indexOf("commit") && order.indexOf("commit") < order.lastIndexOf("start"), `stopped, migrated while stopped, settled, started again: ${order}`);
   assert.ok(!order.includes("prepareUpdate") && !order.includes("applyUpdate"), "never the live engine handover");

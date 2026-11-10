@@ -423,6 +423,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         yield* integration(() => writeFile(join(root, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
         yield* integration(() => rm(work, { recursive: true, force: true }));
         return { from, to, tenants: report.tenants, collections: report.collections, documents: report.documents,
+            eventsCarried: report.eventsCarried, tenantsWithoutHistory: report.tenantsWithoutHistory,
             documentsWithHistoryDropped: report.documentsWithHistoryDropped, retained } satisfies ZelavisProjectDataMigration;
     });
     const launch = Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1], role: ProjectLeaseRole, startOptions?: ZelavisProjectStartOptions) {

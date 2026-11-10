@@ -1,7 +1,7 @@
 # The documents layer can replay an earlier engine's history
 Job: Make the data-layout migration carry each Tenant's change history, not just its final state (part 1: the database primitives it needs).
 Date: 2026-11-10
-Status: planned
+Status: done
 Verified-at: 57449988a6
 Part: 1 of 2. Read 00-overview.md first.
 
@@ -9,15 +9,15 @@ To start:    Execute part 1 in /Users/ivanjeremicx/Projects/zelavis/.claude/work
 To continue: Continue the plan in /Users/ivanjeremicx/Projects/zelavis/.claude/worktrees/hopeful-goldstine-668fac/.agents/plans/2026-11-10-data-migration-carries-history/01-db-history-replay.md. Start with its section 8.
 
 ## Progress
-- [ ] 1. Install, build and prove the existing migration tests pass at the starting commit
-- [ ] 2. Let a store transaction stamp its events with a given time (`Txn.stampedAt`)
-- [ ] 3. Split `documentPut` into its check and its write (`putDocument`), behavior unchanged
-- [ ] 4. Carry a collection's creation time and event time (`CARRY_COLLECTION`)
-- [ ] 5. Replay history changes through `documents.write` (`REPLAY_HISTORY` `Changes`)
-- [ ] 6. Check a replayed final state against today's constraints (`REPLAY_HISTORY` `Settle`)
-- [ ] 7. Rewrite documents on schema activation only when a lens declaration changed
-- [ ] 8. Full verification from the repository root
-- [ ] 9. Self-audit
+- [x] 1. (2026-11-10) Install, build and prove the existing migration tests pass at the starting commit — install, build and 6/6 migration tests green at 3151617003
+- [x] 2. (2026-11-10) Let a store transaction stamp its events with a given time (`Txn.stampedAt`) — S1 and S2 pass; S2 failed first ("txn.stampedAt is not a function")
+- [x] 3. (2026-11-10) Split `documentPut` into its check and its write (`putDocument`), behavior unchanged — data-migration and replay tests green after the split
+- [x] 4. (2026-11-10) Carry a collection's creation time and event time (`CARRY_COLLECTION`) — C1, C2 pass
+- [x] 5. (2026-11-10) Replay history changes through `documents.write` (`REPLAY_HISTORY` `Changes`) — R1–R5 pass with the listed revisions and times
+- [x] 6. (2026-11-10) Check a replayed final state against today's constraints (`REPLAY_HISTORY` `Settle`) — T1–T3 pass
+- [x] 7. (2026-11-10) Rewrite documents on schema activation only when a lens declaration changed — done differently: as written it broke resuming an interrupted activation (existing kill test failed, 0 of 4000 backfilled); a mark record committed with the declarations keeps the skip resume-safe; D1, D2 and all 108 schema/migration/replay tests pass
+- [x] 8. (2026-11-10) Full verification from the repository root — `TMPDIR=/private/tmp pnpm run verify` exit 0, no failing test (2752 in `zelavis`)
+- [x] 9. (2026-11-10) Self-audit — diff re-read against sections 1–5; one file beyond the list (`src/db/tenancy.ts`, the mark's namespace); no forbidden pattern, debug output or TODO; replay, schema and migration tests green after the last edit
 
 ## 0. Summary and finish line
 
@@ -901,3 +901,62 @@ From the repository root, one after the other:
 > counts only. It asks nothing.
 
 ## Execution report
+
+### Session 1: 2026-11-10
+
+**Final status: done.** Steps 1–9 carried out in one session, at `3151617003` (the plan's commit; no cited source file
+changed since `Verified-at`).
+
+Steps:
+1. done.
+2. done differently: the stamp check is one helper (`refuseStamp`) both `put` and `retract` call first, instead of the same
+   `if` written twice. Same behavior, including a bad stamp on a retraction of nothing live.
+3. done.
+4. done (`isCarriedCollection` uses the shared `isTime`/`isStamp` validators step 5 adds).
+5. done. `MAX_BATCH` moved to module level, as the step preferred. `replayChanges` narrows the live document once
+   (`live = { seq, document }`) instead of non-null assertions.
+6. done.
+7. done differently, see Deviations.
+8. done: `TMPDIR=/private/tmp pnpm run verify` → exit 0, no failing test.
+9. done.
+
+Verification:
+- `pnpm --filter zelavis run build` → exit 0.
+- `node --test test/db-history-replay.test.mjs` → 13 pass, 0 fail (S1, S2, C1, C2, R1–R5, T1–T3, D1+D2 as one test).
+- `TMPDIR=/private/tmp node --test test/db-history-replay.test.mjs test/data-migration.test.mjs $(grep -l "declareFromSchema\|schemas.activate\|schemas.save" test/*.test.mjs)`
+  → 108 pass, 0 fail.
+- `TMPDIR=/private/tmp pnpm run verify` (repository root) → exit 0.
+
+Deviations:
+- **Step 7 as written broke resuming an interrupted activation.** With "rewrite only when the merge changed a lens
+  declaration", an activation killed after its declarations were recorded and before its backfill finished found, on
+  resume, the declarations already as it wanted them, skipped the backfill and published the version over documents
+  whose postings were never derived. The existing test "an activation killed partway through is finished when the
+  database opens" (`test/db-schema-activation.test.mjs`) failed with 0 of 4000 documents backfilled. Fix, inside
+  `declareFromSchema`: the transaction that records the declarations also puts a mark record
+  (`REDERIVING_NAMESPACE = "zv.schema.rederiving"`, keyed by collection, **NEW** in `src/db/tenancy.ts`) when a lens
+  declaration changed; the mark is retracted once the documents are written back (after the withdrawal's rewrite too),
+  and only while the collection still declares what this run left it declaring. A run that finds the mark rewrites
+  whatever it changed itself. The mark is a record of its own, not a field of the collection record, so the change feed
+  shows no extra `collection.updated` (a first attempt as a collection field added one per lens-changing activation and
+  failed `test/db-system-views.test.mjs`'s exact feed). Files beyond the step's list: `src/db/tenancy.ts`.
+- D1 and D2 are one test ("activating a schema rewrites documents only when it changes a lens declaration"), since D2
+  starts from D1's end state; it also asserts `activation.documents` (0, then 3), the summed derived measure (10) and
+  that the lens-changing activation adds exactly one collection event.
+- R1 additionally asserts the retired value (`email: "b"`) answers nothing.
+
+Decisions taken for the user:
+- The backfill mark lives in its own reserved namespace (`zv.schema.rederiving`) rather than on the collection record
+  or in the activation intent. Reason: it is committed atomically with the declarations it protects, covers every
+  caller of `declareFromSchema`, survives a later refused activation (which retracts the intent), and adds no event to
+  the change feed. A collection dropped mid-backfill can leave a stale mark; the next activation of a collection of that
+  name then rewrites once more than needed and clears it.
+
+Added items: none.
+
+Context the plan lacked:
+- `declareFromSchema`'s unconditional rewrite was what made an interrupted activation resumable ("every step is
+  idempotent"); skipping it needs a durable signal that the backfill is unfinished.
+- `test/db-schema-activation.test.mjs` already kills a real process mid-activation, and `test/db-system-views.test.mjs`
+  asserts the exact feed around an activation; both constrain step 7.
+- `pnpm --filter zelavis run build` takes about 3 seconds here, so building between every step costs nothing.

@@ -90,6 +90,14 @@ export interface Txn {
    * and costs no commit of its own per record.
    */
   readonly allocate: Effect.Effect<Seq, DbError>;
+
+  /**
+   * This transaction, with the events its puts and retractions append stamped `at` (epoch milliseconds, a safe integer
+   * of at least 0) instead of the time they are written. For the data-layout migration only: it replays an earlier
+   * engine's history, whose events happened when that engine accepted them. An event's time is otherwise always when
+   * its write was accepted, so nothing else passes one.
+   */
+  readonly stampedAt: (at: number) => Txn;
 }
 
 /**

@@ -1079,10 +1079,15 @@ export interface DocumentsApi {
    * What the previous activation derived is replaced; what was declared by
    * hand is kept, and a derived declaration that would take its place is
    * skipped with the reason. Recorded first, so writes from here on use them;
-   * then the documents are written back, and a vector a document holds that
+   * then the documents are written back, only when a derived declaration
+   * changes what they post (a set that leaves every lens as it was rewrites
+   * none, and reports `documents: 0`), and a vector a document holds that
    * the derived embedding does not admit takes the whole set back off again
    * (`VectorShapeMismatch`). Running it again with the same declarations
-   * changes nothing, which is what lets an interrupted activation resume.
+   * changes nothing, which is what lets an interrupted activation resume: a
+   * mark committed with the declarations stands until the documents are
+   * written back, so a run cut off between the two is finished by the next
+   * one although it finds the declarations already recorded.
    */
   readonly declareFromSchema: (input: {
     readonly collection: string;

@@ -1,7 +1,7 @@
 # A data-layout migration carries each Tenant's change history
 Job: Make the data-layout migration (`packages/zelavis/src/adapters/_node-data-migration.ts`, run by `src/adapters/_node-project-runtime.ts`) carry each Tenant's change history, not just its final state. Proof: `distribution/scripts/format-migration/harness.mjs` against real alpha.42, with its time-series comparison extended so the points must match.
 Date: 2026-11-10
-Status: planned
+Status: done
 Verified-at: 57449988a6
 
 To start:    Execute part 1 in /Users/ivanjeremicx/Projects/zelavis/.claude/worktrees/hopeful-goldstine-668fac/.agents/plans/2026-11-10-data-migration-carries-history/01-db-history-replay.md. Read 00-overview.md first, then start with the part's section 8.
@@ -11,8 +11,8 @@ To continue: Continue the plan in /Users/ivanjeremicx/Projects/zelavis/.claude/w
 
 | Part | File | Status |
 |---|---|---|
-| 1 | `01-db-history-replay.md` | planned |
-| 2 | `02-export-and-migration-history.md` | planned |
+| 1 | `01-db-history-replay.md` | done |
+| 2 | `02-export-and-migration-history.md` | done |
 
 Parts run in order, each in a fresh session. Part 2 depends on part 1.
 

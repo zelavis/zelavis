@@ -26,7 +26,7 @@ function driver({ failMigration = false } = {}) {
         if (failMigration) throw new Error("the bound App would not start on the new engine");
         if (layout.value === 4) return undefined;
         layout.value = 4;
-        return { from: 2, to: 4, tenants: 2, collections: 3, documents: 40, documentsWithHistoryDropped: 5, retained: "data.format-2-20261101T000000Z" };
+        return { from: 2, to: 4, tenants: 2, collections: 3, documents: 40, eventsCarried: 52, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 5, retained: "data.format-2-20261101T000000Z" };
       },
       async prepare() { calls.push(["prepare"]); },
       async start() { running = true; return { status: "running", url: "http://127.0.0.1:18080" }; },
@@ -58,7 +58,7 @@ test("a managed app with data in an earlier layout says so, and its upgrade migr
   const after = await manager.upgrade("blogger", { restart: true });
   assert.deepEqual(fake.calls, [["migrateData", "blogger"]], "only the migration: no recipe update, nothing to prepare");
   assert.equal(after.dataLayout, undefined);
-  assert.deepEqual(after.dataMigration, { from: 2, to: 4, tenants: 2, collections: 3, documents: 40, documentsWithHistoryDropped: 5, retained: "data.format-2-20261101T000000Z" }, "the response says what changed");
+  assert.deepEqual(after.dataMigration, { from: 2, to: 4, tenants: 2, collections: 3, documents: 40, eventsCarried: 52, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 5, retained: "data.format-2-20261101T000000Z" }, "the response says what changed");
   assert.equal((await manager.get("blogger")).dataMigration, undefined, "and it is not stored");
   assert.equal(after.runtime.status, "running");
   assert.equal((await manager.get("blogger")).dataLayout, undefined, "the card stops offering it once migrated");

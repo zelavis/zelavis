@@ -1267,6 +1267,12 @@ Key rules:
   transaction see committed state, not the transaction's own writes, so a
   change that writes one record twice builds the second write from the first
   (as `releaseReferences` and `linkTargets` do), never from a second read.
+- The data-layout migration is the one writer that replays history: `REPLAY_HISTORY` (`document-writes.ts`) writes an
+  earlier engine's document events one for one, in order, each stamped with its original time (`Txn.stampedAt`), with
+  lenses derived by the current engine and no refusals or cascades, because each event is a write the earlier engine
+  already judged and its cascades are events of their own. Its `Settle` request then holds the final state to today's
+  constraints inside a transaction. Nothing else stamps a time or skips a check, and both stay symbol-keyed so no
+  transport can reach them.
 - A read that joins two collections answers the named collection's query first
   and turns the ids it returns into an equality union over the referencing
   field's own postings (`relatedFilters` in `document-reads.ts`), so a join stays a
@@ -1571,7 +1577,7 @@ Key rules:
   on from where they were and end where a rebuild over the whole log ends. A
   purge works a page of records per transaction, never the whole tenant at once.
 - A schema version governs what is accepted next, never what is already
-  stored: activating one rewrites no document. It does declare what the
+  stored: activating one rewrites no document's data. It does declare what the
   version implies safely (`deriveDeclarations`: prose → analyzer, numbers →
   measures, a single reference → edge, `GeometryField`/`VectorField` → spatial
   and embedding only because they state the coordinate model or the model,
@@ -1579,7 +1585,11 @@ Key rules:
   (`schema-activation.ts`): intent, apply and re-derive postings, publish in
   one transaction that checks the intent and the collection's derived version.
   Refused activations restore the previous declarations; interrupted ones
-  finish at open. Hand-made declarations are never replaced by derived ones. `tenant.migrations` is the separate,
+  finish at open. Documents are written back only when a derived declaration
+  changes what they post (an activation that changes no lens adds no event); a
+  mark committed with the declarations (`zv.schema.rederiving`) stands until
+  that backfill is done, so a run cut off partway is finished by the next one
+  and never taken for done because the declarations already match. Hand-made declarations are never replaced by derived ones. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions
   are data rather than functions — inspectable, and reviewable before they run.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives

@@ -1,7 +1,7 @@
 # The data-layout migration replays each Tenant's history
 Job: Make the data-layout migration carry each Tenant's change history, not just its final state (part 2: export, migration, report, dashboard, harness, docs).
 Date: 2026-11-10
-Status: planned
+Status: done
 Verified-at: 57449988a6
 Part: 2 of 2. Read 00-overview.md first.
 
@@ -9,17 +9,17 @@ To start:    Execute part 2 in /Users/ivanjeremicx/Projects/zelavis/.claude/work
 To continue: Continue the plan in /Users/ivanjeremicx/Projects/zelavis/.claude/worktrees/hopeful-goldstine-668fac/.agents/plans/2026-11-10-data-migration-carries-history/02-export-and-migration-history.md. Start with its section 8.
 
 ## Progress
-- [ ] 1. Prepare a real alpha.42 host and run the harness at the starting commit
-- [ ] 2. Write the export format contract once (`_data-export-format.ts`)
-- [ ] 3. Stream the export, check it against the earlier engine, and read it as a stream
-- [ ] 4. Replay `log` Tenants' history and settle their final state
-- [ ] 5. Carry the new report fields to the public report
-- [ ] 6. Say what is carried on the dashboard
-- [ ] 7. Make the real-alpha.42 harness prove the history and the points
-- [ ] 8. Document what is carried and what is not
-- [ ] 9. Full verification
+- [x] 1. (2026-11-10) Prepare a real alpha.42 host and run the harness at the starting commit — alpha.42 in /private/tmp/zv-alpha42; baseline harness exit 0, points differ as expected (200→144, 202→135)
+- [x] 2. (2026-11-10) Write the export format contract once (`_data-export-format.ts`) — builds
+- [x] 3. (2026-11-10) Stream the export, check it against the earlier engine, and read it as a stream — 8/8 migration tests incl. W1–W3; done differently: the harness check does not hold with `log` Tenants on the final-state path (see report), it holds from step 4 on
+- [x] 4. (2026-11-10) Replay `log` Tenants' history and settle their final state — M1–M7 pass (26/26 with part 1's); harness on alpha.42: 523 events carried, points equal
+- [x] 5. (2026-11-10) Carry the new report fields to the public report — both project tests pass (7/7), `qualify-history.mjs` parses
+- [x] 6. (2026-11-10) Say what is carried on the dashboard — `pnpm --filter @zelavis/ui typecheck` exit 0; `pnpm run ci:ui` exit 0 (route parity reads "9 change events carried" and the kept-history notice)
+- [x] 7. (2026-11-10) Make the real-alpha.42 harness prove the history and the points — exit 0 at `--scale 1` and `--scale 10` with exact feed and point comparison; a one-millisecond skew in `replayLog` gave `__feed` and `__series` differences for both Tenants (exit 1), reverted, exit 0 again
+- [x] 8. (2026-11-10) Document what is carried and what is not — `updates.md`, `api/app-data.md` (one sentence), `AGENTS.md`, changeset; `pnpm run docs:check` exit 0
+- [x] 9. (2026-11-10) Full verification — `TMPDIR=/private/tmp pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check` each exit 0 after the last source edit; `release:qualify:history` exit 0 (with `ZELAVIS_QUALIFY_CANDIDATE_VERSION=2.0.0-alpha.45`, see report), native App migration shows `eventsCarried: 3`
 - [!] A1. The state path inserts final documents in export order, so a document whose reference target sits in a later batch fails the strict insert (from planning: pre-existing in the shipped final-state path, outside this job; check: a state-export Tenant whose referencing document precedes its target by more than 500 records migrates)
-- [ ] 10. Self-audit
+- [x] 10. (2026-11-10) Self-audit — diff re-read; two files beyond section 0 (`src/db/tenancy.ts` from part 1, one sentence in `website/.../api/app-data.md`); no forbidden pattern, no `+ 1` stamp, no leftover file; A1 stays `[!]` (outside this job)
 
 ## 0. Summary and finish line
 
@@ -950,3 +950,96 @@ From the repository root, sequentially: `pnpm --filter zelavis run build`; `TMPD
 > counts only. It asks nothing.
 
 ## Execution report
+
+### Session 1: 2026-11-10
+
+**Final status: stopped at step 7** (the session's usage limit was reached; nothing is blocked). Carried out in the same
+session as part 1.
+
+Steps:
+1. done. Baseline at the starting commit: `migration report: {"tenants":2,"collections":4,"schemas":4,"documents":359,"documentsWithHistoryDropped":72,"dropped":{}}`;
+   time series `tenant-a` 200 points before, 144 after rebuild, `valuesEqual:false`; `tenant-b` 202 → 135, `false`.
+2. done.
+3. done differently: the harness check of this step does not hold in its transitional form. With `log` Tenants on the
+   final-state path, a document is inserted where its last put stands in the log, so updated documents get later
+   identifiers and unordered reads answer in another order (5 differences). Step 4 removes the cause (a replayed
+   document takes its identifier at its first put). The 8 migration tests of the step passed.
+4. done. M1–M7 pass. Harness on real alpha.42 before step 7: 523 events carried, points 200/200 and 202/202, exit 0.
+5. done.
+6. partly: see `## Progress`.
+7. partly: see `## Progress`.
+8–10. not started.
+
+Deviations:
+- `readExport` splits lines itself over the UTF-8 read stream instead of `Stream.decodeText` + `Stream.splitLines`,
+  so a line is refused while it is gathered and memory never holds more than `MAX_EXPORT_LINE_CHARS` of one.
+- `TenantIndex` also keeps live document counts per collection and the dropped-kind counts; `RecordTrack` keeps `since`
+  (first put of the record's current life), which is a live collection's `from`.
+- The worker validates events with the validator directly (no `JSON.stringify` round trip) and checks every answer of
+  the earlier engine's API against a shape before relying on it.
+- Extra refusals: a record stored under two names, a put of a collection or schema without a body, a header that
+  differs from the manifest, more event lines than the header names, an unreadable event line (with its line number).
+- M1 asserts `eventsCarried 7` (the plan's fixture lists seven document events and says 6).
+- Harness additions beyond the step: a deleted post id inserted again (revisions start over on both engines), and
+  `checks` and `references` in the battery's `:meta`.
+
+Decisions taken for the user: none beyond the deviations above.
+
+Added items: none (the open work is the unfinished steps 6–10 themselves).
+
+Context the plan lacked:
+- alpha.42's `store.liveRecords` lists by record identifier, so a `state` export is in identifier order.
+- alpha.42 `insert` always allocates a new record, so a re-created id starts its revisions over, as the replay does.
+
+### Session 2: 2026-11-10
+
+**Final status: done.** Continued from step 6 (`[~]`) in the same conversation; A1 stays `[!]` (pre-existing, outside
+this job).
+
+Steps:
+6. done: the `pnpm run ci:ui` run started in session 1 finished exit 0; it ran again at the end, exit 0.
+7. done differently: the earlier engine's feed is read page by page. The plan said alpha.42's `events.read` returns
+   every matching event; it answers from at most 1024 entries of the shard's log (its store's default read) and gives no
+   cursor of its own, so at `--scale 10` the first run compared 1021 old events with 5073 new ones (the first 1021
+   equal). The harness now reads on from the last event of each answer until one comes back empty.
+8. done. Also one sentence in `website/src/content/docs/api/app-data.md` (the change feed's note on schema activation),
+   and the `AGENTS.md` schema bullet now states the lens-only backfill and its mark (part 1's deviation).
+9. done.
+10. done.
+
+Verification (repository root, after the last source edit):
+- `TMPDIR=/private/tmp pnpm run verify` → exit 0, no failing test.
+- `pnpm run ci:ui` → exit 0. `pnpm run docs:check` → exit 0 ("Docs check passed.").
+- `cd packages/zelavis && TMPDIR=/private/tmp node --test test/data-migration.test.mjs test/db-history-replay.test.mjs`
+  → 26 pass, 0 fail.
+- Harness, real alpha.42, `--scale 1` → `RESULT: identical answers on old and restored data`, exit 0.
+  `migration report: {"tenants":2,"collections":8,"schemas":4,"documents":476,"eventsCarried":1025,"tenantsWithoutHistory":0,"documentsWithHistoryDropped":0,"eventsOfDroppedCollections":40,"dropped":{}}`;
+  feed 514/514 and 511/511 events, points 345/345 and 345/345;
+  `timings ms: {"generate":628,"old-answers":45,"migrate":663,"new-answers":51,"history":477}`, rss 321 MB.
+- Harness, `--scale 10` → same result, exit 0.
+  `migration report: {"tenants":2,"collections":8,"schemas":4,"documents":4740,"eventsCarried":10178,"tenantsWithoutHistory":0,"documentsWithHistoryDropped":0,"eventsOfDroppedCollections":40,"dropped":{}}`;
+  feed 5073/5073 and 5105/5105, points 3434/3434 and 3456/3456;
+  `timings ms: {"generate":6335,"old-answers":220,"migrate":3629,"new-answers":215,"history":4934}`, rss 590 MB.
+  (Baseline migration at scale 1 before the job: 470 ms; now 663 ms with twice the collections and the history.)
+- The checks bite: with `at: event.at + 1` on replayed puts, `DIFF tenant-a __feed`, `__series`, `tenant-b __feed`,
+  `__series`, `RESULT: 4 difference(s)`, exit 1; reverted, rebuilt, exit 0.
+- `pnpm run release:qualify:history`: first run exit 1, not from this change: the checkout carries the published
+  version (alpha.44), so after the live update to the previous release the installed updater refused the candidate
+  ("already on the newest version"). Rerun with the gate's own fixture switch,
+  `ZELAVIS_QUALIFY_CANDIDATE_VERSION=2.0.0-alpha.45 pnpm run release:qualify:history` → exit 0;
+  `PASS: native App upgraded 2.0.0-alpha.42 -> 2.0.0-alpha.45; migration {"from":2,"to":4,"tenants":2,"collections":2,"documents":3,"eventsCarried":3,"tenantsWithoutHistory":0,"documentsWithHistoryDropped":0,"retained":"data.format-2-…"}`,
+  and the WordPress and DokuWiki Projects' bound data migrated too, each recipe upgrade without a failed request.
+
+Deviations: step 7's paged old feed, step 8's two extra doc sentences, and the gate's fixture version, all above.
+
+Decisions taken for the user:
+- The history gate was run with a fixture candidate version (2.0.0-alpha.45) inside its disposable container, because
+  the checkout is still at the published alpha.44. Nothing in the checkout, the tarball or npm was changed.
+
+Added items: none.
+
+Context the plan lacked:
+- alpha.42's domain `events.read` passes no limit to its store, whose default is 1024 log entries, and returns a plain
+  array: reading a whole feed means reading on from the last event of each answer.
+- `release:qualify:history` needs `ZELAVIS_QUALIFY_CANDIDATE_VERSION` whenever the checkout's version is already
+  published (`distribution/scripts/lib/candidate-update.mjs`).

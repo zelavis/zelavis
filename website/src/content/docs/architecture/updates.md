@@ -194,23 +194,54 @@ The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/pr
 
 1. The Project (a managed app's bound App) is stopped. A managed app's own processes keep serving.
 2. The engine that wrote the data exports every Tenant, under its own Node.
-3. The current engine recreates collections, documents and schemas in a new database through the documents API and checks
-   that the counts and every document's data match. Nothing is written to the original data.
+3. The current engine recreates collections, then replays each Tenant's document history in order through the documents
+   API (every put and deletion at its original time, with the document's version and times), checks the final state
+   against the collections' constraints, and checks that the counts and every document match. Schemas are recreated last.
+   Nothing is written to the original data.
 4. The new database is swapped in. The original is kept beside it as `data.format-<n>-<time>` until you remove it, and a
    journal lets a crash be settled from the files alone.
 5. The Project starts on the new engine. If it cannot start, or the upgrade cannot be recorded, the original data and its engine
    return and the migrated data is set aside as `data.discarded-<time>`.
 
-The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated, how
-many documents were past their first version (their earlier versions' change history is not carried), and the directory that
-keeps the original. Each document keeps its id, data, version, creation and update times and expiry, so a version a client
+The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated,
+`eventsCarried` (document events of the earlier history recreated in order, each at its original time),
+`tenantsWithoutHistory` (Tenants whose earlier log had been compacted, so only their final documents were recreated),
+`documentsWithHistoryDropped` (documents of those Tenants past their first version), and the directory that keeps the
+original.
+
+What is carried: each document keeps its id, data, version, creation and update times and expiry, so a version a client
 read before the migration still names the same document state: a stale `expectedVersion` is still refused, never matched
-again later by a restarted count. What does not carry over: the change history restarts with one event per document at new
-positions, so a change-feed cursor issued before the migration is refused (`ForeignCursor`, since it names the earlier
-layout's shard) and its consumer reads the feed again from the start; idempotency receipts are dropped. Time series are not carried: a series'
-definition is code the app registers at run time and its points are derived from the event log, which restarts, so after a migration
-the app registers the series again and rebuilds it from the migrated documents; the earlier points and the history they were built from
-are not recreated. A migration refuses to run when the
+again later by a restarted count. The document change history is carried too: the change feed holds the same document
+events in the same order, with the same times, revisions and data, so a time series the app registers again and rebuilds
+has the same points. A series' definition is code the app registers at run time, so it is registered again after a
+migration, as after any restart.
+
+The replay refuses nothing the earlier engine accepted: every event was a write that engine judged under the rules of its
+time (two users could share an email before a unique index existed), and a delete's cascade or cleared reference is in the
+history as events of its own, so it is not run again. The final state is then held to the collections' constraints as they
+stand, and a final state that breaks one fails the migration with nothing changed.
+
+What is not carried:
+
+- Log positions. A change-feed cursor issued before the migration is refused (`ForeignCursor`, since it names the earlier
+  layout's shard) and its consumer reads the feed again from the start, where the whole history now is. Event ids and the
+  node an event names are the new database's.
+- Collection events. Each collection is created once, in its final definition, so the feed starts with one
+  `collection.created` per collection at the time of the Tenant's first carried event; the earlier index, check and
+  reference changes are not events.
+- The history of collections that no longer exist, and of an earlier collection of the same name.
+- Schema history: saved versions are recreated and the active one activated. An active schema that implies a lens the
+  earlier engine never declared (an analyzer, measure, edge, spatial or embedding index derived from its fields) is
+  applied then, which writes that collection's documents back once and adds one event each at the migration's time.
+- Idempotency receipts and projection checkpoints.
+- The history of a Tenant whose earlier log was compacted: it is recreated from its final documents, one event each.
+
+The earlier engine's export is checked against that engine's own reads before anything is recreated. Releases up to
+alpha.42 read at most 1,000,000 entries of a shard's log for an export and stop there silently, so a shard whose log
+reached that limit is refused with nothing changed, instead of migrated with writes missing. Compacting it on the earlier
+engine first (`maintenance.compact`) lets it migrate from its state.
+
+A migration refuses to run when the
 free space beside the data is under about 3.5 times its size, and it fails, naming them, on record kinds it cannot recreate yet.
 The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
 `GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with

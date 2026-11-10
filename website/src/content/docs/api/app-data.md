@@ -188,8 +188,9 @@ savedCursor = changes.cursor;
 
 The feed reads the Tenant's existing event log. It includes collection creation,
 definition updates and deletion (`collection.created|updated|deleted`), plus
-`document.upserted|deleted`. Schema activation may re-derive document versions,
-so consumers can observe those upserts too. Keep the returned cursor even on an
+`document.upserted|deleted`. A schema activation that changes what a collection's
+documents index writes them back, so consumers can observe those upserts too; one
+that changes no index adds none. Keep the returned cursor even on an
 empty filtered page: it advances past log entries that did not match.
 
 Pages accept 1–1000 events (100 by default) and bound the underlying log scan.
