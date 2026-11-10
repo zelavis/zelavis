@@ -1,6 +1,6 @@
 <!-- plan-writer supplement
-verified-at: 53c038e024
-verified-on: 2026-11-05
+verified-at: 57449988a6
+verified-on: 2026-11-10
 lessons-through: 2026-11-09
 sources:
   - AGENTS.md
@@ -232,6 +232,15 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
   behind after a burst (lesson: remote-shard-reads-and-replicas, part 4).
 - Deleting a finished part file of a split plan before its overview is `done` → never: later parts lose the execution
   reports they hand over from (lesson: remote-shard-reads-and-replicas, part 4).
+- Planning in a session worktree → check it holds the commit the job builds on (`git merge-base --is-ancestor <commit> HEAD`):
+  a worktree can be cut from `main` while the work lives on `dev`, hundreds of commits apart. A fresh worktree also has no
+  `node_modules`; run `pnpm install` before any build or test there (lesson: data-migration-carries-history planning).
+- Reading what an earlier release did → there are no `zelavis@` git tags past alpha.9; find the release commit with
+  `git log -S'"version": "2.0.0-alpha.<n>"' -- packages/zelavis/package.json` and read its source with `git show <commit>:<path>`
+  (lesson: data-migration-carries-history planning).
+- Relying on an earlier engine's export → alpha.25 to alpha.42 `backups.exportTenant` reads at most 1,000,000 entries of the
+  whole shard's log, not of the Tenant's, and silently stops there; an export is complete only if checked against that engine's
+  own reads (lesson: data-migration-carries-history planning).
 
 ## 10. Forbidden patterns
 
