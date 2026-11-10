@@ -225,7 +225,7 @@ function migrationSummary(value: unknown): string {
   const migration = object(value);
   if (migration.retained === undefined) return "Its data is unchanged.";
   const restarted = Number(migration.documentsWithHistoryDropped);
-  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated${restarted > 0 ? `; versions kept, earlier change history not carried for ${restarted}` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
+  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated with their versions, ${label(migration.eventsCarried)} change events carried${restarted > 0 ? `; ${restarted} documents of compacted Tenants kept their versions without their earlier change history` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
 }
 
 function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string) {
@@ -251,7 +251,7 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
   }
   const layout = object(project.dataLayout);
   const copy = layout.state === "upgradeRequired"
-    ? `This app's Zelavis data is in an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating moves it to format ${label(layout.to)}: your data is kept, document versions and change history restart, and the previous data is retained until you remove it.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
+    ? `This app's Zelavis data is in an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating moves it to format ${label(layout.to)}: your data, its document versions and its change history are kept (a compacted history keeps what compaction left), and the previous data is retained until you remove it.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
     : status.state === "upgradeAvailable"
     ? integration
       ? `A newer recipe is available: ${label(status.version)}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
@@ -288,7 +288,7 @@ function versionPanel(context: ScreenContext, project: Record<string, unknown>, 
   return node("div", { class: "notice", "aria-label": "App version" },
     node("p", {}, `Current Zelavis version: ${current || label(project.engineVersion, "Unavailable")}`),
     node("p", { class: "muted" }, crossesLayout
-      ? `Zelavis ${choice} writes data layout ${label(chosen?.dataFormat)}, and this App's data is in layout ${label(versions.currentDataFormat)}. Switching stops the App, migrates its data (document versions and change history restart) and starts it again.`
+      ? `Zelavis ${choice} writes data layout ${label(chosen?.dataFormat)}, and this App's data is in layout ${label(versions.currentDataFormat)}. Switching stops the App, migrates its data (document versions and change history are kept) and starts it again.`
       : "Select an installed version and its matching App recipe. Project data is preserved."),
     ...(typeof versions.reason === "string" ? [node("p", {}, versions.reason)] : []), pick,
     node("div", { class: "actions" }, apply, button("Cancel", () => context.setSearch({ versionProject: undefined, engineVersion: undefined }))));

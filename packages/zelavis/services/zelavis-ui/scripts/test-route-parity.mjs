@@ -630,7 +630,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const upgradeRequests = async route => {
     upgrades.push(route.request().postDataJSON());
     await route.fulfill({ json: { project: { id: "parity-lab", name: "Parity Lab", engineVersion: "2.0.0-alpha.43", runtime: { status: "running" },
-      dataMigration: { from: 2, to: 4, documents: 3, documentsWithHistoryDropped: 0, retained: "data.format-2-parity" } } } });
+      dataMigration: { from: 2, to: 4, documents: 3, eventsCarried: 9, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 0, retained: "data.format-2-parity" } } } });
   };
   yield* io(() => page.route("**/api/v1/runtime/projects/parity-lab/versions", versionChoices));
   yield* io(() => page.route("**/api/v1/runtime/projects/parity-lab/upgrade", upgradeRequests));
@@ -638,9 +638,11 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.getByRole("button", { name: "Switch version", exact: true }).waitFor());
   yield* visit("/projects?versionProject=parity-lab&engineVersion=2.0.0-alpha.43");
   yield* io(() => page.getByText("Switching stops the App, migrates its data", { exact: false }).waitFor());
+  yield* io(() => page.getByText("document versions and change history are kept", { exact: false }).first().waitFor());
   yield* io(() => page.evaluate(() => { window.confirm = () => true; }));
   yield* io(() => page.getByRole("button", { name: "Stop, migrate and switch", exact: true }).click());
   yield* io(() => page.getByText("now uses Zelavis 2.0.0-alpha.43", { exact: false }).first().waitFor());
+  yield* io(() => page.getByText("9 change events carried", { exact: false }).first().waitFor());
   assert.deepEqual(upgrades, [{ engineVersion: "2.0.0-alpha.43", restart: true }], "Crossing a data layout sends the restarting upgrade with the chosen engine");
   yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/upgrade", upgradeRequests));
   yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/versions", versionChoices));

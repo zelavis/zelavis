@@ -1,6 +1,6 @@
 // Format-migration harness (fix_updates.md WP-2).
 //
-// Proves the "export with the writer that wrote it, restore with the current engine" step on data made by a
+// Proves the "export with the writer that wrote it, recreate with the current engine" step on data made by a
 // released engine. It never opens the data it is given: every run works on throwaway copies.
 //
 //   node harness.mjs --old-host <dir with node_modules/zelavis@released> [--repo <checkout>] [--seed 1] [--scale 1]
@@ -9,8 +9,16 @@
 // The source layout is the released engine's own `CURRENT_FORMAT` unless `--source-format` names it (alpha.42 and earlier
 // exported none and wrote layout 2).
 //
-// Without --from it generates seeded data with the released engine (many collections, indexes, text, measures, edges,
-// updates, deletes). With --from it runs the same checks over real data. Exit code 1 on any difference.
+// Without --from it generates seeded data with the released engine: collections with indexes, text, measures and edges,
+// updates and deletes, and the history a replay has to carry without judging it again: an index built over existing
+// documents (the earlier engine rewrites each), states a constraint added later refuses, deletes whose cascade and
+// cleared references are events of their own, a deleted id inserted again, and a collection dropped with its documents.
+// With --from it runs the same checks over real data.
+//
+// What must be identical on the old data and on the migrated data, per Tenant: every answer of the query battery
+// (documents with their versions and times, collections, indexes, search, measures, edges), the schemas, the document
+// change feed (type, collection, id, revision, timestamp and data of every event, in order) and every point of a time
+// series rebuilt from the feed (timestamp, value, tags, fields). Exit code 1 on any difference.
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, symlinkSync, cpSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -86,9 +94,33 @@ if (args.from) {
         await runOld(d.insert({ collection: "posts", id, data: { title: sentence(4), body: sentence(30), views: Math.floor(rng() * 1000), author: pick(users), tags: [pick(words), pick(words)] } }));
       }
       for (const id of posts.filter(() => rng() < 0.25)) await runOld(d.update({ collection: "posts", id, data: { views: Math.floor(rng() * 5000) } }));
-      for (const id of posts.filter(() => rng() < 0.1)) await runOld(d.delete({ collection: "posts", id }));
+      const deleted = posts.filter(() => rng() < 0.1);
+      for (const id of deleted) await runOld(d.delete({ collection: "posts", id }));
+      const living = posts.filter((id) => !deleted.includes(id));
+      // An index built over existing documents: the earlier engine puts each document again, unchanged, as events of their own.
+      await runOld(d.createIndex({ collection: "posts", name: "by_title", fields: [{ path: "title" }] }));
+      // States a constraint added later refuses: two users share a handle and one is under age before the index and the check exist.
+      await runOld(d.update({ collection: "users", id: "u1", data: { handle: "dup" } }));
+      await runOld(d.update({ collection: "users", id: "u2", data: { handle: "dup", age: 10 } }));
+      await runOld(d.update({ collection: "users", id: "u2", data: { handle: "second", age: 30 } }));
+      await runOld(d.createIndex({ collection: "users", name: "by_handle", fields: [{ path: "handle" }], unique: true }));
+      await runOld(d.addCheck({ collection: "users", name: "adult", where: [{ path: "age", op: "gte", value: 18 }] }));
+      // Deletes whose effects are events of their own: a cascade and a cleared reference.
+      await runOld(d.createCollection({ name: "comments", references: [{ name: "post", path: "post", collection: "posts", onDelete: "cascade" }] }));
+      await runOld(d.createCollection({ name: "likes", references: [{ name: "post", path: "post", collection: "posts", onDelete: "set-null" }] }));
+      for (let i = 0; i < 30 * scale; i++) {
+        await runOld(d.insert({ collection: "comments", id: `c${i}`, data: { post: pick(living), text: sentence(5) } }));
+        await runOld(d.insert({ collection: "likes", id: `l${i}`, data: { post: pick(living) } }));
+      }
+      for (const id of living.slice(0, 5 * scale)) await runOld(d.delete({ collection: "posts", id }));
+      // A deleted id inserted again: a new record, whose revisions start over.
+      if (deleted.length > 0) await runOld(d.insert({ collection: "posts", id: deleted[0], data: { title: sentence(4), body: sentence(30), views: 7, author: pick(users), tags: [] } }));
+      // A collection dropped with its documents: its history is counted, not carried.
+      await runOld(d.createCollection({ name: "drafts" }));
+      for (let n = 0; n < 10; n++) await runOld(d.insert({ collection: "drafts", id: `d${n}`, data: { n } }));
+      await runOld(d.dropCollection({ name: "drafts" }));
       // A time series is derived from the event log: its definition is code (registered at run time, never stored) and its points are
-      // written without identity by ingesting events. See the time-series note in the report below.
+      // written without identity by ingesting events. The comparison below rebuilds it on both sides from the whole log.
       const series = db.database.forTenant(tenant).timeSeries;
       await runOld(series.define({ name: "post-views", map: (event) => event.type === "document.upserted" && event.collection === "posts" && typeof event.payload.data?.views === "number"
         ? { timestamp: event.timestamp, value: event.payload.data.views, tags: { collection: "posts" } } : null }));
@@ -112,7 +144,7 @@ const battery = (documents, run) => async (collections) => {
   for (const c of collections) {
     const name = c.name;
     await ask(`${name}:all`, () => oldOrNewMap(documents.findMany({ collection: name }), shape));
-    await ask(`${name}:meta`, () => oldOrNewMap(documents.listCollections, (list) => list.filter((x) => x.name === name).map((x) => ({ name: x.name, surface: x.surface, indexes: x.indexes?.map?.((i) => i.name), analyzer: x.analyzer, measures: x.measures, edges: x.edges }))));
+    await ask(`${name}:meta`, () => oldOrNewMap(documents.listCollections, (list) => list.filter((x) => x.name === name).map((x) => ({ name: x.name, surface: x.surface, createdAt: x.createdAt, indexes: x.indexes?.map?.((i) => i.name), checks: x.checks, references: x.references, analyzer: x.analyzer, measures: x.measures, edges: x.edges }))));
     if (name === "users") {
       await ask("users:age>=40", () => oldOrNewMap(documents.findMany({ collection: "users", where: [{ path: "age", op: "gte", value: 40 }], orderBy: [{ path: "age" }] }), shape));
       await ask("users:email=u3", () => oldOrNewMap(documents.findMany({ collection: "users", where: [{ path: "email", op: "eq", value: `u3@${"x"}` }] }), shape));
@@ -168,27 +200,13 @@ await timed("migrate", async () => {
     oldPlatform: earlierPlatform, exportWorker: join(args.repo, "packages/zelavis/dist/adapters/_data-export-worker.js") }));
 });
 log("migration report:", JSON.stringify({ ...report, shardsDirectory: undefined }));
-// Time series: the points are derived from the event log, which a migration restarts, and the definition is run-time code. Measured, not assumed:
-// the same definition on the old data and on the migrated data.
-const mapper = (event) => event.type === "document.upserted" && event.collection === "posts" && typeof event.payload.data?.views === "number"
-  ? { timestamp: event.timestamp, value: event.payload.data.views, tags: { collection: "posts" } } : null;
-const seriesNote = {};
-{
-  const old = await open(oldDb, oldCopy);
-  const fresh = await open(newDb, report.shardsDirectory);
-  for (const t of tenants) {
-    const oldSeries = old.database.forTenant(t).timeSeries;
-    await runOld(oldSeries.define({ name: "post-views", map: mapper }));
-    const before = await runOld(oldSeries.get("post-views").range({ limit: 100000 }));
-    const newSeries = fresh.database.forTenant(t).timeSeries;
-    await runNew(newSeries.define({ name: "post-views", map: mapper }));
-    await runNew(newSeries.rebuild("post-views"));
-    const after = await runNew(newSeries.get("post-views").range({ limit: 100000 }));
-    seriesNote[t] = { pointsBefore: before.length, pointsAfterRebuild: after.length, valuesEqual: JSON.stringify(before.map((p) => p.value).sort()) === JSON.stringify(after.map((p) => p.value).sort()) };
-  }
-  await old.close(); await fresh.close();
+// Without --from the generated history is known: every Tenant's log is whole, and the dropped collection's events
+// (10 puts and 10 retractions in each of the 2 Tenants) are counted, not carried.
+let differences = 0;
+if (!args.from && !(report.tenantsWithoutHistory === 0 && report.eventsOfDroppedCollections === 40)) {
+  differences++;
+  log(`DIFF report: expected tenantsWithoutHistory 0 and eventsOfDroppedCollections 40, got ${report.tenantsWithoutHistory} and ${report.eventsOfDroppedCollections}`);
 }
-log("time series (points are derived from the event log, which restarts; the definition is run-time code and is registered again by the app):", JSON.stringify(seriesNote));
 const newAnswers = {};
 await timed("new-answers", async () => {
   const fresh = await open(newDb, report.shardsDirectory);
@@ -205,14 +223,73 @@ await timed("new-answers", async () => {
   await fresh.close();
 });
 
-// 5. Compare.
-let differences = 0;
+// 5. The change history: the document change feed, and a time series rebuilt from it, on the old data and on the migrated data.
+// The definition is run-time code the app registers again; both sides derive their points from their whole log with it.
+const mapper = (event) => event.type === "document.upserted" && event.collection === "posts" && typeof event.payload.data?.views === "number"
+  ? { timestamp: event.timestamp, value: event.payload.data.views, tags: { collection: "posts" } } : null;
+const feedShape = (e) => ({ type: e.type, collection: e.collection, documentId: e.documentId, revision: e.revision, timestamp: e.timestamp, payload: e.payload });
+// `range` orders by time only and many points share a millisecond, so the points are put in one total order before they are compared.
+const pointShape = (points) => points.map((p) => ({ timestamp: p.timestamp, value: p.value, tags: p.tags ?? null, fields: p.fields ?? null }))
+  .map((p) => [p, JSON.stringify(p)]).sort((a, b) => (a[0].timestamp < b[0].timestamp ? -1 : a[0].timestamp > b[0].timestamp ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)).map(([p]) => p);
+const historyNote = {};
+await timed("history", async () => {
+  const old = await open(oldDb, oldCopy);
+  const fresh = await open(newDb, report.shardsDirectory);
+  for (const t of tenants) {
+    // The earlier engine answers a read from at most 1024 entries of its shard's log, with no cursor of its own, so its feed is
+    // read on from the last event of each answer until one comes back empty. (An answer that is empty while the log goes on
+    // would end it early; the lengths below would then differ, never pass.) Collections that no longer exist are not carried,
+    // so their events are left out.
+    const live = new Set((await runOld(old.database.forTenant(t).documents.listCollections)).map((c) => c.name));
+    const before = [];
+    for (let last; ;) {
+      const page = await runOld(old.database.forTenant(t).events.read({ ...(last ? { after: last } : {}), limit: 1000 }));
+      const events = sourceFormat === 2 ? page : page.events;
+      before.push(...events.filter((e) => e.documentId !== undefined && live.has(e.collection)).map(feedShape));
+      if (sourceFormat === 2 ? events.length === 0 : !page.more) break;
+      last = sourceFormat === 2 ? events.at(-1).cursor : page.cursor;
+    }
+    const after = [];
+    let cursor;
+    for (;;) {
+      const page = await runNew(fresh.database.forTenant(t).events.read({ ...(cursor ? { after: cursor } : {}), limit: 1000 }));
+      after.push(...page.events.filter((e) => e.documentId !== undefined).map(feedShape));
+      cursor = page.cursor;
+      if (!page.more) break;
+    }
+    oldAnswers[t].__feed = before;
+    newAnswers[t].__feed = after;
+
+    const oldSeries = old.database.forTenant(t).timeSeries;
+    await runOld(oldSeries.define({ name: "post-views", map: mapper }));
+    await runOld(oldSeries.rebuild("post-views"));
+    const newSeries = fresh.database.forTenant(t).timeSeries;
+    await runNew(newSeries.define({ name: "post-views", map: mapper }));
+    await runNew(newSeries.rebuild("post-views"));
+    oldAnswers[t].__series = pointShape(await runOld(oldSeries.get("post-views").range({ limit: 10_000_000 })));
+    newAnswers[t].__series = pointShape(await runNew(newSeries.get("post-views").range({ limit: 10_000_000 })));
+    historyNote[t] = { feedEventsOld: before.length, feedEventsNew: after.length, pointsOld: oldAnswers[t].__series.length, pointsNew: newAnswers[t].__series.length };
+  }
+  await old.close(); await fresh.close();
+});
+log("history (document feed events and post-views points, old and migrated):", JSON.stringify(historyNote));
+
+// 6. Compare.
 for (const t of tenants) {
   const keys = new Set([...Object.keys(oldAnswers[t]), ...Object.keys(newAnswers[t])]);
   for (const k of [...keys].sort()) {
     const a = JSON.stringify(oldAnswers[t][k]);
     const b = JSON.stringify(newAnswers[t][k]);
-    if (a !== b) { differences++; log(`DIFF ${t} ${k}\n   old: ${String(a).slice(0, 200)}\n   new: ${String(b).slice(0, 200)}`); }
+    if (a !== b) {
+      differences++;
+      log(`DIFF ${t} ${k}\n   old: ${String(a).slice(0, 200)}\n   new: ${String(b).slice(0, 200)}`);
+      const x = oldAnswers[t][k], y = newAnswers[t][k];
+      if (Array.isArray(x) && Array.isArray(y)) {
+        const at = x.findIndex((element, index) => JSON.stringify(element) !== JSON.stringify(y[index]));
+        const first = at < 0 ? x.length : at;
+        log(`   lengths ${x.length} and ${y.length}; first difference at ${first}\n   old[${first}]: ${String(JSON.stringify(x[first])).slice(0, 400)}\n   new[${first}]: ${String(JSON.stringify(y[first])).slice(0, 400)}`);
+      }
+    }
   }
 }
 log("timings ms:", JSON.stringify(timings), "rss MB:", Math.round(process.memoryUsage().rss / 1048576));

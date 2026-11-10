@@ -940,13 +940,20 @@ const openPartition = (
       : Effect.succeed(version);
   };
 
-  const txnFor = (into: Commit): Txn => ({
+  /** An event's time when a transaction stamps one (`Txn.stampedAt`): epoch milliseconds, or the write is a defect. */
+  const refuseStamp = (stamp: number | undefined) =>
+    stamp === undefined || (Number.isSafeInteger(stamp) && stamp >= 0)
+      ? Effect.void
+      : Effect.die(new RangeError(`An event's time is epoch milliseconds, not ${stamp}.`));
+
+  const txnFor = (into: Commit, stamp?: number): Txn => ({
     put: (seq, bytes, manifest, identity) =>
       Effect.gen(function* () {
+        yield* refuseStamp(stamp);
         const current = yield* readRecord(into.view, seq);
         const version = yield* nextVersion(current);
         yield* into.append({
-          kind: "put", generation, seq, version, at: Date.now(), origin,
+          kind: "put", generation, seq, version, at: stamp ?? Date.now(), origin,
           ...(identity === undefined ? {} : { identity }), manifest, body: bytes,
         });
         yield* project(into, seq, current, {
@@ -956,11 +963,12 @@ const openPartition = (
 
     retract: (seq) =>
       Effect.gen(function* () {
+        yield* refuseStamp(stamp);
         const current = yield* readRecord(into.view, seq);
         if (current === undefined || !current.live) return;
         const version = yield* nextVersion(current);
         const position = yield* into.append({
-          kind: "retract", generation, seq, version, at: Date.now(), origin,
+          kind: "retract", generation, seq, version, at: stamp ?? Date.now(), origin,
           ...(current.identity === undefined ? {} : { identity: current.identity }),
         });
         yield* retire(into, seq, current, version, position);
@@ -973,6 +981,8 @@ const openPartition = (
       into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(next));
       return asSeq(next);
     }),
+
+    stampedAt: (at) => txnFor(into, at),
   });
 
   /** An event as it is stored, whoever wrote it. */

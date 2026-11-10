@@ -34,10 +34,17 @@ import type { DocumentReads } from "./document-reads.js";
 import type { DocumentsApi } from "./document-model.js";
 import { recordMessages, settleMessages } from "./outbox.js";
 import { deriveDeclarations, type DerivedDeclarations } from "./schema/semantics.js";
+import { REDERIVING_NAMESPACE } from "./tenancy.js";
 
 const withoutSkipped = ({ skipped: _skipped, ...declarations }: DerivedDeclarations): DerivedDeclarationSet => declarations;
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** The declarations a document's postings derive from: what `mergeDerived` can change that a rewrite re-derives. */
+const lensDeclarations = (collection: StoredCollection) => ({
+  analyzer: collection.analyzer, spatial: collection.spatial, embedding: collection.embedding,
+  measures: collection.measures ?? [], edges: collection.edges ?? [],
+});
 
 /** A derived set checked by the same rules as a hand-made declaration. */
 const normalizeDerived = (collection: string, declarations: DerivedDeclarationSet) =>
@@ -165,10 +172,90 @@ export interface CarryDocumentsInput {
   readonly [CARRY_DOCUMENTS]?: ReadonlyArray<CarriedDocument | undefined>;
 }
 
+/**
+ * A collection recreated as it was in another database, for this package's own use: the data-layout migration creates
+ * each collection with the creation time the earlier engine recorded, and stamps the creation's events `at` (the time of
+ * the first event of the history it replays next), so the Tenant's log reads in time order. Keyed by a symbol, so nothing
+ * that arrives as JSON can carry it.
+ */
+export const CARRY_COLLECTION: unique symbol = Symbol("zelavis.db.carryCollection");
+export interface CarriedCollection {
+  /** ISO 8601, as the earlier engine stored it. */
+  readonly createdAt: string;
+  /** Epoch milliseconds, a safe integer of at least 0. */
+  readonly at: number;
+}
+export interface CarryCollectionInput {
+  readonly [CARRY_COLLECTION]?: CarriedCollection;
+}
+
+/**
+ * An earlier engine's document history, replayed for this package's own use by the data-layout migration: each change is
+ * one event of that history, written as one event here, at its own time, with the version and times it carried. A replay
+ * refuses nothing the earlier engine accepted — every change was judged by it under the rules of its time, and its
+ * cascades are changes of their own — except data this engine cannot store; `Settle` then holds the final state to
+ * today's constraints. Keyed by a symbol, so nothing that arrives as JSON can carry it.
+ */
+export const REPLAY_HISTORY: unique symbol = Symbol("zelavis.db.replayHistory");
+export type ReplayedChange =
+  | {
+      readonly _tag: "Put";
+      readonly collection: string;
+      readonly id: string;
+      readonly data: JsonObject;
+      /** The document version the earlier engine wrote; never below the live document's. */
+      readonly version: number;
+      readonly createdAt: string;
+      readonly updatedAt: string;
+      readonly expiresAt?: string;
+      /** When the earlier engine accepted it, in epoch milliseconds. */
+      readonly at: number;
+    }
+  | {
+      readonly _tag: "Retract";
+      readonly collection: string;
+      readonly id: string;
+      readonly at: number;
+    };
+export type ReplayRequest =
+  /** 1 to 1000 changes, in history order, in one transaction. */
+  | { readonly _tag: "Changes"; readonly changes: ReadonlyArray<ReplayedChange> }
+  /** 1 to 1000 live documents of one collection, checked against its constraints; writes nothing. */
+  | { readonly _tag: "Settle"; readonly collection: string; readonly ids: ReadonlyArray<string> };
+export interface ReplayHistoryInput {
+  readonly [REPLAY_HISTORY]?: ReplayRequest;
+}
+
+/** Changes one batch may carry, bounding what one transaction holds. */
+const MAX_BATCH = 1000;
+
+/** A record found by its name alone. */
+const NO_POSTINGS = { terms: [], columns: [], measures: [], edges: [] };
+
+const isStamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isTime = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value));
+
 const isCarriedDocument = (value: CarriedDocument): boolean =>
   Number.isSafeInteger(value.version) && value.version >= 1 &&
   typeof value.createdAt === "string" && !Number.isNaN(Date.parse(value.createdAt)) &&
   typeof value.updatedAt === "string" && !Number.isNaN(Date.parse(value.updatedAt));
+
+const isCarriedCollection = (value: CarriedCollection): boolean =>
+  typeof value === "object" && value !== null && isTime(value.createdAt) && isStamp(value.at);
+
+const isReplayedChange = (value: ReplayedChange): boolean =>
+  typeof value === "object" && value !== null && typeof value.collection === "string" && typeof value.id === "string" && isStamp(value.at)
+  && (value._tag === "Retract"
+    || (value._tag === "Put" && typeof value.data === "object" && value.data !== null && !Array.isArray(value.data)
+      && Number.isSafeInteger(value.version) && value.version >= 1 && isTime(value.createdAt) && isTime(value.updatedAt)
+      && (value.expiresAt === undefined || typeof value.expiresAt === "string")));
+
+const isReplayRequest = (value: ReplayRequest): boolean =>
+  typeof value === "object" && value !== null
+  && ((value._tag === "Changes" && Array.isArray(value.changes) && value.changes.length >= 1 && value.changes.length <= MAX_BATCH
+      && value.changes.every(isReplayedChange))
+    || (value._tag === "Settle" && typeof value.collection === "string" && Array.isArray(value.ids)
+      && value.ids.length >= 1 && value.ids.length <= MAX_BATCH && value.ids.every((id) => typeof id === "string")));
 
 export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
   const {
@@ -306,6 +393,24 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
       const edges = yield* enforceConstraints(collection, doc, seq, pending);
+      yield* putDocument(txn, doc, seq, pending, collection, edges);
+    });
+
+  /**
+   * Write a document with the postings its collection's definition derives and
+   * the given links, and remember it in the overlay. Checks nothing:
+   * `documentPut` checks first, and a history replay checks the final state
+   * with `Settle`.
+   */
+  const putDocument = (
+    txn: Txn,
+    doc: Document,
+    seq: Seq,
+    pending: Pending,
+    collection: StoredCollection | undefined,
+    edges: ReadonlyArray<readonly [string, Seq]>,
+  ) =>
+    Effect.gen(function* () {
       const cells = yield* spatialHandle(collection?.spatial);
       yield* txn.put(seq, encode(doc), manifestFor(
         doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells, edges,
@@ -333,6 +438,88 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         proj.remove(Number(seq));
       }
     });
+
+  /**
+   * A replayed document's links, re-derived and not re-checked, as `rewriteDocuments` does: every change of the history
+   * was accepted once already, so a target not there at that moment of it leaves its link unposted. Read through the
+   * batch's overlay, so a target written earlier in the batch counts and one retracted earlier does not.
+   */
+  const replayLinks = (collection: StoredCollection, doc: Document, seq: Seq, pending: Pending) =>
+    Effect.gen(function* () {
+      const links: Array<readonly [string, Seq]> = [];
+      for (const definition of collection.edges ?? []) {
+        const value = readPath(doc.data, definition.path);
+        if (value === undefined || value === null) continue;
+        const type = edgeTypeFor(doc.collection, definition.name);
+        for (const id of Array.isArray(value) ? value : [value]) {
+          if (typeof id !== "string") continue;
+          if (definition.collection === doc.collection && id === doc.id) {
+            links.push([type, seq]);
+            continue;
+          }
+          const named = yield* currentNamed(pending, definition.collection, id);
+          if (named !== undefined && named.document !== null) links.push([type, named.seq]);
+        }
+      }
+      return links;
+    });
+
+  /** One replayed batch: each change one event, at its own time, in one transaction; see `REPLAY_HISTORY`. */
+  const replayChanges = (changes: ReadonlyArray<ReplayedChange>) =>
+    Effect.gen(function* () {
+      for (const change of changes) {
+        if (change._tag === "Put") yield* validateDocumentData(change.collection, change.data);
+      }
+      return yield* transactChecked((txn) =>
+        Effect.gen(function* () {
+          const pending = nothingPending();
+          for (const change of changes) {
+            const collection = yield* requireCollection(change.collection);
+            const at = yield* currentNamed(pending, change.collection, change.id);
+            const live = at === undefined || at.document === null ? undefined : { seq: at.seq, document: at.document };
+            const stamped = txn.stampedAt(change.at);
+            if (change._tag === "Retract") {
+              if (live === undefined) {
+                return yield* new DocumentNotFound({ collection: change.collection, id: change.id });
+              }
+              yield* documentRetract(stamped, live.document, live.seq, pending);
+              continue;
+            }
+            if (live !== undefined && change.version < live.document.version) {
+              return yield* new DocumentConflict({
+                collection: change.collection, id: change.id,
+                reason: `a replayed change moves version ${live.document.version} back to ${change.version}`,
+              });
+            }
+            const seq = live?.seq ?? (yield* txn.allocate);
+            const doc: Document = {
+              id: change.id, collection: change.collection, data: change.data,
+              createdAt: change.createdAt, updatedAt: change.updatedAt, version: change.version,
+              ...(change.expiresAt === undefined ? {} : { expiresAt: change.expiresAt }),
+            };
+            yield* putDocument(stamped, doc, seq, pending, collection, yield* replayLinks(collection, doc, seq, pending));
+          }
+          return [] as ReadonlyArray<DocumentWritten>;
+        }));
+    });
+
+  /**
+   * Hold replayed documents to their collection's constraints as they stand now: what a replay did not check, because the
+   * history it wrote passed through states the earlier engine accepted under the rules of their time. Inside a
+   * transaction, under the store's one writer, like every check; it writes nothing.
+   */
+  const settleReplayed = (name: string, ids: ReadonlyArray<string>) =>
+    transactChecked(() =>
+      Effect.gen(function* () {
+        const pending = nothingPending();
+        const collection = yield* requireCollection(name);
+        for (const id of ids) {
+          const at = yield* currentNamed(pending, name, id);
+          if (at === undefined || at.document === null) return yield* new DocumentNotFound({ collection: name, id });
+          yield* enforceConstraints(collection, at.document, at.seq, pending);
+        }
+        return [] as ReadonlyArray<DocumentWritten>;
+      }));
 
   /**
    * What deleting a document does to the documents naming it, each reference
@@ -419,9 +606,6 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         });
       yield* release(deleted);
     });
-
-  /** Changes one batch may carry, bounding what one transaction holds. */
-  const MAX_BATCH = 1000;
 
   /** Insert one document inside a transaction, under everything it must satisfy. */
   const applyInsert = (
@@ -634,9 +818,20 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
       return rewritten;
     });
 
+  /** Where a collection's backfill mark stands, if it does: read inside the transaction that acts on it. */
+  const rederivingAt = (collection: string) =>
+    Effect.gen(function* () {
+      const at = yield* lookup(REDERIVING_NAMESPACE, collection);
+      return at === undefined || (yield* readObject(at)) === undefined ? undefined : at;
+    });
+
   const operations = {
     createCollection: (input) =>
       Effect.gen(function* () {
+        const carried = (input as CarryCollectionInput)[CARRY_COLLECTION];
+        if (carried !== undefined && !isCarriedCollection(carried)) {
+          return yield* Effect.die(new RangeError("A carried collection names its creation time and an event time."));
+        }
         yield* assertNotMoving;
         yield* validateName(input.name);
         const existing = yield* loadCollection(input.name);
@@ -699,7 +894,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           : yield* normalizeColumns(input.name, input.columns, references);
         const collection: StoredCollection = {
           name: input.name,
-          createdAt: new Date().toISOString(),
+          createdAt: carried?.createdAt ?? new Date().toISOString(),
           surface: input.surface ?? "database",
           ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
           ...(indexes.length === 0 ? {} : { indexes }),
@@ -727,8 +922,10 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             const own = references
               .filter((reference) => reference.collection === input.name)
               .map((reference) => ({ collection: input.name, reference: reference.name }));
-            yield* collectionPut(txn, seq, own.length === 0 ? declared : { ...declared, referencedBy: own });
-            yield* linkTargets(txn, input.name, references.filter((reference) => reference.collection !== input.name));
+            // A carried collection's events, its targets' included, happened when the history it precedes began.
+            const stamped = carried === undefined ? txn : txn.stampedAt(carried.at);
+            yield* collectionPut(stamped, seq, own.length === 0 ? declared : { ...declared, referencedBy: own });
+            yield* linkTargets(stamped, input.name, references.filter((reference) => reference.collection !== input.name));
           }));
         return publicCollection(declared);
       }),
@@ -1083,16 +1280,48 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         // Normalized like a hand-made declaration, so a derived one is held to
         // the same rules and stored in the same shape.
         const wanted = yield* normalizeDerived(input.collection, input.declarations);
+        // Postings are re-derived only when what they derive from changed: a
+        // rewrite is one event per document, and one that changes no posting
+        // would add them, and time-series points with them, for nothing. A
+        // mark is committed with the declarations and stands until the
+        // documents are written back, so a run cut off between the two is
+        // finished by the next one, although that one finds the declarations
+        // already as it wants them.
         const recorded = yield* transactOrDie((txn) =>
           Effect.gen(function* () {
             const current = yield* loadCollection(input.collection);
             if (current === undefined) return undefined;
             const merged = mergeDerived(current, wanted);
+            const unfinished = yield* rederivingAt(input.collection);
+            const rederive = unfinished !== undefined
+              || !sameJson(lensDeclarations(current), lensDeclarations(merged.collection));
             yield* collectionPut(txn, seq, merged.collection);
-            return { before: current, ...merged };
+            if (rederive && unfinished === undefined) {
+              const at = (yield* lookup(REDERIVING_NAMESPACE, input.collection)) ?? (yield* txn.allocate);
+              yield* txn.put(at, encode({ collection: input.collection }), NO_POSTINGS, {
+                namespace: REDERIVING_NAMESPACE, key: input.collection,
+              });
+            }
+            return { before: current, ...merged, rederive };
           }));
         if (recorded === undefined) return yield* new CollectionNotFound({ name: input.collection });
-        const documents = yield* rewriteDocuments(input.collection);
+        /**
+         * Take the mark off once the documents are written back, while the
+         * collection still declares what this run left it declaring: another
+         * run's declarations recorded meanwhile keep the mark for that run's
+         * own backfill. A collection dropped meanwhile has nothing left to
+         * write back.
+         */
+        const rederived = (left: StoredCollection | undefined) =>
+          transactOrDie((txn) =>
+            Effect.gen(function* () {
+              const current = yield* loadCollection(input.collection);
+              if (current !== undefined && left !== undefined
+                && !(sameJson(lensDeclarations(current), lensDeclarations(left)) && sameJson(current.derived, left.derived))) return;
+              const at = yield* rederivingAt(input.collection);
+              if (at !== undefined) yield* txn.retract(at);
+            }));
+        const documents = recorded.rederive ? yield* rewriteDocuments(input.collection) : 0;
         const embedding = recorded.applied.embedding;
         if (embedding !== undefined) {
           for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.collection)))) {
@@ -1103,20 +1332,25 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             // The whole set comes back off, and the previous derivation goes
             // back on: an activation either applies everything it derived or
             // leaves the collection declared as it was.
-            yield* transactOrDie((txn) =>
+            const withdrawn = yield* transactOrDie((txn) =>
               Effect.gen(function* () {
                 const current = yield* loadCollection(input.collection);
-                if (current === undefined) return;
-                const withdrawn = mergeDerived(current, recorded.before.derived);
-                yield* collectionPut(txn, seq, withdrawn.collection);
+                if (current === undefined) return undefined;
+                const left = mergeDerived(current, recorded.before.derived).collection;
+                yield* collectionPut(txn, seq, left);
+                return left;
               }));
-            yield* rewriteDocuments(input.collection);
+            if (recorded.rederive) {
+              yield* rewriteDocuments(input.collection);
+              yield* rederived(withdrawn);
+            }
             return yield* new VectorShapeMismatch({
               collection: input.collection, id: doc.id, field: embedding.field,
               reason: `${wrong}, so the schema's declarations were not applied`,
             });
           }
         }
+        if (recorded.rederive) yield* rederived(recorded.collection);
         return { applied: recorded.applied, skipped: recorded.skipped, documents };
       }),
 
@@ -1211,6 +1445,15 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
 
     write: (input) =>
       Effect.gen(function* () {
+        const replay = (input as ReplayHistoryInput)[REPLAY_HISTORY];
+        if (replay !== undefined) {
+          if (!isReplayRequest(replay) || !Array.isArray(input.operations) || input.operations.length !== 0
+            || (input.emit ?? []).length !== 0 || input.idempotencyKey !== undefined
+            || (input as WriteAlongInput)[WRITE_ALONG] !== undefined || (input as CarryDocumentsInput)[CARRY_DOCUMENTS] !== undefined) {
+            return yield* Effect.die(new RangeError(`A history replay is one request of 1 to ${MAX_BATCH} changes or ids, and nothing else.`));
+          }
+          return replay._tag === "Changes" ? yield* replayChanges(replay.changes) : yield* settleReplayed(replay.collection, replay.ids);
+        }
         const operations = input.operations;
         const emit = input.emit ?? [];
         const along = (input as WriteAlongInput)[WRITE_ALONG];

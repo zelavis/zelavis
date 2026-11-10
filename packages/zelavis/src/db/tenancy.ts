@@ -26,6 +26,12 @@ export const documentNamespace = (collection: string): string => `${DOCUMENT_NAM
 /** Records what a completed write with an idempotency key did. */
 export const IDEMPOTENCY_NAMESPACE = "zv.idempotency";
 
+/**
+ * Collections whose documents are being written back under declarations a schema activation recorded, keyed by
+ * collection: the mark stands from the commit that records the declarations until the backfill is done.
+ */
+export const REDERIVING_NAMESPACE = "zv.schema.rederiving";
+
 /** The tenant's outbox: one record per message, keyed by the message's id. */
 export const OUTBOX_NAMESPACE = "zv.outbox";
 

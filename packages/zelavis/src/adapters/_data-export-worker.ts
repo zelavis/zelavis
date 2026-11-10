@@ -2,29 +2,69 @@
  * Exports every Tenant of a database with the engine that wrote it.
  *
  * The data-layout migration never reads another engine's storage itself: it runs this file under the OLD engine's own Node,
- * which imports that engine's `zelavis/db` and uses its backup export, then writes one JSON file per Tenant for the current
- * engine to recreate. The earlier engine's own Effect runtime runs its programs; this file's runtime only sequences them.
+ * which imports that engine's `zelavis/db` and uses its backup export, then writes the export (`_data-export-format`,
+ * format 2) for the current engine to recreate: one NDJSON file per Tenant, a header line and then one line per event of
+ * that Tenant's history, in order. The earlier engine's own Effect runtime runs its programs; this file's runtime only
+ * sequences them.
  *
  *   node _data-export-worker.js --platform <old release>/platform --shards <copy of its shards> --out <empty directory>
  *
- * Exit 0 writes `manifest.json` last; any other exit leaves no manifest. It refuses (exit 3) a Tenant whose export reaches the
- * released engine's silent cap of one million events, because such an export may be truncated.
+ * A Tenant whose shard log was compacted exports as `state` (one put per live record), any other as `log`.
+ *
+ * Every export is checked against the earlier engine's own reads before it is written: the released engines read at most
+ * one million entries of a whole shard's log for an export and stop there silently, so an export alone cannot be trusted
+ * to be complete. Its live collections must be the ones the earlier engine lists, and its live documents the ones the
+ * earlier engine reads back, each with the same data, version, times and expiry.
+ *
+ * Exit 0 writes `manifest.json` last; any other exit leaves no manifest. It refuses (exit 3, a message starting `REFUSED`)
+ * a Tenant whose export reaches that cap, differs from the earlier engine's own reads, holds an event it cannot read, or
+ * lives on a shard the earlier engine reports no maintenance status for.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Effect } from "effect";
+import { arrayOf, isRecord, isSafeInteger, isString, isUnknown, objectFields, parseJson, type JsonValidator } from "../core/json-validation.js";
 import { evaluate, integration } from "../core/runtime/effect-boundary.js";
-
-const EXPORT_EVENT_CAP = 1_000_000;
+import { comparableDocument, DATA_EXPORT_FORMAT, EXPORT_EVENT_CAP, exportedDocument, exportedEvent, sourceNamesOf, type ExportedEvent, type ExportManifest, type TenantHistory } from "./_data-export-format.js";
 
 interface EarlierEngine {
   readonly database: {
     readonly tenants: unknown;
-    readonly forTenant: (tenant: string) => { readonly backups: { readonly exportTenant: unknown } };
+    readonly shardOf: (tenant: string) => string;
+    readonly maintenance: { readonly status: unknown };
+    readonly followers: { readonly source: (partition: string) => unknown };
+    readonly forTenant: (tenant: string) => {
+      readonly backups: { readonly exportTenant: unknown };
+      readonly documents: {
+        readonly listCollections: unknown;
+        readonly findPage: (input: { readonly collection: string; readonly limit: number; readonly after?: unknown }) => unknown;
+      };
+    };
   };
   readonly close: () => Promise<void>;
 }
+
+/** What the earlier engine answers, checked before it is relied on: its values cross from another release's code. */
+const shardStatus = arrayOf(objectFields<{ readonly shard: string; readonly compactedTo: number }>({ shard: isString, compactedTo: isSafeInteger }));
+const partitionStatus = arrayOf(objectFields<{ readonly partition: string; readonly shard: string; readonly compactedTo: number }>({
+  partition: isString, shard: isString, compactedTo: isSafeInteger,
+}));
+const leaderStats = objectFields<{ readonly head: number; readonly compactedTo: number }>({
+  head: isSafeInteger, compactedTo: isSafeInteger,
+});
+interface EarlierLeaderSource {
+  readonly stats: unknown;
+  readonly events: { readonly read: (options: { readonly after?: string; readonly limit: number }) => unknown };
+}
+const tenantBackup = objectFields<{ readonly events: ReadonlyArray<unknown> }>({ events: Array.isArray as JsonValidator<ReadonlyArray<unknown>> });
+const collectionNames = arrayOf(objectFields<{ readonly name: string }>({ name: isString }));
+const documentPage = objectFields<{ readonly documents: ReadonlyArray<unknown>; readonly next: unknown }>({
+  documents: Array.isArray as JsonValidator<ReadonlyArray<unknown>>, next: isUnknown,
+});
+
+/** Documents read back from the earlier engine per request, and event lines written per chunk. */
+const PAGE = 1000;
 
 const option = (name: string) => evaluate(() => {
   const at = process.argv.indexOf(`--${name}`);
@@ -33,26 +73,166 @@ const option = (name: string) => evaluate(() => {
   return value;
 });
 
+const refuse = (message: string) => evaluate((): never => { throw new Error(`REFUSED ${message}`); });
+const answered = <A>(value: unknown, check: JsonValidator<A>, what: string) =>
+  evaluate(() => { if (!check(value)) throw new Error(`The earlier engine answered ${what} in a shape this export cannot read.`); return value; });
+
 const program = Effect.gen(function* () {
   const platform = yield* option("platform"), shards = yield* option("shards"), out = yield* option("out");
+  const sourceFormat = Number(yield* option("source-format"));
+  const layout = sourceNamesOf(sourceFormat);
+  if (layout === undefined) return yield* refuse(`Unknown source layout ${sourceFormat}.`);
   const earlier = yield* integration(() => import(pathToFileURL(join(platform, "dist", "db", "node-host.js")).href) as Promise<{ openNodeDatabase: (options: { directory: string }) => Promise<EarlierEngine> }>);
-  const earlierEffect = yield* integration(() => import(pathToFileURL(join(platform, "node_modules", "effect", "dist", "index.js")).href) as Promise<{ Effect: { runPromise: (program: unknown) => Promise<unknown> } }>);
-  const run = <A>(earlierProgram: unknown) => integration(() => earlierEffect.Effect.runPromise(earlierProgram) as Promise<A>);
+  const earlierEffect = yield* integration(() => import(pathToFileURL(join(platform, "node_modules", "effect", "dist", "index.js")).href) as Promise<{
+    Effect: { runPromise: (program: unknown) => Promise<unknown> };
+    Stream: { runCollect: (stream: unknown) => unknown };
+  }>);
+  const run = (earlierProgram: unknown) => integration(() => earlierEffect.Effect.runPromise(earlierProgram));
   const opened = yield* integration(() => earlier.openNodeDatabase({ directory: shards }));
+
+  /**
+   * The export's final state against the earlier engine's own reads: the same collections, and in each the same
+   * documents. The first difference refuses.
+   */
+  const matchesEarlierEngine = (tenant: string, events: ReadonlyArray<ExportedEvent>) => Effect.gen(function* () {
+    const incomplete = (what: string) => refuse(`Tenant "${tenant}": its export does not match the earlier engine's own ${what}; the earlier engine reads at most ${EXPORT_EVENT_CAP} log entries per shard for an export, so it is incomplete. Nothing was changed.`);
+    const live = new Map<number, ExportedEvent>();
+    for (const event of events) {
+      if (event.kind === "retract") live.delete(event.seq);
+      else live.set(event.seq, event);
+    }
+    const collectionNamespace = layout.collectionNamespace(tenant), documentPrefix = layout.documentPrefix(tenant);
+    const names = new Set<string>();
+    const expected = new Map<string, Map<string, { readonly comparable: string; readonly timed: boolean }>>();
+    for (const event of live.values()) {
+      const namespace = event.identity?.namespace;
+      if (namespace === undefined) continue;
+      if (namespace === collectionNamespace) names.add(event.identity!.key);
+      if (!namespace.startsWith(documentPrefix)) continue;
+      const stored = yield* evaluate(() => parseJson(Buffer.from(event.body ?? "", "base64").toString("utf8"), exportedDocument, `Exported document of Tenant "${tenant}"`));
+      const timed = stored.createdAt !== undefined && stored.updatedAt !== undefined;
+      const collection = namespace.slice(documentPrefix.length);
+      const documents = expected.get(collection) ?? new Map<string, { readonly comparable: string; readonly timed: boolean }>();
+      documents.set(event.identity!.key, { comparable: comparableDocument({ ...stored, version: stored.version ?? 1 }, timed), timed });
+      expected.set(collection, documents);
+    }
+
+    const documents = opened.database.forTenant(tenant).documents;
+    const listed = yield* answered(yield* run(documents.listCollections), collectionNames, "its collections");
+    for (const { name } of listed) if (!names.has(name)) return yield* incomplete(`collections (${name})`);
+    if (listed.length !== names.size) {
+      const missing = [...names].find((name) => !listed.some((collection) => collection.name === name));
+      return yield* incomplete(`collections (${missing})`);
+    }
+    for (const name of names) {
+      const wanted = expected.get(name) ?? new Map<string, { readonly comparable: string; readonly timed: boolean }>();
+      let read = 0;
+      let after: unknown;
+      for (;;) {
+        const page = yield* answered(
+          yield* run(documents.findPage({ collection: name, limit: PAGE, ...(after === undefined ? {} : { after }) })),
+          documentPage, `a page of "${name}"`);
+        for (const held of page.documents) {
+          const document = yield* answered(held, exportedDocument, `a document of "${name}"`);
+          const exported = wanted.get(document.id);
+          if (exported === undefined || exported.comparable !== comparableDocument({ ...document, version: document.version ?? 1 }, exported.timed)) {
+            return yield* incomplete(`documents (${name}/${document.id})`);
+          }
+          read += 1;
+        }
+        if (page.next === undefined) break;
+        after = page.next;
+      }
+      if (read !== wanted.size) return yield* incomplete(`documents (${name}: ${wanted.size} exported, ${read} read back)`);
+    }
+  });
+
+  const historyOf = (tenant: string, source: EarlierLeaderSource, head: number) => Effect.gen(function* () {
+    const events: ExportedEvent[] = [];
+    let after: string | undefined;
+    let read = 0;
+    while (read < head) {
+      const page = yield* answered(yield* run(earlierEffect.Stream.runCollect(source.events.read({
+        ...(after === undefined ? {} : { after }), limit: PAGE,
+      }))), arrayOf(isRecord), `a log page of Tenant "${tenant}"`);
+      if (page.length === 0 || page.length > PAGE || read + page.length > head) {
+        return yield* refuse(`Tenant "${tenant}" has an incomplete or inconsistent log export.`);
+      }
+      for (const raw of page) {
+        const { _tag, seq, version, at, identity, bytes, cursor } = raw;
+        if (!isString(cursor) || cursor === after || (_tag !== "ObjectPut" && _tag !== "ObjectRetracted")) {
+          return yield* refuse(`Tenant "${tenant}" has an unreadable log event.`);
+        }
+        after = cursor;
+        if (identity === undefined) continue;
+        const event = _tag === "ObjectPut" && bytes instanceof Uint8Array
+          ? { kind: "put", seq, version, at, identity, body: Buffer.from(bytes).toString("base64") }
+          : { kind: _tag === "ObjectRetracted" ? "retract" : undefined, seq, version, at, identity };
+        if (!exportedEvent(event)) return yield* refuse(`Tenant "${tenant}" has an unreadable log record.`);
+        events.push(event);
+      }
+      read += page.length;
+    }
+    return events;
+  });
+
+  const backupOf = (tenant: string) => Effect.gen(function* () {
+    const backup = yield* answered(yield* run(opened.database.forTenant(tenant).backups.exportTenant), tenantBackup, `the export of Tenant "${tenant}"`);
+    if (backup.events.length >= EXPORT_EVENT_CAP) {
+      return yield* refuse(`Tenant "${tenant}" exported ${backup.events.length} events, which reaches the migration's export cap.`);
+    }
+    const events: ExportedEvent[] = [];
+    for (const raw of backup.events) {
+      const { kind, seq, version, at, identity, body } = isRecord(raw) ? raw : {};
+      const event = {
+        kind, seq, version, at,
+        ...(identity === undefined ? {} : { identity }), ...(body === undefined ? {} : { body }),
+      };
+      if (!exportedEvent(event)) return yield* refuse(`Tenant "${tenant}": its export holds an event this migration cannot read (seq ${String(seq)}).`);
+      events.push(event);
+    }
+    return events;
+  });
+
   const exported = Effect.gen(function* () {
     yield* integration(() => mkdir(out, { recursive: true }));
-    const tenants = yield* run<string[]>(opened.database.tenants);
-    const files: Array<{ tenant: string; file: string; events: number }> = [];
+    const tenants = yield* answered(yield* run(opened.database.tenants), arrayOf(isString), "its Tenants");
+    const status = yield* run(opened.database.maintenance.status);
+    const shardsStatus = sourceFormat === 2 ? yield* answered(status, shardStatus, "its maintenance status") : [];
+    const partitionsStatus = sourceFormat === 4 ? yield* answered(status, partitionStatus, "its partition status") : [];
+    const files: Array<ExportManifest["tenants"][number]> = [];
     for (const [index, tenant] of tenants.entries()) {
-      const backup = yield* run<{ events: unknown[] }>(opened.database.forTenant(tenant).backups.exportTenant);
-      if (backup.events.length >= EXPORT_EVENT_CAP) {
-        return yield* evaluate(() => { throw new Error(`REFUSED Tenant "${tenant}" exported ${backup.events.length} events, which reaches the released engine's export cap; its export may be truncated.`); });
+      const shard = opened.database.shardOf(tenant);
+      const entry = sourceFormat === 2
+        ? shardsStatus.find((candidate) => candidate.shard === shard)
+        : partitionsStatus.find((candidate) => candidate.shard === shard && candidate.partition === tenant);
+      if (entry === undefined) return yield* refuse(`Tenant "${tenant}": it has no maintenance status.`);
+      const history: TenantHistory = entry.compactedTo > 0 ? "state" : "log";
+      let events: ExportedEvent[];
+      if (sourceFormat === 4 && history === "log") {
+        const leader = (yield* run(opened.database.followers.source(tenant))) as EarlierLeaderSource;
+        const stats = yield* answered(yield* run(leader.stats), leaderStats, `the log status of Tenant "${tenant}"`);
+        if (stats.compactedTo !== 0 || stats.head < 0 || stats.head >= EXPORT_EVENT_CAP) {
+          return yield* refuse(`Tenant "${tenant}" has a compacted or oversized log.`);
+        }
+        events = yield* historyOf(tenant, leader, stats.head);
+      } else {
+        events = yield* backupOf(tenant);
       }
-      const file = `tenant-${index}.json`;
-      yield* integration(() => writeFile(join(out, file), JSON.stringify({ tenant, events: backup.events })));
-      files.push({ tenant, file, events: backup.events.length });
+      yield* matchesEarlierEngine(tenant, events);
+
+      const file = `tenant-${index}.ndjson`;
+      const handle = yield* integration(() => open(join(out, file), "w", 0o600));
+      yield* Effect.gen(function* () {
+        yield* integration(() => handle.write(`${JSON.stringify({ tenant, history, events: events.length })}\n`));
+        for (let at = 0; at < events.length; at += PAGE) {
+          const lines = events.slice(at, at + PAGE).map((event) => JSON.stringify(event)).join("\n");
+          yield* integration(() => handle.write(`${lines}\n`));
+        }
+      }).pipe(Effect.ensuring(integration(() => handle.close()).pipe(Effect.orDie)));
+      files.push({ tenant, file, events: events.length, history });
     }
-    yield* integration(() => writeFile(join(out, "manifest.json"), JSON.stringify({ format: "zelavis-data-export/1", tenants: files })));
+    yield* integration(() => writeFile(join(out, "manifest.json"), JSON.stringify({ format: DATA_EXPORT_FORMAT, tenants: files } satisfies ExportManifest)));
   });
   yield* exported.pipe(Effect.ensuring(integration(() => opened.close()).pipe(Effect.orDie)));
 });

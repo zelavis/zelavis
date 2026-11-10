@@ -325,7 +325,7 @@
     "zelavis": ">=2.0.0-alpha.44"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "effect": "4.0.0",
     "typescript": "^7.0.2",
     "zelavis": "workspace:*"

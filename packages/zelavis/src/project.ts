@@ -194,7 +194,11 @@ export interface ZelavisProjectDataMigration {
   readonly tenants: number;
   readonly collections: number;
   readonly documents: number;
-  /** Documents past their first version: each keeps its version, and its earlier versions' change history is not carried. */
+  /** Document events of the earlier history recreated in order, each at its original time. */
+  readonly eventsCarried: number;
+  /** Tenants whose earlier log had been compacted, so only their final documents were recreated. */
+  readonly tenantsWithoutHistory: number;
+  /** Documents of those Tenants past their first version: each keeps its version; its earlier versions' events are not carried. */
   readonly documentsWithHistoryDropped: number;
   /** The directory beside the Project's data that keeps the data as it was; remove it when it is no longer needed. */
   readonly retained: string;

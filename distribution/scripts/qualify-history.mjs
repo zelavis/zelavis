@@ -213,6 +213,8 @@ if (phase === 'create-wordpress') {
   assert.equal(upgraded.dataMigration.from, 2);
   assert.equal(upgraded.dataMigration.to, 4);
   assert.equal(upgraded.dataMigration.documents, Object.keys(native.notes).length);
+  assert.ok(upgraded.dataMigration.eventsCarried >= Object.keys(native.notes).length, "every note's history is carried");
+  assert.equal(upgraded.dataMigration.tenantsWithoutHistory, 0, "the App's log was whole");
   console.log(`PASS: native App upgraded ${native.engine} -> ${upgraded.engineVersion}; migration ${JSON.stringify(upgraded.dataMigration)}.`);
 } else if (phase === 'native-migrated') {
   const { client } = await sdk();
