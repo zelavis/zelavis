@@ -33,7 +33,9 @@ export type FollowerSeed =
   /** The leader compacted past the follower's head. */
   | "compacted"
   /** The follower holds a different event at a position it shares with the leader. */
-  | "diverged";
+  | "diverged"
+  /** The leader's partition is another life than the follower's copy: it was removed and written again. */
+  | "recreated";
 
 export interface FollowerPass {
   /** Records the pass copied by seeding, 0 when it carried the follower on. */
@@ -153,6 +155,7 @@ export const levelFollower = (
         CursorCompacted: () => copy("compacted"),
         ReplicaDiverged: () => copy("diverged"),
         EventGap: () => copy("diverged"),
+        CursorFromAnotherLife: () => copy("recreated"),
       }),
     );
   });

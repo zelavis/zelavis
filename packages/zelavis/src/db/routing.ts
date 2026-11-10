@@ -277,8 +277,8 @@ export const partitionRouter = (options: {
       fence: (move) => on((store) => store.fence(move)),
       liftFence: (move) => on((store) => store.liftFence(move)),
       recoveryPoint: (at) => on((store) => store.recoveryPoint(at)),
-      // A cursor names the partition and a position, wherever the partition lives.
-      cursorAt: (position) => shards.get(route(by).shard)!.partition(partition).cursorAt(position),
+      // A cursor names the partition, its life and a position, wherever the partition lives.
+      cursorAt: (position, incarnation) => on((store) => store.cursorAt(position, incarnation)),
       writable: on((store) => store.writable),
       guard: (gate) => on((store) => store.guard(gate)),
       read: (seq) => on((store) => store.read(seq)),

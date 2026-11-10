@@ -141,10 +141,12 @@ export const projectionsFor = (
       let cursor = from;
       let applied = 0;
       for (;;) {
-        const page = yield* events.read({
+        // The checkpoint is this partition's own, or a branch ancestor's it carries on from, so a refusal
+        // here is a broken invariant rather than a caller's to act on.
+        const page = yield* Effect.orDie(events.read({
           ...(cursor === undefined ? {} : { after: cursor }),
           limit: 512,
-        });
+        }));
         for (const event of page.events) {
           if (matchesSource(definition, event)) {
             yield* definition.apply(event);

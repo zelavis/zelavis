@@ -346,6 +346,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
         PartitionLeased: Effect.die,
         WriterFenced: Effect.die,
         ForeignCursor: Effect.die,
+        CursorFromAnotherLife: Effect.die,
         CursorCompacted: Effect.die,
         LogCompacted: Effect.die,
         PartitionUnavailable: Effect.die,

@@ -128,6 +128,8 @@ export const mergePartition = (
     readonly branch: Side;
     readonly source: Side;
     readonly branchPoint: number;
+    /** The life of the source the branch was taken from (its lineage's `incarnation`). */
+    readonly incarnation: string;
     readonly resolve: ReadonlyArray<MergeResolution>;
     readonly dryRun: boolean;
     readonly part?: string;
@@ -159,11 +161,17 @@ export const mergePartition = (
           } else if (identity.namespace === COLLECTION_NAMESPACE) changes.collections.add(identity.key);
           else if (!DERIVED.has(identity.namespace)) changes.other.add(identity.namespace);
         };
-        let after: EventCursor = side.store.cursorAt(branchPoint);
+        // The source's side is read in the life the branch was taken from: once it was removed and written
+        // again, its log after the branch point is another history and the read refuses it.
+        let after: EventCursor = yield* side.store.cursorAt(branchPoint, side === source ? input.incarnation : undefined);
         for (;;) {
           const batch = [...(yield* Stream.runCollect(side.store.events.read({ after, limit: EVENTS_BATCH })).pipe(
-            Effect.catchTag("CursorCompacted", () =>
-              Effect.fail(input.refuse(`"${side.store.partition}" has compacted its log past the branch point ${branchPoint}, so what it changed since cannot be read`))),
+            Effect.catchTags({
+              CursorCompacted: () =>
+                Effect.fail(input.refuse(`"${side.store.partition}" has compacted its log past the branch point ${branchPoint}, so what it changed since cannot be read`)),
+              CursorFromAnotherLife: () =>
+                Effect.fail(input.refuse(`"${side.store.partition}" was removed and written again since the branch was taken, so it is not what was branched`)),
+            }),
           ))];
           for (const event of batch) {
             if (event._tag === "ObjectPut") {

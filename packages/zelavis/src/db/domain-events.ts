@@ -1,6 +1,7 @@
 import { parseJson } from "../core/json-validation.js";
 import { consistently, documentRecord, collectionRecord } from "./documents.js";
 import { Effect, Stream } from "effect";
+import type { CursorCompacted, CursorFromAnotherLife } from "./errors.js";
 import type { DbEvent, EventCursor } from "./events.js";
 import type { Collection, Document, JsonObject } from "./documents.js";
 import type { ObjectStoreApi } from "./store.js";
@@ -64,10 +65,15 @@ export interface DomainEventsApi {
    *
    * Bounded: one read looks at a fixed number of log entries however few of
    * them match, and says where it stopped.
+   *
+   * A cursor the reader can no longer continue is refused, and the reader
+   * starts again from the beginning: `CursorCompacted` once the log was cut
+   * past it, `CursorFromAnotherLife` once the Tenant was removed and written
+   * again since it was issued.
    */
   readonly read: (
     input?: ReadDomainEventsInput,
-  ) => Effect.Effect<DomainEventPage>;
+  ) => Effect.Effect<DomainEventPage, CursorCompacted | CursorFromAnotherLife>;
 }
 
 /** Log entries fetched per step of a read. */
@@ -203,5 +209,6 @@ export const domainEventsFor = (
         if (step.length < READ_STEP) return page(false);
         if (scanned >= READ_SCAN_LIMIT) return page(true);
       }
-    }).pipe(Effect.orDie),
+    }).pipe(Effect.catch((error) =>
+      error._tag === "CursorCompacted" || error._tag === "CursorFromAnotherLife" ? Effect.fail(error) : Effect.die(error))),
 });

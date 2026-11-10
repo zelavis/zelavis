@@ -128,7 +128,7 @@ for (const [label, into] of [["on another shard", across.other], ["on the same s
       const sourceStats = yield* shards.get(db.shardOf(across.first)).partition(across.first).stats;
       assert.notEqual(stats.incarnation, sourceStats.incarnation, "a branch is a new life of its own");
       assert.equal(stats.seeding, false);
-      assert.deepEqual(stats.lineage, [{ partition: across.first, upTo: positionOf(made.cursor) }]);
+      assert.deepEqual(stats.lineage, [{ partition: across.first, incarnation: sourceStats.incarnation, upTo: positionOf(made.cursor) }]);
       assert.deepEqual((yield* db.tenants).filter((tenant) => tenant === into), [into]);
     })));
 }
@@ -226,9 +226,10 @@ test("a branch of a branch knows both ancestors, and a cursor of the first carri
 
     assert.deepEqual(yield* posts(db.forTenant(across.same)), yield* posts(db.forTenant(across.other)));
     const stats = yield* shards.get(db.shardOf(across.same)).partition(across.same).stats;
+    const lifeOf = (tenant) => Effect.map(shards.get(db.shardOf(tenant)).partition(tenant).stats, (held) => held.incarnation);
     assert.deepEqual(stats.lineage, [
-      { partition: across.other, upTo: positionOf(second.cursor) },
-      { partition: across.first, upTo: positionOf(first.cursor) },
+      { partition: across.other, incarnation: yield* lifeOf(across.other), upTo: positionOf(second.cursor) },
+      { partition: across.first, incarnation: yield* lifeOf(across.first), upTo: positionOf(first.cursor) },
     ]);
     const after = yield* db.forTenant(across.same).events.read({ after: early, limit: 100 });
     assert.deepEqual(after.events.map((event) => event.documentId), ["p2"]);

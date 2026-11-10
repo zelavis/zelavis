@@ -1,7 +1,7 @@
 import { Clock, Duration, Effect, Option, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 import { integration } from "../core/runtime/effect-boundary.js";
 import {
-  CursorCompacted, type DbError, EventGap, FollowerBehind, InvalidFollowerRequest, LeaseOwnedByAnother, LeaseStillHeld, LensesRebuilding, LogCompacted, NoWriterLease, NotDesignatedStandby, ReplicaDiverged,
+  CursorCompacted, CursorFromAnotherLife, type DbError, EventGap, FollowerBehind, InvalidFollowerRequest, LeaseOwnedByAnother, LeaseStillHeld, LensesRebuilding, LogCompacted, NoWriterLease, NotDesignatedStandby, ReplicaDiverged,
   StoreError, TenantBranching, TenantMoving, TenantRelocated, type PlacementInUse,
 } from "./errors.js";
 import type { DbEvent, EventCursor } from "./events.js";
@@ -75,7 +75,7 @@ const StatsWire = Schema.Struct({
   nextSeq: Schema.Finite,
   seeding: Schema.Boolean,
   incarnation: Schema.optionalKey(Schema.String),
-  lineage: Schema.optionalKey(Schema.Array(Schema.Struct({ partition: Schema.String, upTo: Schema.Finite }))),
+  lineage: Schema.optionalKey(Schema.Array(Schema.Struct({ partition: Schema.String, incarnation: Schema.String, upTo: Schema.Finite }))),
   leaving: Schema.optionalKey(Schema.Array(Schema.String)),
   asOf: Schema.optionalKey(Schema.Finite),
 });
@@ -207,10 +207,11 @@ const eventOfWire = (wire: typeof EventWire.Type): DbEvent =>
 
 /**
  * The failures a follower acts on, carried by name (`code`) and fields (`detail`), so a remote one is the
- * same tagged error a local one is: a follower re-seeds on `CursorCompacted`, holds on `LogCompacted`.
+ * same tagged error a local one is: a follower re-seeds on `CursorCompacted` and on `CursorFromAnotherLife`,
+ * holds on `LogCompacted`.
  */
 const CARRIED = {
-  CursorCompacted, LogCompacted, EventGap, ReplicaDiverged, TenantMoving, TenantRelocated, LensesRebuilding, TenantBranching,
+  CursorCompacted, CursorFromAnotherLife, LogCompacted, EventGap, ReplicaDiverged, TenantMoving, TenantRelocated, LensesRebuilding, TenantBranching,
   LeaseStillHeld, FollowerBehind, LeaseOwnedByAnother, NoWriterLease, NotDesignatedStandby,
 } as const;
 type CarriedTag = keyof typeof CARRIED;

@@ -255,6 +255,20 @@ export class ForeignCursor extends Schema.TaggedError<ForeignCursor>()("ForeignC
 }) {}
 
 /**
+ * An event cursor issued by another life of the partition it names: one the
+ * Tenant had before it was removed and written again, or one of a branch's
+ * source other than the life it was branched from.
+ *
+ * A new life starts its log over, so the cursor's position names a place in a
+ * history that is gone. Read as a place in the new log it would skip every
+ * event up to that position, and nobody would hear about it. A reader holding
+ * one reads the partition again from the start.
+ */
+export class CursorFromAnotherLife extends Schema.TaggedError<CursorFromAnotherLife>()("CursorFromAnotherLife", {
+  partition: Schema.String,
+}) {}
+
+/**
  * A cursor handed to an ordered read it did not come from.
  *
  * A position in one order means nothing in another: continuing a descending
@@ -833,6 +847,7 @@ export type DbError =
   | StoreError
   | WriterFenced
   | ForeignCursor
+  | CursorFromAnotherLife
   | CursorCompacted
   | LogCompacted
   | PartitionUnavailable
@@ -853,6 +868,7 @@ const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]:
   PartitionLeased: true,
   WriterFenced: true,
   ForeignCursor: true,
+  CursorFromAnotherLife: true,
   CursorCompacted: true,
   LogCompacted: true,
   PartitionUnavailable: true,

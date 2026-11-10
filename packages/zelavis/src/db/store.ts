@@ -221,9 +221,10 @@ export interface PartitionStats {
   readonly incarnation?: string;
   /**
    * For a branched partition: each partition whose log positions it shares,
-   * nearest first, and the last position it shares with that one.
+   * nearest first, the life of it the branch was taken from, and the last
+   * position it shares with that one.
    */
-  readonly lineage?: ReadonlyArray<{ readonly partition: PartitionKey; readonly upTo: number }>;
+  readonly lineage?: ReadonlyArray<{ readonly partition: PartitionKey; readonly incarnation: string; readonly upTo: number }>;
   /** For an unfinished branch: the identity namespaces it leaves behind (`SeedOptions.leave`). */
   readonly leaving?: ReadonlyArray<string>;
   /** For an unfinished branch as of a past position: that position (`SeedOptions.asOf`). */
@@ -469,8 +470,13 @@ export interface ObjectStoreApi {
    */
   readonly recoveryPoint: (at: { readonly cursor: EventCursor } | { readonly time: number }) => Effect.Effect<number, DbError>;
 
-  /** The cursor naming `position` in this partition's log: continuing from it reads what came after. */
-  readonly cursorAt: (position: number) => EventCursor;
+  /**
+   * The cursor naming `position` in the log of one life of this partition
+   * (`PartitionStats.incarnation`), its present one unless `incarnation` names
+   * another: continuing from it reads what came after, and a read refuses it
+   * once the partition is in a different life (`CursorFromAnotherLife`).
+   */
+  readonly cursorAt: (position: number, incarnation?: string) => Effect.Effect<EventCursor, DbError>;
 
   /**
    * Fails with `TenantMoving` when the partition is fenced. Free once the

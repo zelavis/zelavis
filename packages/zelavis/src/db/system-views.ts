@@ -130,10 +130,10 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
           // The event log has its own continuation, so this view forwards it
           // rather than counting rows it would have to re-read to skip.
           const limit = boundedLimit(input.limit);
-          const page = yield* sources.events.read({
+          const page = yield* Effect.orDie(sources.events.read({
             ...(input.after === undefined ? {} : { after: input.after as never }),
             limit,
-          });
+          }));
           const rows = page.events.map((event) => ({
             id: event.eventId,
             data: {

@@ -53,8 +53,18 @@ const seed = async (api) => {
   for (const [id, score] of [["a", 1], ["b", 2], ["c", 3]]) await acme.documents.insert({ collection: "posts", id, data: { title: `post ${id}`, score, authorId: "ann" } });
 };
 
-/** A response with what differs run to run taken out: times, and ids the database generates. */
-const steady = (value) => JSON.parse(JSON.stringify(value, (key, entry) => (/(^|[a-z])(At|Time|timestamp|createdAt|updatedAt)$/.test(key) || key === "at" ? undefined : entry)));
+/** An event cursor without the life of the partition it names, which each database draws at random. */
+const lifeless = (cursor) => {
+  const raw = Buffer.from(cursor, "base64url").toString("utf8");
+  const last = raw.lastIndexOf("|");
+  return `${raw.slice(0, raw.lastIndexOf("|", last - 1))}|${raw.slice(last + 1)}`;
+};
+
+/** A response with what differs run to run taken out: times, ids the database generates, and each partition's life. */
+const steady = (value) => JSON.parse(JSON.stringify(value, (key, entry) =>
+  /(^|[a-z])(At|Time|timestamp|createdAt|updatedAt)$/.test(key) || key === "at" ? undefined
+    : (key === "cursor" || key === "checkpoint") && typeof entry === "string" && entry.length > 0 && Buffer.from(entry, "base64url").toString("utf8").split("|").length >= 3 ? lifeless(entry)
+      : entry));
 
 /** One scenario step: the same call in each form. `cli` is the argument list, `sdk` the client call, `http` the route. */
 const steps = [

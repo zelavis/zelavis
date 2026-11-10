@@ -1,6 +1,6 @@
 import { Context, Effect, Option, Semaphore, Stream } from "effect";
 import {
-  CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
+  CursorCompacted, CursorFromAnotherLife, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
   PartitionExhausted, ReplicaDiverged, StoreError, TenantBranching, TenantMoving, TenantNotEmpty, TenantRelocated,
   WriterFenced,
   PartitionLeased,
@@ -61,8 +61,14 @@ const SHARD_FORMAT = "format";
 /**
  * The layout this code writes. A shard carries it so a layout change is caught
  * on open instead of misread.
+ *
+ * 5: an event cursor names the life of the partition that issued it, and a
+ * branch's lineage the life of each ancestor, so a cursor kept from before a
+ * Tenant was removed and written again is refused instead of skipping the new
+ * life's events up to its old position. Cursors are kept inside the data
+ * (projection checkpoints, time-series state), so the encoding is the layout's.
  */
-export const CURRENT_FORMAT = 4;
+export const CURRENT_FORMAT = 5;
 
 /** One partition's own counters and marks. */
 const META_NEXT_SEQ = "next_seq";
@@ -223,34 +229,65 @@ const LENS_TAGS = [...STATE_TAGS, ...DERIVED_TAGS] as const;
 
 const SEPARATOR = "|";
 
-const encodeCursor = (partition: PartitionKey, position: number): EventCursor =>
-  Buffer.from(partition + SEPARATOR + String(position), "utf8").toString("base64url") as EventCursor;
+/**
+ * An event cursor: the partition, the life of it that issued the cursor
+ * (`PartitionStats.incarnation`) and a position in that life's log.
+ *
+ * The life is what a position needs to mean anything. A partition removed and
+ * written again starts a new log whose positions begin over, and nothing of
+ * the old one is left to compare with, on that shard or on any other a new
+ * life may be routed to; so only the cursor can say which log it is a place
+ * in. Position 0 is the start of every life and is written with whatever life
+ * the partition has, none for one never written.
+ */
+const encodeCursor = (partition: PartitionKey, life: string | undefined, position: number): EventCursor =>
+  Buffer.from(partition + SEPARATOR + (life ?? "") + SEPARATOR + String(position), "utf8").toString("base64url") as EventCursor;
+
+/** A cursor's parts, or nothing for one no partition issued. Partition names may hold the separator; lives and positions never do. */
+const parseCursor = (cursor: EventCursor): { readonly owner: string; readonly life: string; readonly position: string } | undefined => {
+  const raw = Buffer.from(cursor, "base64url").toString("utf8");
+  const last = raw.lastIndexOf(SEPARATOR);
+  const before = last < 0 ? -1 : raw.lastIndexOf(SEPARATOR, last - 1);
+  if (before < 0) return undefined;
+  return { owner: raw.slice(0, before), life: raw.slice(before + 1, last), position: raw.slice(last + 1) };
+};
 
 /**
- * The position an event cursor names, refused when another partition issued it.
+ * The position an event cursor names in the log of `life` of `partition`.
  *
- * A position is a place in one partition's log and means nothing in another's.
+ * Refused with `ForeignCursor` when another partition issued it, and with
+ * `CursorFromAnotherLife` when another life of this one did: a position is a
+ * place in one life's log and means nothing in another's. A branch shares its
+ * source's log up to the branch point, position for position, so a cursor the
+ * source issued in the life it was branched from, up to there, names the same
+ * place here. Position 0 is the start of any life.
  */
 const cursorPosition = (
   partition: PartitionKey,
+  life: string | undefined,
   cursor: EventCursor,
   lineage: StoredLineage = [],
-): Effect.Effect<number, ForeignCursor | StoreError> => {
-  const raw = Buffer.from(cursor, "base64url").toString("utf8");
-  const at = raw.lastIndexOf(SEPARATOR);
-  const owner = raw.slice(0, at);
-  if (at < 0) return Effect.fail(new ForeignCursor({ expected: partition, received: raw }));
-  const position = Number(raw.slice(at + 1));
-  if (!Number.isSafeInteger(position) || position < 0) {
+): Effect.Effect<number, ForeignCursor | CursorFromAnotherLife | StoreError> => {
+  const parts = parseCursor(cursor);
+  if (parts === undefined) {
+    return Effect.fail(new ForeignCursor({ expected: partition, received: Buffer.from(cursor, "base64url").toString("utf8") }));
+  }
+  const position = Number(parts.position);
+  if (parts.position === "" || !Number.isSafeInteger(position) || position < 0) {
     return Effect.fail(new StoreError({ op: "cursor.decode", cause: "the cursor names no position" }));
   }
-  if (owner === partition) return Effect.succeed(position);
-  // A branch shares its source's log up to the branch point, position for
-  // position, so a cursor the source issued up to there names the same place
-  // here. Past it the two logs are different histories.
-  return lineage.some((entry) => entry.partition === owner && position <= entry.upTo)
+  if (parts.owner === partition) {
+    return position === 0 || (life !== undefined && parts.life === life)
+      ? Effect.succeed(position)
+      : Effect.fail(new CursorFromAnotherLife({ partition }));
+  }
+  const ancestor = lineage.find((entry) => entry.partition === parts.owner);
+  if (ancestor === undefined) return Effect.fail(new ForeignCursor({ expected: partition, received: parts.owner }));
+  if (position !== 0 && parts.life !== ancestor.incarnation) return Effect.fail(new CursorFromAnotherLife({ partition }));
+  // Past the branch point the two logs are different histories.
+  return position <= ancestor.upTo
     ? Effect.succeed(position)
-    : Effect.fail(new ForeignCursor({ expected: partition, received: owner }));
+    : Effect.fail(new ForeignCursor({ expected: partition, received: parts.owner }));
 };
 
 /**
@@ -540,9 +577,16 @@ const openPartition = (
     return branch ?? stored;
   });
 
-  /** Where an event cursor points in this log, a cursor of an ancestor's up to its branch point included. */
-  const positionOf = (cursor: EventCursor) =>
-    Effect.flatMap(branchHeld, (held) => cursorPosition(partition, cursor, held.lineage));
+  /** This life of the partition (`META_INCARNATION`), none while it was never written. */
+  const lifeOf = (source: KvEngine = engine) =>
+    Effect.map(source.get(incarnationKey), (bytes) => bytes === undefined ? undefined : toHex(bytes));
+
+  /** Where an event cursor points in the log of `life`, a cursor of an ancestor's up to its branch point included. */
+  const positionIn = (life: string | undefined, cursor: EventCursor) =>
+    Effect.flatMap(branchHeld, (held) => cursorPosition(partition, life, cursor, held.lineage));
+
+  /** Where an event cursor points in this life's log. */
+  const positionOf = (cursor: EventCursor) => Effect.flatMap(lifeOf(), (life) => positionIn(life, cursor));
 
   /**
    * Whether this partition's lenses can be read and written: not while a
@@ -946,9 +990,9 @@ const openPartition = (
       : { kind: "retract", ...common };
   };
 
-  const toEvent = (position: number, stored: StoredEvent): DbEvent => {
+  const toEvent = (life: string | undefined, position: number, stored: StoredEvent): DbEvent => {
     const common = {
-      cursor: encodeCursor(partition, position),
+      cursor: encodeCursor(partition, life, position),
       partition,
       generation: stored.generation,
       origin: stored.origin,
@@ -1828,13 +1872,14 @@ const openPartition = (
 
   const readEvents = (
     options?: ReadEventsOptions,
-  ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor | CursorCompacted> =>
+  ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor | CursorFromAnotherLife | CursorCompacted> =>
     Effect.gen(function* () {
       if (options?.after !== undefined && options.from !== undefined) {
         return yield* Effect.die(new TypeError("an event read takes `after` or `from`, not both"));
       }
       const cursor = options?.from ?? options?.after;
-      const named = cursor === undefined ? 0 : yield* positionOf(cursor);
+      const life = yield* lifeOf();
+      const named = cursor === undefined ? 0 : yield* positionIn(life, cursor);
       // Read from a position by reading after the one before it.
       const after = options?.from !== undefined ? Math.max(named - 1, 0) : named;
       const compactedTo = yield* readMeta(META_COMPACTED_TO);
@@ -1854,9 +1899,12 @@ const openPartition = (
         (entry) =>
           Effect.flatMap(decodeOrDie("event.read", () => decodeEvent(entry.value)), (stored) =>
             Effect.sync(() => {
-              out.push(toEvent(keys.positionOf(entry.key), stored));
+              out.push(toEvent(life, keys.positionOf(entry.key), stored));
             })),
       );
+      // A removal between the two reads leaves events of one life named by
+      // another's cursors; refused, the reader starts over in the life there now.
+      if (out.length > 0 && (yield* lifeOf()) !== life) return yield* new CursorFromAnotherLife({ partition });
       return out;
     });
 
@@ -1869,16 +1917,34 @@ const openPartition = (
    * would leave a hole. The identifiers the events use are marked taken, so a
    * write accepted here later — after a move, or by a promoted follower —
    * cannot be handed one of them again.
+   *
+   * The events must come from this life of the partition (`CursorFromAnotherLife`
+   * otherwise). A partition whose log is still empty takes the life of the log
+   * it starts to follow, as a copy keeps its source's: its log is going to be
+   * that one, position for position, and it has issued no cursor but position
+   * 0, which every life shares.
    */
   const followMany = (
     batch: ReadonlyArray<DbEvent>,
     through: typeof commit = commit,
   ) =>
     Effect.gen(function* () {
+      const held = yield* lifeOf();
+      const first = batch[0] === undefined ? undefined : parseCursor(batch[0].cursor);
+      const adopt = first !== undefined && first.owner === partition && first.life !== "" && first.life !== held &&
+        (yield* readMeta(META_HEAD)) === 0
+        ? first.life
+        : undefined;
+      const life = adopt ?? held;
       const positioned = yield* Effect.forEach(batch, (event) =>
-        Effect.map(positionOf(event.cursor), (position) => ({ position, stored: storedOf(event) })));
+        Effect.map(positionIn(life, event.cursor), (position) => ({ position, stored: storedOf(event) })));
       yield* through((into) =>
         Effect.gen(function* () {
+          if (adopt !== undefined) {
+            // Checked again under the writer: a log that gained an entry since is a life of its own.
+            if (into.head() !== 0) return yield* new CursorFromAnotherLife({ partition });
+            into.view.put(incarnationKey, fromHex(adopt));
+          }
           let highest = 0;
           for (const { position, stored } of positioned) {
             const head = into.head();
@@ -1910,8 +1976,8 @@ const openPartition = (
   const events: EventsApi = {
     read: (options) => Stream.fromIterableEffect(readEvents(options)),
 
-    head: Effect.map(readMeta(META_HEAD), (position) =>
-      position === 0 ? undefined : encodeCursor(partition, position)),
+    head: Effect.flatMap(readMeta(META_HEAD), (position) =>
+      position === 0 ? Effect.succeed(undefined) : Effect.map(lifeOf(), (life) => encodeCursor(partition, life, position))),
 
     apply: (event: AppliedEvent) =>
       commit((into) =>
@@ -2406,8 +2472,8 @@ const openPartition = (
       if (!Number.isSafeInteger(asOf) || asOf < 0 || asOf > start.head) {
         return yield* new StoreError({ op: "branch.asOf", cause: `position ${asOf} is outside the source's log, 0 to ${start.head}` });
       }
-      const lineage: StoredLineage = [{ partition: source.partition, upTo: asOf }, ...(start.lineage ?? []).map((entry) =>
-        ({ partition: entry.partition, upTo: Math.min(entry.upTo, asOf) }))].slice(0, LINEAGE_LIMIT);
+      const lineage: StoredLineage = [{ partition: source.partition, incarnation: start.incarnation ?? "", upTo: asOf }, ...(start.lineage ?? []).map((entry) =>
+        ({ ...entry, upTo: Math.min(entry.upTo, asOf) }))].slice(0, LINEAGE_LIMIT);
       // Identifiers the source handed out after `asOf` are never handed out here: the next one is past them all.
       yield* write([
         { op: "put", key: keys.meta(META_SEEDING), value: u64Bytes(1) },
@@ -2455,11 +2521,11 @@ const openPartition = (
       let at = snapshotAt;
       while (at < asOf) {
         const batch = [...(yield* Stream.runCollect(source.events.read({
-          ...(at === 0 ? {} : { after: encodeCursor(source.partition, at) }),
+          ...(at === 0 ? {} : { after: encodeCursor(source.partition, start.incarnation, at) }),
           limit: BRANCH_FOLLOW_BATCH,
         })))];
         const positioned = yield* Effect.forEach(batch, (event) =>
-          Effect.map(cursorPosition(source.partition, event.cursor), (position) => ({ position, event })));
+          Effect.map(cursorPosition(source.partition, start.incarnation, event.cursor), (position) => ({ position, event })));
         const wanted = positioned.filter((entry) => entry.position <= asOf);
         if (wanted.length === 0) {
           return yield* new StoreError({ op: "branch.replay", cause: `the source's log ends at ${at}, before ${asOf}` });
@@ -2530,8 +2596,8 @@ const openPartition = (
       // The lineage goes in the first batch, so from the first commit on the
       // partition is known to be an unfinished branch and refuses everything.
       const inherited = (upTo: number): StoredLineage =>
-        [{ partition: source.partition, upTo }, ...(start.lineage ?? []).map((entry) =>
-          ({ partition: entry.partition, upTo: Math.min(entry.upTo, upTo) }))].slice(0, LINEAGE_LIMIT);
+        [{ partition: source.partition, incarnation: start.incarnation ?? "", upTo }, ...(start.lineage ?? []).map((entry) =>
+          ({ ...entry, upTo: Math.min(entry.upTo, upTo) }))].slice(0, LINEAGE_LIMIT);
       if (branching) {
         into.view.put(keys.meta(META_LINEAGE), encodeLineage(inherited(0)));
         if (leave.length > 0) into.view.put(keys.meta(META_LEAVING), encodeNames(leave));
@@ -2599,11 +2665,11 @@ const openPartition = (
       let at = start.compactedTo;
       while (at < end.head) {
         const batch = [...(yield* Stream.runCollect(source.events.read({
-          ...(at === 0 ? {} : { after: encodeCursor(source.partition, at) }),
+          ...(at === 0 ? {} : { after: encodeCursor(source.partition, start.incarnation, at) }),
           limit: BRANCH_FOLLOW_BATCH,
         })))];
         const positioned = yield* Effect.forEach(batch, (event) =>
-          Effect.map(cursorPosition(source.partition, event.cursor), (position) => ({ position, event })));
+          Effect.map(cursorPosition(source.partition, start.incarnation, event.cursor), (position) => ({ position, event })));
         const wanted = positioned.filter((entry) => entry.position <= end.head);
         if (wanted.length === 0) {
           return yield* new StoreError({ op: "branch.follow", cause: `the source's log ends at ${at}, before the branch point ${end.head}` });
@@ -3091,11 +3157,13 @@ const openPartition = (
         fence = { from: move.from, to: move.to };
       })),
 
-    cursorAt: (position) => encodeCursor(partition, position),
+    cursorAt: (position, incarnation) => incarnation === undefined
+      ? Effect.map(lifeOf(), (life) => encodeCursor(partition, life, position))
+      : Effect.succeed(encodeCursor(partition, incarnation, position)),
 
     recoveryPoint: (at) =>
       "cursor" in at
-        ? cursorPosition(partition, at.cursor)
+        ? positionOf(at.cursor)
         : Effect.gen(function* () {
             let position = 0;
             let after: EventCursor | undefined;
@@ -3103,7 +3171,7 @@ const openPartition = (
               const batch = [...(yield* Stream.runCollect(events.read({ ...(after === undefined ? {} : { after }), limit: BRANCH_FOLLOW_BATCH })))];
               for (const event of batch) {
                 if (event.at > at.time) return position;
-                position = yield* cursorPosition(partition, event.cursor);
+                position = yield* positionOf(event.cursor);
               }
               if (batch.length < BRANCH_FOLLOW_BATCH) return position;
               after = batch[batch.length - 1]!.cursor;

@@ -489,6 +489,8 @@ const CONFLICT_TAGS = new Set([
   // An export or event read the log was compacted under: start again from a new export.
   "CursorCompacted",
   "LogCompacted",
+  // A cursor kept from before the Tenant was removed and written again: read its changes again from the start.
+  "CursorFromAnotherLife",
 ]);
 
 const NOT_FOUND_TAGS = new Set([
@@ -666,6 +668,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     case "CursorCompacted":
     case "LogCompacted":
       return `The log this export was following was compacted past ${String(failure.compactedTo)}; start the export again.`;
+    case "CursorFromAnotherLife":
+      return `Tenant "${failure.partition}" was removed and written again since this cursor was issued, so it names a place in a log that is gone; read its changes again from the start.`;
     case "TenantNotDroppable":
       return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
     case "TenantNotBranchable":
@@ -752,6 +756,10 @@ function databaseErrorResponse(error: unknown, fallback = 500) {
   // The read was refused for the work it asked for, whole: it is not an unavailable shard, and asking again unchanged refuses again.
   if (failure?._tag === "ReadBudgetExceeded") {
     return { status: 422, body: { error: describeTaggedFailure(failure), code: "read-budget-exceeded", limit: failure.limit, max: failure.max } };
+  }
+  // A change-feed reader acts on this one by itself, starting over, so it is named as well as described.
+  if (failure?._tag === "CursorFromAnotherLife") {
+    return { status: 409, body: { error: describeTaggedFailure(failure), code: "cursor-from-another-life" } };
   }
   return createMappedJsonErrorResponse(
     failure ? Object.assign(new Error(describeTaggedFailure(failure)), { _tag: failure._tag }) : error,

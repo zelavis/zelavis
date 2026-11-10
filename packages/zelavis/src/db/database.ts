@@ -1553,14 +1553,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         }
         const parts = topology.subdivision.partsOf(branch);
         const keys = (parts ?? [undefined]).map((part) => ({ part, key: part === undefined ? branch : partitionKeyFor(branch, part) }));
-        const plans: Array<{ readonly part: string | undefined; readonly key: PartitionKey; readonly from: PartitionKey; readonly branchPoint: number }> = [];
+        const plans: Array<{ readonly part: string | undefined; readonly key: PartitionKey; readonly from: PartitionKey; readonly incarnation: string; readonly branchPoint: number }> = [];
         for (const { part, key } of keys) {
           if (!(yield* holds(key))) continue;
           const stats = yield* storeFor(key).stats;
           if (stats.seeding) return yield* refuse(`"${key}" is still being branched`);
           const origin = stats.lineage?.[0];
           if (origin === undefined) return yield* refuse(`"${key}" was not branched from anything`);
-          plans.push({ part, key, from: origin.partition, branchPoint: origin.upTo });
+          plans.push({ part, key, from: origin.partition, incarnation: origin.incarnation, branchPoint: origin.upTo });
         }
         if (plans.length === 0) return yield* refuse(`"${branch}" holds nothing`);
         const into = tenantOfPartition(plans[0]!.from);
@@ -1573,6 +1573,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
             branch: { store: storeFor(plan.key), documents: handleOf(plan.key).documents },
             source: { store: storeFor(plan.from), documents: handleOf(plan.from).documents },
             branchPoint: plan.branchPoint,
+            incarnation: plan.incarnation,
             resolve: mergeOptions?.resolve ?? [],
             dryRun,
             ...(plan.part === undefined ? {} : { part: plan.part }),
