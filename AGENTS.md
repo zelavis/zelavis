@@ -918,7 +918,10 @@ A lease-guarded Project (`ZELAVIS_PROJECT_LEASES_*`) also runs a placement-free 
 (`<id>#standby` on the Agent) and fails over to it: the Platform learns of a promotion from the writer lease, moves the
 placement `{owner, epoch}` to that node and starts the Project there under it. The promoted standby process keeps the
 lease as it is replaced (`releaseOnClose: false`): the node's Project takes it at the next epoch, and a release in
-between would let the standby it named (the node the writer left, started again) promote first. Proven with a real Platform and a real
+between would let the standby it named (the node the writer left, started again) promote first. A writer this Platform
+process started that dies is recovered by its standby: reconciliation does not restart it in place while its lease is live
+and a standby stands by (`standbyRecovers`), only once the lease lapses without a promotion; a writer an earlier process
+started, and an explicit Start, restart in place at once. Never let the reconciliation timer decide between the two. Proven with a real Platform and a real
 remote Agent on one machine, through two failovers; the Platform's Gateway reaches a remotely placed Project through its
 Agent (a Platform-signed route request, fenced by the committed placement), and multi-host partition drills are still not
 run.

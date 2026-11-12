@@ -1512,6 +1512,13 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
      * Project clears it; a Project held by placement records nothing, since it never tried to start.
      */
     const startBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+    /**
+     * Lease-guarded Projects whose writer this Platform session started (here, on another node, or by following a
+     * promotion). When such a writer dies, recovering it is its standby's: see `standbyRecovers`. A writer an earlier
+     * session started is restarted in place at once, so a Platform restart never turns into a failover. Only a choice
+     * of who recovers: the lease epoch and the placement fence the writer whichever way it goes.
+     */
+    const writersStartedHere = new Set<string>();
     /** Projects whose public requests wait while they cross to a recipe of another layout; see `crossLive`. */
     const holds = new Map<string, Deferred.Deferred<void>>();
     const clearStartBackoff = (id: string) => Effect.sync(() => { startBackoff.delete(id); });
@@ -1930,6 +1937,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         yield* integration(() => guard.standbys.write({ projectId, nodeId: record.nodeId, writerEpoch: record.writerEpoch, state: "stopped" }));
     });
     const stopPlacedRuntime = Effect.fn("Projects.stopPlacedRuntime")(function* (projectId: string): Effect.fn.Return<ZelavisProjectRuntimeSnapshot, TaggedFailure> {
+        writersStartedHere.delete(projectId);
         yield* stopStandbyFor(projectId);
         const token = ownedPlacements.get(projectId);
         if (options.authoritativePlacement && !token) {
@@ -1984,6 +1992,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             const placement = (yield* localPlacementToken(project.id));
             (yield* runtimeEffects.prepare(project, project.recipe));
             const started = (yield* write(applySnapshot(project, (yield* runtimeEffects.start(project, placement)))));
+            if (placement && guard) writersStartedHere.add(project.id);
             if (placement) yield* startStandbyFor(project.id, placement.nodeId, placement.epoch);
             return started;
         }), Effect.fn("Projects.recover")(function* (error) {
@@ -2044,6 +2053,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const appShards = options.appShardEnvironment ? yield* integration(() => options.appShardEnvironment!(project.id, nodeId, placement.epoch)) : undefined;
                     const authority = (yield* integration(() => dispatcher.authorizeDispatch!({ action: "start", placement, ...(lease ? { lease } : {}), ...(appShards ? { appShards } : {}) })));
                     (yield* integration(() => dispatcher.dispatchStartFenced!({ projectId: project.id, nodeId, placement, authority })));
+                    if (guard) writersStartedHere.add(project.id);
                     yield* startStandbyFor(project.id, nodeId, placement.epoch);
                 }
                 else {
@@ -2136,6 +2146,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     }
                     // The backstop for a change of writer the lease routes' hook missed (a restart, a lost call).
                     if (guard) yield* Effect.catch(followWriter(project.id), (error) => Effect.logWarning(`Following the writer lease of Project "${project.id}" failed; the next reconciliation tries again`, error));
+                    if (yield* standbyRecovers(project.id).pipe(Effect.catch((error) => Effect.as(Effect.logWarning(`Reading the writer lease of Project "${project.id}" failed; this reconciliation restarts its writer where it is placed`, error), false)))) return;
                     if (placement.blocked.has(project.id)) {
                         // Left stopped rather than started somewhere its placement group
                         // does not permit. `desiredState` stays "running", so the next
@@ -2297,9 +2308,25 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 // The node the writer left follows the new one: the Project keeps a standby after a failover.
                 yield* startStandbyFor(id, lease.owner, moved.epoch);
             }
+            writersStartedHere.add(id);
             const project = yield* read(id);
             if (project && !toLocal) yield* write({ ...project, placement: { nodeId: lease.owner, dispatchedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
         }));
+    });
+    /**
+     * Whether a reconciliation leaves this Project's writer alone because recovering it is its standby's. True while a
+     * writer this session started still has a live lease and a standby stands by: either the writer is running (nothing
+     * to do) or it has died and its lease is running out, and then the standby promotes and `followWriter` moves the
+     * placement. Restarting it in place as well would race the standby, and which of the two won would depend on where
+     * the reconciliation timer happened to be. Once the lease has lapsed without a promotion (the standby was not level,
+     * or is gone too), the next reconciliation restarts the writer where it was placed.
+     */
+    const standbyRecovers = Effect.fn("Projects.standbyRecovers")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
+        if (!guard || !writersStartedHere.has(id)) return false;
+        const standby = yield* integration(() => guard.standbys.read(id));
+        if (!standby || standby.state !== "dispatched") return false;
+        const read = yield* Effect.mapError(guard.leases.read(id), (cause) => new IntegrationFailure(cause));
+        return read !== undefined && read.lease.expiresAt > Date.now() && read.lease.owner !== standby.nodeId;
     });
     const withLiveProject: ZelavisProjectManager["withLiveProject"] = (id, mutate) => Effect.gen(function* () {
         const projectId = yield* evaluate(() => normalizeProjectId(id));

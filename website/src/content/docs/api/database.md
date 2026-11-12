@@ -280,7 +280,11 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   that node at a new epoch, and starts the Project there under it, which first replaces the standby process with the
   writer (the Agent has no way to give a running process a placement), taking the lease as the node's own next epoch.
   The previous writer is fenced twice: its writes by the lease epoch, its placement by the epoch it no longer holds.
-  Measured on one machine with a lease of 3 s: the standby held the lease 3.5 s after the writer's processes were
+  A writer that dies is its standby's to replace: while its lease is live and a standby stands by, the Platform's
+  reconciliation does not also restart it where it was, which would race the standby for the lease. Once the lease has
+  lapsed without a promotion (the standby was not level, or is gone too), the writer is restarted in place. A writer an
+  earlier Platform process started, and an explicit Start, are restarted in place at once, so a Platform restart never
+  turns into a failover. Measured on one machine with a lease of 3 s: the standby held the lease 3.5 s after the writer's processes were
   killed, and the placement had followed 4.3 s after. After a failover the node the writer left runs a new standby (on the
   Platform's own node that is its driver, elsewhere a dispatch), so the Project keeps one, and a second failover can bring
   the writer back onto the Platform's node. The Platform reaches a Project placed on another node through that node's
