@@ -1,6 +1,9 @@
 ---
 name: zelavis-release-maintainer
-description: Use whenever the owner asks to release, publish or cut a version of Zelavis ("release a new alpha", "publish a new version", "cut a stable release"), and when preparing or reviewing a release: Changesets, versioning, publishing services and the Platform, the allow-list, release qualification and the update gate. Holds the full step-by-step release runbook.
+description: >-
+  Use whenever the owner asks to release, publish or cut a version of Zelavis ("release a new alpha", "publish a new version", "cut a stable release"),
+  and when preparing or reviewing a release: Changesets, versioning, publishing services and the Platform, the allow-list, release qualification and the update gate.
+  Holds the full step-by-step release runbook.
 ---
 
 # Zelavis Release Maintainer
@@ -60,7 +63,9 @@ long steps in the background, and keep the machine awake (lid open) while they r
    lease authority; a `SIGKILL`, a network partition and an unacknowledged tail), then the
    worker installation). Nothing else may build in the
    worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
-   `Qualified <sha>`. A red run is fixed on `dev` (commit, push when the owner agrees),
+   `Qualified <sha>`. A change to `CURRENT_FORMAT` also requires the
+   [storage layout checks](#storage-layout-releases) on that candidate before publishing.
+   A red run is fixed on `dev` (commit, push when the owner agrees),
    the worktree is re-versioned from `dev`, and qualification starts again. Never publish
    on red, and never count a lucky rerun as qualification: find why it failed.
 6. **Publish (owner).** Hand the owner, in a terminal tab:
@@ -130,6 +135,30 @@ long steps in the background, and keep the machine awake (lid open) while they r
   conversion is a known gap to eliminate, not a precedent. Preserve data, Project locks,
   access URLs and rollback guarantees through the existing trusted updater authority,
   without permanent legacy paths.
+
+## Storage layout releases
+
+When `CURRENT_FORMAT` changes, identify the ten most recent distinct layouts written
+by published Zelavis App engines. Cover every prior layout if fewer than ten have
+shipped. Use each release artifact's `metadata.dataFormat` and the runtime catalog's
+documented format for artifacts predating that field. Multiple releases writing the
+same layout count once.
+
+Ship the executable auto-migrator in the candidate package. Reuse the existing
+Project upgrade path in the dashboard and CLI, including the packaged export worker
+and migration code. One explicit Project upgrade must migrate directly from any
+covered source to the target layout. The Platform update preserves the existing
+Project's engine lock and data until the operator upgrades that Project.
+
+Before publishing, run the
+[migration harness](../../../distribution/scripts/format-migration/harness.mjs) on
+data written by a published engine for each covered layout. Exercise the packaged
+Project upgrade for each source in a disposable installation. Check the migration
+report, verify the recreated data, and prove that failure leaves the source data
+and engine available for recovery. Record each source layout, the exact engine
+tested, and the result with the candidate commit. Document the covered layouts,
+operator steps, downtime, and data that must be rebuilt in the
+[owner checklist](../../../website/src/content/docs/architecture/updates.md#data-layout-changes).
 
 ## Useful commands
 

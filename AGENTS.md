@@ -1301,6 +1301,13 @@ Key rules:
   committed write. Rebuild cross-Tenant indexes from their definitions and omit checkpoints into the old log.
   Refuse branch lineage that the new log cannot represent. Verify both published source layouts, including
   layout 4 with outbox, entities, workflows, aggregates and cross-Tenant indexes.
+- A breaking Project database layout change bumps `CURRENT_FORMAT`. The release ships an automatic migrator
+  for the ten most recent distinct previously shipped Project database layouts, or every previously shipped
+  layout when there are fewer than ten. One explicit Project upgrade migrates directly to the new layout.
+  Platform **Update now** preserves existing Project engine locks and data. Verify every source layout with
+  data from a published engine, validate the migrated state before selecting it, and retain the original
+  engine and data for recovery. See the
+  [prepublish checks](.agents/skills/zelavis-release-maintainer/SKILL.md#storage-layout-releases).
 - A read that joins two collections answers the named collection's query first
   and turns the ids it returns into an equality union over the referencing
   field's own postings (`relatedFilters` in `document-reads.ts`), so a join stays a
@@ -2356,7 +2363,9 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Code Change Expectations
 
 - Make the smallest coherent change that moves the repo forward.
-- **No backward compatibility.** This project is pre-release with no public users. Remove stale shapes and legacy paths outright — do not add shims, fallbacks, or "legacy support" branches. If something needs to change, change it cleanly.
+- **No runtime compatibility shims.** Remove stale shapes and legacy paths outright. Migrate data from
+  published Project layouts through the explicit Project upgrade described in Database Architecture Rules.
+  Recreate development Projects from unreleased layouts.
 - Update docs when public API or architecture changes.
 - Add or update tests when a test setup exists.
 - If there is no test coverage yet, keep code easy to validate and call out the gap.

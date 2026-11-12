@@ -186,7 +186,7 @@ An engine opens exactly the data layout it writes and refuses any other. Each en
 runtime artifact (`metadata.dataFormat`; a release that declares none wrote layout 2, as every release up to alpha.42 did).
 A Platform update therefore never moves a Project across a layout change: native Apps keep their locked engine, and a
 managed app's bound App stays on the engine that wrote its data, at a live restart and at a cold start alike. The
-Project then reports `dataLayout: { "state": "upgradeRequired", "from": 2, "to": 4 }` and its card offers the upgrade even when its
+managed Project then reports `dataLayout: { "state": "upgradeRequired", "from": 2, "to": 5 }` and its card offers the upgrade even when its
 recipe is current.
 
 The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/projects/:id/upgrade`,
@@ -261,24 +261,23 @@ The kept data is never removed automatically. List it with `client.projects.reta
 and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
 its exact name is typed.
 
-### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
+### Checklist for moving Projects to layout 5
 
-2.0.0-alpha.43 is the first release whose engine writes layout 4; every earlier release wrote layout 2. On a server running
-alpha.42:
+Zelavis 2.0.0-alpha.45 writes layout 5. Projects on layout 2 or 4 can migrate directly to layout 5.
 
-1. **Update now** (or `zelavis update apply --wait`) offers and installs alpha.43. Running Projects keep serving.
-2. Native Apps created on alpha.42 stay on their alpha.42 engine and keep their layout 2 data. Nothing moves them on its own.
-3. To move a native App to alpha.43, stop, migrate and start it in one request:
-   `client.projects.upgrade(id, { engineVersion: "2.0.0-alpha.43", restart: true })`,
-   `zelavis projects upgrade <id> --engine-version 2.0.0-alpha.43 --restart`, or on its card **Manage version**, choose
-   2.0.0-alpha.43, then **Stop, migrate and switch** (the card's **Upgrade recipe** does the same with the newest engine).
-   The App is unavailable while this runs. The plain switch of a running App across the layout change
-   (`client.projects.switchVersion`, `POST /runtime/projects/:id/version`, `zelavis projects switch-version`) is refused with
-   409 on purpose.
-4. A managed WordPress Project's bound App migrates when its recipe is upgraded: **Update recipe** on its card, or
-   `client.projects.upgrade(id)`. WordPress itself keeps serving, and its own MariaDB data is not touched.
-5. After each migration, check the `dataMigration` report, then remove the retained `data.format-2-*` directory when you no
-   longer need it (see above).
+1. Verify a backup for each Project you plan to migrate. Check that the free space beside its data is at least
+   3.5 times the source size and review the source-layout restrictions above.
+2. Update the Platform through **Update now** or `zelavis update apply --wait`. Native Apps keep their selected
+   engines. A managed app's private Zelavis runtime stays on the engine that can read its current layout.
+3. To migrate a native App, open **Manage version**, select 2.0.0-alpha.45, and choose **Stop, migrate and switch**.
+   The App is unavailable during migration. The same operation is
+   `client.projects.upgrade(id, { engineVersion: "2.0.0-alpha.45", restart: true })` or
+   `zelavis projects upgrade <id> --engine-version 2.0.0-alpha.45 --restart`.
+4. For a managed app, use **Update recipe** on its card or `client.projects.upgrade(id, { restart: true })`.
+   The private Zelavis runtime migrates while the managed site's own software and database keep serving.
+5. Check the `dataMigration` report and verify the Project's data and workloads. Restart change-feed consumers
+   from the beginning of the new feed and rebuild derived state as described above. Keep the retained
+   `data.format-2-*` or `data.format-4-*` directory until you have verified the migration and its backup.
 
 A Debian ARM server whose earlier package set lacks `mariadb-dump` needs `apt-get install mariadb-client` before the
 update: converting an earlier Agent restarts the WordPress processes, and the alpha.43 recipe will not start them without

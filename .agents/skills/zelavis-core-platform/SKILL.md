@@ -511,6 +511,11 @@ before editing.
   JS, HTTP (`POST database/tenants/:id/branch`), SDK
   (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
   the dashboard's Database → Tenants Branch action.
+- A change to `CURRENT_FORMAT` includes the packaged automatic Project
+  migrator for the ten most recent distinct shipped layouts, or all shipped
+  predecessors if fewer. Use the ordinary explicit Project upgrade to move
+  directly to the new layout. Follow the
+  [storage layout release checks](../zelavis-release-maintainer/SKILL.md#storage-layout-releases).
 - Long readers (copy, branch, follower, export) hold the source's log
   (`holdLog`, raise-only, time-limited, with the writer, at most 64) so compaction stops
   at the lowest hold and reports `heldAt`; a move carries live holds to the target; it
@@ -597,11 +602,10 @@ before editing.
   implicit Tenant fields, `DatabaseApi.driver`, or logical `db.sql` aliases.
   Event continuation uses opaque `DatabaseEvent.cursor` values and `read({
   after })`; physical positions stay inside drivers and topology routing.
-- Pre-release means no compatibility: do not write migrations, aliases or
-  fallbacks for data an earlier build wrote, and never restore a retired package
-  or recipe name to make an old Project boot. Development Projects that predate
-  a change are deleted and recreated. A Project that cannot be prepared must fail
-  at prepare with its reason, never start and crash later.
+- Migrate published Project layouts through the explicit Project upgrade.
+  Recreate development Projects from unreleased layouts. Remove stale runtime
+  shapes and retired package or recipe names. A Project that cannot be prepared
+  fails at preparation with the reason.
 
 Host-operation validation must retain an immutable snapshot of request fields
 and arguments across asynchronous authorization/journal work, require own
