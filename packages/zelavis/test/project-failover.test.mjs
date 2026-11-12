@@ -170,17 +170,22 @@ for (const [what, victims, mode] of [
     const hosts = processes.processes.filter((entry) => entry.command.includes(join(root, "platform", "projects", "leased")));
     const engines = processes.processes.filter((entry) => hosts.some((host) => host.pid === entry.parentPid));
     const pids = victims(hosts, engines).map((entry) => entry.pid);
+    const atKill = await lease();
     const killedAt = Date.now();
     for (const each of pids) process.kill(each, "SIGKILL");
     log(`killed ${pids.join(",")}`);
 
     if (mode === "race") {
+      // Started again once the Platform has seen it die (a Start while the driver still holds the dying process is a
+      // Start of a running Project, and does nothing), and before its lease could lapse.
+      await until(async () => (await json("GET", "/projects/leased")).body?.project?.runtime?.status, (status) => status !== "running" && status !== "starting", "the Platform to see the writer exit", 20_000);
       assert.equal((await json("POST", "/projects/leased/start")).status, 200);
-      const again = await until(lease, (value) => value?.owner === "node-a" && value.epoch > first.epoch, "node-a to take its lease again");
+      // A new epoch, not the lease the dead writer left behind: that one stays valid for its whole term without anyone renewing it.
+      const again = await until(lease, (value) => value?.owner === "node-a" && value.epoch > atKill.epoch, "node-a to take its lease again at its next epoch");
       await sleep(9000);
       const later = await lease();
       assert.deepEqual([later.owner, later.epoch], ["node-a", again.epoch], "no second writer: the standby did not promote");
-      assert.ok(later.expiresAt > Date.now(), "and the writer is renewing");
+      assert.ok(later.expiresAt > again.expiresAt, "and the writer is renewing");
       const project = (await json("GET", "/projects/leased")).body.project;
       assert.deepEqual([project.runtime.status, project.standby.status], ["running", "dispatched"]);
       return;
