@@ -57,10 +57,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * flush anything, or run a shutdown hook, because a process that gets to tidy
  * up proves nothing about a process that does not.
  */
-const killWriterAfter = async (engine, directory, atLeast) => {
+const killWriterAfter = async (engine, directory, atLeast, { engineCheckpoints = false } = {}) => {
   const receiptPath = join(directory, "receipts.log");
   const child = spawn(process.execPath, [WRITER, engine, directory, receiptPath, "100000"], {
     stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, ...(engineCheckpoints ? { ZV_ENGINE_CHECKPOINTS: "1" } : {}) },
   });
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr += decoder.decode(chunk); });
@@ -239,7 +240,10 @@ for (const [engine, available] of [
       const dir = mkdtempSync(join(tmpdir(), `zv-durable-power-${engine}-`));
       t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-      const committed = await killWriterAfter(engine, dir, 800);
+      // Cutting the log simulates a power cut only for commits never checkpointed: a checkpoint syncs the log before it
+      // writes the file, so no power cut leaves a log shorter than what was folded. The writer therefore checkpoints the
+      // way SQLite does by itself (past 16 MiB, which these commits never reach) instead of on the checkpoint thread.
+      const committed = await killWriterAfter(engine, dir, 800, { engineCheckpoints: true });
 
       const walOf = logs[engine];
       assert.equal(walOf(dir).length, 1, "the writer left one write-ahead log to cut");

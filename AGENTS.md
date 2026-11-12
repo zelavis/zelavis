@@ -1144,9 +1144,20 @@ Key rules:
   it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
   knows which engine it is. SQLite (default), RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
 - What a returned commit survives is an open-time choice, `durability`:
-  `crash` (default) or `power` (a device flush per commit), reported by
+  `crash` (default) or `power` (a device flush before a commit returns; on
+  macOS SQLite needs `fullfsync` for that), reported by
   health. An engine that cannot keep `power` refuses it at open (RocksDB's
-  binding) rather than giving the weaker promise. Follower acknowledgments
+  binding) rather than giving the weaker promise. Batches ready together
+  share one engine commit (group commit: LMDB's binding, `sqlite-kv.ts` for
+  SQLite), but each stays its own atomic unit: its conditions are checked after
+  the batches ahead of it, a refused or failed batch leaves the others intact,
+  no batch is answered before the commit returns, and a queued batch is always
+  answered. Under Node, SQLite checkpoints run on one process-wide thread
+  (`sqlite-checkpointer.ts`), never inside a commit; SQLite's own checkpoint stays
+  on as a raised backstop, never off, so the log is bounded without that thread.
+  A test that needs commits still in the log opens its shard with
+  `checkpoints: "engine"`, and a test closes its databases before removing
+  their directory. Follower acknowledgments
   (`writeAcknowledged`) are reported only after the follower commits, and a
   missed policy fails with `FollowersNotAcknowledged` without undoing the write.
   A follower on another host reads its leader through the leader transport

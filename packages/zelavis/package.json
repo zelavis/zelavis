@@ -171,6 +171,7 @@
     "bench": "node scripts/bench-engines.mjs",
     "bench:api": "node scripts/bench-api.mjs",
     "bench:cold": "node scripts/bench-cold.mjs",
+    "bench:commits": "node scripts/bench-commits.mjs",
     "bench:engines": "node scripts/bench-engines.mjs",
     "bench:ordered": "node scripts/bench-ordered.mjs",
     "bench:related": "node scripts/bench-related.mjs",

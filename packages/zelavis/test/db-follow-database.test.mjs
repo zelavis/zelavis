@@ -57,7 +57,13 @@ for (const [how, adapt] of [
     const fiber = Effect.runFork(follower.database.followers.followAll(counter.leader, { name: "east", timeoutMillis: 200 }));
     t.after(() => Effect.runPromise(Fiber.interrupt(fiber)));
 
-    await until(async () => (await ids(follower.api, name(TENANTS - 1))).length === 2, "the follower holds every Tenant");
+    // Every Tenant, not the last one listed: the listing levels its partitions in its own order (shard by shard), and
+    // nothing promises the last name lands last.
+    const holdsAll = async () => {
+      for (let at = 0; at < TENANTS; at++) if ((await ids(follower.api, name(at))).length !== 2) return false;
+      return true;
+    };
+    await until(holdsAll, "the follower holds every Tenant");
     for (const at of [0, 77, 150, 299]) assert.deepEqual(await ids(follower.api, name(at)), ["a", "b"]);
     assert.equal(counter.calls.pages, Math.ceil(TENANTS / 1000) + 0 || 1, "one listing, a page for these Tenants");
 

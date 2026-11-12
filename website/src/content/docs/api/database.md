@@ -61,14 +61,37 @@ What a commit that returned survives is chosen when the database opens, and
 | `durability` | A returned commit survives | Cost |
 |---|---|---|
 | `crash` (default) | the process being killed; a power cut can lose a suffix of the latest commits, never leave holes | none beyond the write |
-| `power` | a power cut too | a device flush per commit |
+| `power` | a power cut too | a device flush per group of commits |
 
 ```ts
 const zv = new Zelavis({ adapter: nodeAdapter({ database: { durability: 'power' } }) });
 ```
 
 SQLite and LMDB offer both. RocksDB's binding has no per-commit log sync, so
-opening it with `power` is refused rather than given the weaker promise.
+opening it with `power` is refused rather than given the weaker promise. On
+macOS a plain `fsync` leaves data in the drive's cache, so SQLite's `power`
+uses `F_FULLFSYNC` there, which is what makes a flush cost what it does.
+
+Both engines commit writes that are ready at the same moment together: Tenants
+writing to one shard at once share one transaction and one flush, while each
+write keeps its own conditions and fails or succeeds alone, and none is answered
+before the flush that makes it durable. LMDB does this in its binding; SQLite in
+`zelavis/db` (at most 64 writes or 16 MiB a group). One Tenant's own writes are
+still committed one at a time, so grouping raises the throughput of many Tenants
+on a shard, not of one. `pnpm --filter zelavis bench:commits` measures both.
+
+Under Node, SQLite's write-ahead log is folded back into each shard's file by
+one checkpoint thread per process, every 100 ms, with passive checkpoints that
+never wait for the writer or a reader. A commit no longer pays for a checkpoint
+when it crosses SQLite's threshold, which was the longest pause a commit could
+take. SQLite's own checkpoint stays on as a backstop at 16,000 pages (64 MiB
+at SQLite's 4 KiB pages), so the log stays bounded if the thread falls behind or stops;
+a reader holding a long snapshot still keeps a checkpoint from folding past it.
+The log is not trimmed when it starts over: a busy shard's log keeps the size
+it reached (at most about the backstop) until the shard closes, because growing
+a file again is where a commit waits on the filesystem.
+Bun has no `node:sqlite` for that thread, so under Bun SQLite checkpoints inside
+commits as before.
 A Project chooses its own: the choice is recorded beside its shards and used from its next start, and until then
 health and the storage operation report it as `pending`. `GET|PUT …/database/maintenance/storage` (`{ durability }`;
 reading needs `database.inspect`, choosing `database.define`), `client.projects.databaseStorage(projectId)` /

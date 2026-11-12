@@ -8,6 +8,7 @@ import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ShardStoreApi } from "../store.js";
 import type { ShardId } from "../topology.js";
+import { checkpointInBackground } from "./sqlite-checkpointer.js";
 import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
 
 /**
@@ -64,21 +65,31 @@ export const makeNodeSqliteEngine = (
   directory: string,
   durability: KvDurability = "crash",
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.tryPromise({
-      try: () => present(Effect.gen(function* () {
-        if (directory === ":memory:") {
-          throw new Error("a SQLite engine needs a directory for its file; the memory engine keeps nothing on disk");
-        }
-        mkdirSync(directory, { recursive: true });
-        const open = (yield* integrationValue(loadSqliteOpener()));
-        const file = join(directory, `${partition}.sqlite`);
-        return sqliteKvEngineOver(open(file, false), { openReader: () => open(file, true), durability });
-      })),
-      catch: (cause) => new StoreError({ op: "node-sqlite.open", cause }),
-    }),
-    (engine) => Effect.orDie(engine.close),
-  );
+  Effect.gen(function* () {
+    // Checkpoints run on a thread of their own under Node, so no commit pays for one. Bun has no `node:sqlite` for that
+    // thread to open, so there SQLite keeps checkpointing inside commits, as it does by default.
+    const background = typeof (globalThis as { Bun?: unknown }).Bun === "undefined";
+    const file = join(directory, `${partition}.sqlite`);
+    const engine = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () => present(Effect.gen(function* () {
+          if (directory === ":memory:") {
+            throw new Error("a SQLite engine needs a directory for its file; the memory engine keeps nothing on disk");
+          }
+          mkdirSync(directory, { recursive: true });
+          const open = (yield* integrationValue(loadSqliteOpener()));
+          return sqliteKvEngineOver(open(file, false), {
+            openReader: () => open(file, true), durability, checkpoints: background ? "background" : "engine",
+          });
+        })),
+        catch: (cause) => new StoreError({ op: "node-sqlite.open", cause }),
+      }),
+      (engine) => Effect.orDie(engine.close),
+    );
+    // Released before the engine (scopes release in reverse), so the checkpointer has let go of the file when it closes.
+    if (background) yield* checkpointInBackground(file, durability === "power");
+    return engine;
+  });
 
 export const makeNodeSqliteStore = (
   shard: ShardId,

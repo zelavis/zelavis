@@ -16,13 +16,25 @@ export function temporaryDatabaseDirectory(t) {
   return directory;
 }
 
-/** Two shards: enough for routing to be real without four files per test. */
+/**
+ * Two shards: enough for routing to be real without four files per test.
+ *
+ * Closed before its directory is removed, in one hook: hooks run in the order they are added, and removing a live
+ * database's files races the threads still using them (its checkpoint thread among them).
+ */
 export async function openTemporaryDatabase(t, options = {}) {
+  const directory = temporaryDatabaseDirectory();
   const opened = await openNodeDatabase({
-    directory: temporaryDatabaseDirectory(t),
+    directory,
     shards: ["shard-0", "shard-1"],
     ...options,
+  }).catch((error) => {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
   });
-  t?.after?.(() => opened.close());
+  t?.after?.(async () => {
+    await opened.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   return opened;
 }

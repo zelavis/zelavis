@@ -22,17 +22,18 @@ const temp = (t) => {
 
 test("sqlite flushes every commit only when asked for power", (t) => {
   const dir = temp(t);
-  // synchronous is per connection, so it is read on the connection the engine writes through.
-  const synchronous = (durability) => {
+  // Both pragmas are per connection, so they are read on the connection the engine writes through.
+  const settings = (durability) => {
     const file = join(dir, `s-${durability}.sqlite`);
     const db = new DatabaseSync(file);
     try {
       sqliteKvEngineOver(db, { openReader: () => new DatabaseSync(file, { readOnly: true }), durability });
-      return db.prepare("PRAGMA synchronous").get().synchronous;
+      return { synchronous: db.prepare("PRAGMA synchronous").get().synchronous, fullfsync: db.prepare("PRAGMA fullfsync").get().fullfsync };
     } finally { db.close(); }
   };
-  assert.equal(synchronous("crash"), 1, "NORMAL: the WAL survives a crash");
-  assert.equal(synchronous("power"), 2, "FULL: the WAL is synced at every commit");
+  // fullfsync: on macOS a plain fsync leaves the commit in the drive's cache, where a power cut loses it.
+  assert.deepEqual(settings("crash"), { synchronous: 1, fullfsync: 0 }, "NORMAL: the WAL survives a crash");
+  assert.deepEqual(settings("power"), { synchronous: 2, fullfsync: 1 }, "FULL with F_FULLFSYNC: every commit reaches the device");
 });
 
 test("openNodeDatabase validates durability, refuses what an engine cannot keep, and reports it in health", async (t) => {

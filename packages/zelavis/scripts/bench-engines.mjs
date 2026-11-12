@@ -126,7 +126,7 @@ const outputs = await runEngines("zv-bench", async ({ name, dir, open }) => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* open();
+        const store = (yield* open()).partition("bench");
 
         yield* Effect.promise(() => measureAll(store, row));
       }),

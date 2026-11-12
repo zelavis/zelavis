@@ -32,7 +32,7 @@ const ms = async (label, run) => {
 // is measuring the write-ahead log rather than what the data costs at rest.
 const phase = (body) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const store = yield* open();
+    const store = (yield* open()).partition("bench");
     return yield* body(store);
   })));
 
