@@ -1004,6 +1004,11 @@ algorithms and must preserve reproducible seeds and traces.
   frozen recipe rollback, and leave durable deletion checkpoints retryable.
   Effect coordination does not replace persisted checkpoints, Fabric fencing,
   authorization, or separately supervised production Agents.
+- A Project's persistent host (`_node-project-runner.ts`, one per running Project and per managed
+  app's integration runtime) stays resident for the Project's lifetime, so its module graph holds only
+  supervision and handover: files it loads import `effect/<Module>` (never the `effect` barrel, which
+  costs every host tens of MB), and reach the Project driver, service loading, identity or the database
+  only through a lazy `import()`. `test/project-host-footprint.test.mjs` enforces it.
 - Use **Effect v4** instead of Effect v3. The `effect` dependency is pinned to an
   exact release (stable `4.0.0` since 2026-10-01); every `@effect/*` package that
   is used moves with it.

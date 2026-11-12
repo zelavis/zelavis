@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration } from "../core/runtime/effect-boundary.js";
 import { createGatewayAuthorityNonce, createGatewayNonceTracker, signGatewayAuthority, verifyGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_HEADER, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS } from "../platform/gateway-authority.js";
 

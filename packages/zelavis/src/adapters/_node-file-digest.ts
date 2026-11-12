@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { open } from "node:fs/promises";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 
 /** The largest file a release may hold. */

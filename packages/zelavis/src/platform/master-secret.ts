@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 

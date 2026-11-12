@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { IntegrationFailure, integration, present, integrationValue, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { Server } from "node:http";
 import { createNodeHttpServer } from "../core/runtime/node-http.js";

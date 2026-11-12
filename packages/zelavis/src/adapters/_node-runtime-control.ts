@@ -1,7 +1,8 @@
 import { StringDecoder } from "node:string_decoder";
 import { request, createServer, type Server } from "node:http";
 import { chmod, lstat, rm } from "node:fs/promises";
-import { Effect, Fiber } from "effect";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 
 const LIMIT = 64 * 1024;

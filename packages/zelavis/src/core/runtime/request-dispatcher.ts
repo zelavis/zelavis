@@ -1,4 +1,5 @@
-import { Cause, Effect } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import { integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "./effect-boundary.js";
 import {
   createErrorCorrelationId,

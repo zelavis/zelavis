@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Semaphore, Stream } from "effect";
+import { CURRENT_FORMAT } from "./format.js";
 import {
   CursorCompacted, CursorFromAnotherLife, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
   PartitionExhausted, ReplicaDiverged, StoreError, TenantBranching, TenantMoving, TenantNotEmpty, TenantRelocated,
@@ -57,18 +58,6 @@ const keyId = (key: Uint8Array): string => {
 const SHARD_GENERATION = "generation";
 const SHARD_OWNER = "writer_session";
 const SHARD_FORMAT = "format";
-
-/**
- * The layout this code writes. A shard carries it so a layout change is caught
- * on open instead of misread.
- *
- * 5: an event cursor names the life of the partition that issued it, and a
- * branch's lineage the life of each ancestor, so a cursor kept from before a
- * Tenant was removed and written again is refused instead of skipping the new
- * life's events up to its old position. Cursors are kept inside the data
- * (projection checkpoints, time-series state), so the encoding is the layout's.
- */
-export const CURRENT_FORMAT = 5;
 
 /** One partition's own counters and marks. */
 const META_NEXT_SEQ = "next_seq";

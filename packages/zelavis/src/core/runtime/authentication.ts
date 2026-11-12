@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { present, integrationValue } from "./effect-boundary.js";
 import type {
   ZelavisAccessResolveContext,

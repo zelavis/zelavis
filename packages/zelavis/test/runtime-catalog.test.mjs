@@ -96,7 +96,7 @@ test("an exact engine selects its own verified App recipe and refuses altered re
 test("a release declares the data format it writes, and one that declares none is read as the format every earlier release wrote", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-format-"));
   try {
-    const { CURRENT_FORMAT } = await import("../dist/db/kv-store.js");
+    const { CURRENT_FORMAT } = await import("../dist/db/format.js");
     const { root } = await release(directory, "3.0.0");
     const catalog = createNodeRuntimeCatalog({ directory, rootOwned: false });
     assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), CURRENT_FORMAT, "a newly sealed artifact declares this build's format");
@@ -139,7 +139,7 @@ test("a bound App starts on the engine that wrote its data across a layout chang
     assert.equal(held.version, "1.0.0", "format 2 data stays on the engine that wrote it, not the Platform's");
     assert.match(held.heldReason, /format 2.*older.*recipe is upgraded/);
 
-    const { CURRENT_FORMAT } = await import("../dist/db/kv-store.js");
+    const { CURRENT_FORMAT } = await import("../dist/db/format.js");
     await declare("1.0.0", CURRENT_FORMAT);
     assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "equal formats keep following the Platform");
 

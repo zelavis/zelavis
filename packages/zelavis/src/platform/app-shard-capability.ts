@@ -6,7 +6,7 @@
  * The channel's routes accept it only while that triple is the Project's current active placement, so a process of an
  * older epoch (a stopped or fenced writer) can no longer obtain access tokens.
  */
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration, integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 
 const encoder = new TextEncoder();

@@ -1,5 +1,9 @@
 import { objectFields, isString } from "../json-validation.js";
-import { Cause, Data, Effect, Exit, Semaphore } from "effect";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 import type { RuntimeAdmission } from "./admission.js";
 import type { TaggedFailure } from "./effect-boundary.js";
 

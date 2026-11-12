@@ -23,6 +23,12 @@ export function scanTigerStyle(source, file = "packages/zelavis/src/db/example.t
         if (specifier.type === "ImportSpecifier" && specifier.imported.name === "Effect") effectNames.add(specifier.local.name);
       }
     }
+    // The module itself, as files a Project's persistent host loads import it (the barrel costs that host memory).
+    if (node.type === "ImportDeclaration" && node.source.value === "effect/Effect") {
+      for (const specifier of node.specifiers) {
+        if (specifier.type === "ImportNamespaceSpecifier") effectNames.add(specifier.local.name);
+      }
+    }
   }
   const effectMember = (node, names) => [...effectNames].some(name => names.some(method => member(node, name, method)));
   const add = (node, rule, owner) => findings.push({ file, line: node.loc.start.line, rule, owner });

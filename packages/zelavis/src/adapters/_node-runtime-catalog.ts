@@ -1,6 +1,6 @@
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { evaluate, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { compareVersions, isExactVersion } from "../updates.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";

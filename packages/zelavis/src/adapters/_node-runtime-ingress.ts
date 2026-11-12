@@ -1,7 +1,8 @@
 import { createServer as createHttpsServer } from "node:https";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
-import { Effect, Fiber } from "effect";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { createRuntimeAdmission } from "../core/runtime/admission.js";
 import type { RuntimeAdmission } from "../core/runtime/admission.js";
 import { IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";

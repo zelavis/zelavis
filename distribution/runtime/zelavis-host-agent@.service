@@ -19,6 +19,9 @@ ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis agent \
   --require-root-owned-operations --operation-cgroup delegated \
   --operation-pids-max 512 --operation-memory-max 1073741824
 KillMode=control-group
+# Between Projects (200) and the Platform (-500): an interrupted package operation is worse than a
+# restarted Project, but the Platform outranks it. Operations inherit it within their memory limit.
+OOMScoreAdjust=-100
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

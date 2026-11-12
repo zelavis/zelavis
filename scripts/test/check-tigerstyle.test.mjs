@@ -14,6 +14,7 @@ test("rejects empty catch blocks and callbacks even with comments", () => {
 test("detects Effect methods through renamed imports, not unrelated objects", () => {
   assert.deepEqual(rules('import { Effect as E } from "effect"; E.ignore(task); E.forEach(items, run, { concurrency: "unbounded" });'), ["effect-ignore", "unbounded-concurrency"]);
   assert.deepEqual(rules('import { Effect } from "effect"; Effect.ignoreCause(task);'), ["effect-ignore"]);
+  assert.deepEqual(rules('import * as E from "effect/Effect"; E.ignore(task); E.all(tasks, { concurrency: "unbounded" });'), ["effect-ignore", "unbounded-concurrency"]);
   assert.deepEqual(rules('const Effect = custom; Effect.ignore(task);'), []);
 });
 test("permits bounded and sequential Effect orchestration", () => {

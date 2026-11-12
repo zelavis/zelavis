@@ -1,8 +1,8 @@
-import { CURRENT_FORMAT } from "../db/kv-store.js";
+import { CURRENT_FORMAT } from "../db/format.js";
 import { lstat, readdir, readFile, readlink, realpath, writeFile } from "node:fs/promises";
 import { Worker } from "node:worker_threads";
 import { join, relative, sep } from "node:path";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { createRuntimeArtifactManifestDigest, defineRuntimeArtifact, type ZelavisRuntimeArtifactManifest } from "../core/artifact/index.js";
 import { evaluate, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";

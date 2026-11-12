@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { Deferred, Effect, Semaphore } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import type { ZelavisAgentProcessRunner, ZelavisAgentProcess } from "../core/agent/process-command.js";
 import { createRuntimeHandover, type RuntimeRelease, type RuntimeHandoverCheckpoint } from "../core/runtime/handover.js";
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";

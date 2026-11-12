@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { evaluate, integration } from "../core/runtime/effect-boundary.js";
 
 /** All protocol workers take this kernel lock before opening any live store.

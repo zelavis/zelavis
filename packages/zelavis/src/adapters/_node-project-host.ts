@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect, Semaphore } from "effect";
+import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";

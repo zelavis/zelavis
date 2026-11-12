@@ -129,6 +129,20 @@ test("Project supervision stays process-only and root operations retain delegate
   assert.doesNotMatch(deb, /systemctl enable zelavis-agent/);
 });
 
+test("under memory pressure a Project dies before the operation Agent, and both before the Platform", async () => {
+  const score = async (unit) => {
+    const text = await readFile(new URL(`runtime/${unit}`, distribution), "utf8");
+    const values = [...text.matchAll(/^OOMScoreAdjust=(-?\d+)$/gm)].map(match => Number(match[1]));
+    assert.equal(values.length, 1, `${unit} sets one OOMScoreAdjust`);
+    return values[0];
+  };
+  for (const suffix of [".service", "@.service"]) {
+    const platform = await score(`zelavis${suffix}`), projects = await score(`zelavis-agent${suffix}`), operations = await score(`zelavis-host-agent${suffix}`);
+    assert.ok(projects > operations && operations > platform, `${suffix}: Projects ${projects}, operations ${operations}, Platform ${platform}`);
+    assert.ok(platform > -1000 && projects < 1000, "nothing is made unkillable or a certain victim");
+  }
+});
+
 const builtRuntime = await import("node:fs").then(({ existsSync }) =>
   existsSync(new URL("../packages/zelavis/dist/core/deployment/index.js", distribution)));
 

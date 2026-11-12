@@ -1,5 +1,6 @@
 import { integrationValue, unwrapIntegrationResult, presentProtocol, present } from "../core/runtime/effect-boundary.js";
-import { Deferred, Effect } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
 import { parseJson, objectFields, isString, isPositiveInteger, isTimestamp, optional } from "../core/json-validation.js";
 /**
  * The local Agent process runner.

@@ -11,6 +11,7 @@ import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/p
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureRecipeArtifact } from "./_recipe-artifact.js";
+import { projectProcessEnvironment } from "./_project-process-environment.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
@@ -20,7 +21,7 @@ import type { VerifiedRuntimeArtifacts } from "./_node-runtime-catalog.js";
 import { migrateDataLayout } from "./_node-data-migration.js";
 import { commitDataSwap, dataFormatOnDisk, dataLayoutOnDisk, listRetainedData, recordDataLayout, removeRetainedData, settleDataSwap, startOnSwappedData, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
 import { readNodeRuntimeJournalSelection } from "./_node-runtime-journal.js";
-import { CURRENT_FORMAT } from "../db/kv-store.js";
+import { CURRENT_FORMAT } from "../db/format.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
 import { randomUUID } from "node:crypto";
@@ -133,28 +134,6 @@ const restrictDirectoryPermissions = Effect.fn("NodeProjects.restrictDirectoryPe
 });
 /** Largest single log message retained per Project. */
 export const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
-const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
-    "PATH",
-    "HOME",
-    "TMPDIR",
-    "TEMP",
-    "TMP",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TZ",
-    "NODE_ENV",
-    "NODE_OPTIONS",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "SystemRoot",
-    "COMSPEC",
-    "PATHEXT",
-    // Where the officially maintained services lie in a development checkout, so a
-    // Project's marketplace offers them too. A path, not a secret.
-    "ZELAVIS_OFFICIAL_SERVICES_DIR",
-]);
 /**
  * The address a Project announced, if this line is its readiness event.
  *
@@ -177,16 +156,6 @@ function readyUrl(line: string): string | undefined {
     catch {
         return undefined;
     }
-}
-export function projectProcessEnvironment(): Record<string, string> {
-    const environment: Record<string, string> = {};
-    for (const name of INHERITED_PROJECT_ENVIRONMENT) {
-        const value = process.env[name];
-        if (value !== undefined) {
-            environment[name] = value;
-        }
-    }
-    return environment;
 }
 export function createNodeProcessProjectRuntime(options: NodeProcessProjectRuntimeOptions): ZelavisProjectRuntimeDriver {
     const projectsDirectory = resolve(options.directory);

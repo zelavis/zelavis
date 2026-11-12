@@ -14,6 +14,10 @@ EnvironmentFile=-/etc/zelavis-%i/zelavis.env
 ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis serve --instance %i
 # The host drains and releases its worker. Signal only the host first.
 KillMode=mixed
+# Under memory pressure the kernel kills a Project before the Platform: the Platform holds the
+# dashboard, the Project registry and every handover, and a Project is restarted by it. Still
+# killable (not -1000) for the case where the Platform itself is what has run away.
+OOMScoreAdjust=-500
 TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3

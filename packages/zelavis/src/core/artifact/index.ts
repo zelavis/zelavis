@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import { defineCompatibilityDate } from "../runtime/compatibility.js";
 

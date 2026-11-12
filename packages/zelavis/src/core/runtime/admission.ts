@@ -1,4 +1,6 @@
-import { Data, Deferred, Effect } from "effect";
+import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
 
 export class RuntimeAdmissionClosed extends Data.TaggedError("RuntimeAdmissionClosed")<{}> {}
 export class RuntimeAdmissionFull extends Data.TaggedError("RuntimeAdmissionFull")<{}> {}

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// `projectProcessEnvironment` is exported from the Node project driver, so the
-// regression imports it directly rather than scraping the built bundle.
-import { projectProcessEnvironment } from "../dist/adapters/_node-project-runtime.js";
+// `projectProcessEnvironment` is its own leaf module (a Project's host reads it too),
+// so the regression imports it directly rather than scraping the built bundle.
+import { projectProcessEnvironment } from "../dist/adapters/_project-process-environment.js";
 
 test("Project children do not inherit Platform secrets", () => {
   const planted = {

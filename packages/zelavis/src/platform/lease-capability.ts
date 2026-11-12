@@ -10,7 +10,7 @@
  * deleting the Project ends it (the authority refuses a scope that no longer exists), and rotating the installation
  * secret ends them all.
  */
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration, integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 
 const encoder = new TextEncoder();

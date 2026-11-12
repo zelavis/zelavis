@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { engineConvergence } from "../core/runtime/engine-convergence.js";
-import { CURRENT_FORMAT } from "../db/kv-store.js";
+import { CURRENT_FORMAT } from "../db/format.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import type { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { readNodeRuntimeJournalSelection } from "./_node-runtime-journal.js";

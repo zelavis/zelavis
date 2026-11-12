@@ -1,4 +1,8 @@
-import { Data, Deferred, Effect, Exit, Semaphore } from "effect";
+import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 
 /** Structural contract accepted by native orchestration; domain errors retain their specific tags. */
 export interface TaggedFailure extends Error { readonly _tag: string; }

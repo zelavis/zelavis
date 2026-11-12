@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import { mintAppShardCapability } from "../platform/app-shard-capability.js";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";

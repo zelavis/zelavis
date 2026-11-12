@@ -2,16 +2,20 @@ import { parseJson } from "../core/json-validation.js";
 import { runtimeReleaseRecord } from "../core/runtime/handover.js";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { Deferred, Effect, Exit, Scope } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 import { evaluate, IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
 import { shutdownOnSignals } from "../runtimes/node.js";
 import { createNodeProjectHost } from "./_node-project-host.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { serveNodeProjectControl } from "./_node-project-control.js";
-import { projectProcessEnvironment } from "./_node-project-runtime.js";
+import { projectProcessEnvironment } from "./_project-process-environment.js";
 import { inheritedAppShardEnvironment } from "./_app-shard-environment.js";
 import { inheritedProjectLeaseEnvironment } from "./_project-lease-environment.js";
+import { raiseProjectOomScore } from "./_project-oom-score.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 
 // The Agent runs a persistent host; Platform and App workers use the same
@@ -29,6 +33,8 @@ const run = Scope.use(Effect.gen(function* () {
     const initial = process.env.ZELAVIS_PROJECT_INITIAL_RELEASE ? parseJson(process.env.ZELAVIS_PROJECT_INITIAL_RELEASE, runtimeReleaseRecord) : undefined;
     return { projectId, directory: resolve(dataDirectory, ".."), parentSecret, port, initial, integrationOnly: process.argv.includes("--integration") };
   });
+  // Before the engine starts, so it and everything the Project runs inherit the ranking.
+  yield* raiseProjectOomScore();
   let shutdown: ReturnType<typeof shutdownOnSignals> | undefined;
   yield* Effect.addFinalizer(() => Effect.sync(() => shutdown?.dispose()));
   shutdown = shutdownOnSignals(() => present(Scope.close(scope, Exit.void)));

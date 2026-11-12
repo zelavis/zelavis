@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { integration } from "./effect-boundary.js";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { ZelavisServerRuntime } from "./contracts.js";

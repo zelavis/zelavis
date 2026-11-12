@@ -96,3 +96,8 @@ completed participant IDs; retry resumes only unfinished work.
 ### 4. Usage Rules
 - `repos/effect/` is strictly **read-only reference material**.
 - Never import from `repos/effect/` in application code; always import from `effect` or subpaths like `effect/Schema`.
+- Files a Project's persistent host loads (`_node-project-runner.ts` and its static imports) import
+  `effect/<Module>` (`import * as Effect from "effect/Effect"`), never the `effect` barrel, which
+  evaluates every Effect module in every host. The TigerStyle gate recognizes both forms;
+  `test/project-host-footprint.test.mjs` fails if the host graph reaches the barrel, Schema, Stream,
+  the database, identity or the Project driver.

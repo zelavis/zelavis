@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Signed authority envelope for the Project Gateway.

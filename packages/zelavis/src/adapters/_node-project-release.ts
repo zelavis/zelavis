@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { digestArtifactDirectory, verifyRecipeArtifact } from "./_recipe-artifact.js";
 import { evaluate, integration, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";

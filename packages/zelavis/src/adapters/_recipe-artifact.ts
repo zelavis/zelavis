@@ -1,5 +1,5 @@
 import { integrationValue, unwrapIntegrationResult, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { isString, isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 /**
  * A Project's recipe, materialized into the Project.
@@ -19,12 +19,10 @@ import { cp, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-import {
-  resolveBundledServiceDirectory,
-  linkPlatformPackage,
-  loadSystemPackage,
-  resolveLocalPackageManifest,
-} from "./_local-runtime.js";
+// `_local-runtime` (service loading, and through it identity, the database and the Platform's settings) is imported
+// only where a recipe is loaded or first frozen. A Project's persistent host verifies artifacts with this module and
+// must not carry that graph: it is most of what such a host would otherwise hold in memory.
+const localRuntime = () => integrationValue(import("./_local-runtime.js"));
 
 /** Where a Project keeps its materialized recipe, inside its data root. */
 export const RECIPE_ARTIFACT_DIRECTORY = "recipe";
@@ -147,6 +145,7 @@ export function loadRecipeArtifact(
   yield* integrationValue(verifyRecipeArtifact(dataDirectory, lock));
   const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
   const target = join(destination, PACKAGE_DIRECTORY);
+  const { resolveLocalPackageManifest, linkPlatformPackage, loadSystemPackage } = yield* localRuntime();
   const manifest = resolveLocalPackageManifest(target);
   if (!manifest || manifest.name !== lock.name || manifest.version !== lock.version) {
     throw new RecipeArtifactError(
@@ -206,7 +205,7 @@ export function ensureRecipeArtifact(
   // none has it is the exact locked version asked for by name and version, which may fetch it.
   const bundled =
     ((yield* integrationValue(packageDirectory?.(recipe.name)))) ??
-    resolveBundledServiceDirectory(recipe.name) ??
+    (yield* localRuntime()).resolveBundledServiceDirectory(recipe.name) ??
     ((yield* integrationValue(packageDirectory?.(recipe.name, recipe.version))));
   if (!bundled) {
     throw new Error(
