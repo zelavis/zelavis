@@ -157,6 +157,7 @@ test("createAcmeChallengeService: serves /.well-known/acme-challenge/:token", as
     "active-token",
     "active-token.thumbprint-123",
     new Date(Date.now() + 60000),
+    "app.example.com",
   );
 
   const service = createAcmeChallengeService(challengeStore);
@@ -169,7 +170,7 @@ test("createAcmeChallengeService: serves /.well-known/acme-challenge/:token", as
 
   // Valid token
   const okResponse = await route.handler({
-    params: { token: "active-token" },
+    params: { token: "active-token" }, request: new Request("http://app.example.com"),
   });
   assert.equal(okResponse.status, 200);
   assert.equal(okResponse.headers["content-type"], "text/plain; charset=utf-8");
@@ -177,9 +178,12 @@ test("createAcmeChallengeService: serves /.well-known/acme-challenge/:token", as
 
   // Unknown token
   const missingResponse = await route.handler({
-    params: { token: "unknown-token" },
+    params: { token: "unknown-token" }, request: new Request("http://app.example.com"),
   });
   assert.equal(missingResponse.status, 404);
+  assert.equal((await route.handler({
+    params: { token: "active-token" }, request: new Request("http://other.example.com"),
+  })).status, 404);
 });
 
 // ---------------------------------------------------------------------------
@@ -365,7 +369,8 @@ test("createZelavisCertificateController: end-to-end ACME v2 order, challenge, C
 
     if (url.pathname === "/chal/1") {
       // Challenge notify: ACME server verifies challenge from challengeStore
-      observedKeyAuth = await challengeStore.getHttpChallenge("test-token-xyz");
+      observedKeyAuth = await challengeStore.getHttpChallenge("test-token-xyz", "test.zelavis.local");
+      assert.equal(await challengeStore.getHttpChallenge("test-token-xyz", "other.zelavis.local"), undefined);
       authzValid = true;
 
       res.writeHead(200, {
@@ -449,6 +454,8 @@ test("createZelavisCertificateController: end-to-end ACME v2 order, challenge, C
     const certSummary = await controller.orderCertificate({
       hostname: "test.zelavis.local",
       contactEmail: "admin@zelavis.local",
+      projectDomainId: "order-owner",
+      signal: AbortSignal.timeout(10_000),
     });
 
     assert.equal(certSummary.ref, "certificate:test.zelavis.local");
@@ -500,6 +507,10 @@ test("createZelavisCertificateController: end-to-end ACME v2 order, challenge, C
     assert.equal(stagedCalls[0].args["cert-name"], "certificate_test_zelavis_local");
     assert.ok(stagedCalls[0].args["cert-pem"].includes("BEGIN CERTIFICATE"));
     assert.ok(stagedCalls[0].args["key-pem"].includes("BEGIN PRIVATE KEY"));
+    await controller.retireProjectCertificate(certSummary.ref, "another-owner");
+    assert.ok(await controller.getCertificate(certSummary.ref));
+    await controller.retireProjectCertificate(certSummary.ref, "order-owner");
+    assert.equal(await controller.getCertificate(certSummary.ref), undefined);
   } finally {
     server.close();
   }

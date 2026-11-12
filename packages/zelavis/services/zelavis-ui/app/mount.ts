@@ -24,3 +24,15 @@ export const stripMount = (pathname: string): string => pathname.replace(mountPr
 
 /** The dashboard route a pathname names: the mount and any trailing slashes removed, `/` for the root. */
 export const unmounted = (pathname: string): string => stripMount(pathname).replace(/\/+$/, "") || "/";
+
+/** Accept dashboard-relative paths and paths that already include the current mount. */
+export function resolveReturnTo(value: string | null | undefined, origin: string): string {
+  if (!value?.startsWith("/") || value.startsWith("//") || /[\\\s\x00-\x1f\x7f]/u.test(value)) return "/";
+  const boundary = value.search(/[?#]/);
+  const path = boundary === -1 ? value : value.slice(0, boundary);
+  const suffix = boundary === -1 ? "" : value.slice(boundary);
+  const target = new URL(mounted(stripMount(path) || "/") + suffix, origin);
+  if (target.origin !== origin || (target.pathname !== ROOT && !target.pathname.startsWith(`${ROOT}/`))) return "/";
+  const relative = stripMount(target.pathname) || "/";
+  return relative.startsWith("//") ? "/" : relative + target.search + target.hash;
+}

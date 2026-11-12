@@ -1,3 +1,17 @@
+import {
+  REGISTRATION_SETTINGS_BODY_BYTES,
+  registrationSettingsInputJsonSchema,
+  registrationSettingsJsonSchema,
+} from "../app/identity/domain/registration.js";
+import {
+  ACCOUNT_ACCESS_BODY_BYTES,
+  accountAccessInputJsonSchema,
+  accountAccessResultJsonSchema,
+  decodeProjectAccountAuthority,
+  decodeSetAccountAccessInput,
+  projectAccountAccessDigest,
+  projectAccountAccessPermissions,
+} from "../app/identity/domain/account-access.js";
 /**
  * Project Gateway: the Platform's proxy into a Project runtime.
  *
@@ -10,12 +24,13 @@ import {
   ZELAVIS_GATEWAY_AUTHORITY_HEADER,
 } from "./gateway-authority.js";
 import { Cause, Effect } from "effect";
-import { integration, present, unwrapFailure, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, present, unwrapFailure, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/index.js";
+import { principalHasPermission } from "../core/runtime/request-dispatcher.js";
 import { tenantOfPrincipal } from "./shared.js";
 import type { FabricApi } from "../core/fabric/index.js";
 import type { ZelavisProjectManager, ZelavisProjectRemoteRoute } from "../project.js";
-import { ZelavisProjectNotFoundError } from "../project.js";
+import { isCanonicalProjectId, ZelavisProjectNotFoundError } from "../project.js";
 import type {
   ZelavisRouteResponse,
   ZelavisServerRoute,
@@ -412,6 +427,7 @@ export type ProjectForwardOptions = {
   readonly principal?: ZelavisPrincipal;
   /** Permissions to sign into the envelope for this request. */
   readonly permissions: readonly string[];
+  readonly accountAccessDigest?: string;
   /**
    * Whether a running server frontend may answer instead of the runtime.
    * Only the public proxy allows it; App data is a control-plane surface.
@@ -454,6 +470,7 @@ export function createProjectForwarder(
         subjectType: options.principal?.type ?? "anonymous",
         tenantId: options.principal ? tenantOfPrincipal(options.principal) : "anonymous",
         permissions: options.permissions,
+        ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
       },
       headers: [...gatewayRequestHeaders(options.request.headers)],
       ...(body && body.byteLength > 0 ? { body: new Uint8Array(body) } : {}),
@@ -556,6 +573,7 @@ export function createProjectForwarder(
             ? tenantOfPrincipal(options.principal)
             : "anonymous",
           permissions: options.permissions,
+          ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
         }));
     if (authority) {
       headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
@@ -649,6 +667,123 @@ export function createProjectGatewayRoutes(
   const forwardToProject = createProjectForwarder(dependencies);
 
   const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+
+  const registrationSettingsRoutes: readonly ZelavisServerRoute[] = (["GET", "PUT"] as const).map<ZelavisServerRoute>((method) => {
+    const write = method === "PUT";
+    const writeResponses: Record<number, { description: string }> = write ? {
+      400: { description: "Invalid registration settings" },
+      413: { description: "Request exceeds 1024 bytes" },
+    } : {};
+    return {
+      id: `runtime.projects.auth.registration.settings.${write ? "set" : "get"}`,
+      method,
+      path: "/projects/:projectId/auth/registration/settings",
+      access: {
+        permissions: ["project.settings.manage"],
+        scope: { type: "project", projectIdParam: "projectId" },
+      },
+      ...(write ? {
+        maxRequestBodyBytes: REGISTRATION_SETTINGS_BODY_BYTES,
+        invalidJsonBodyCode: "invalid_registration",
+      } : {}),
+      spec: {
+        operationId: write ? "setProjectRegistrationSettings" : "projectRegistrationSettings",
+        summary: write ? "Update a Project's registration settings" : "Read a Project's registration settings",
+        tags: ["runtime", "auth"],
+        pathParams: { projectId: { type: "string", required: true } },
+        ...(write ? { requestBody: { required: true, schema: registrationSettingsInputJsonSchema } } : {}),
+        responses: {
+          200: { description: "Project registration setting and revision", schema: registrationSettingsJsonSchema },
+          ...writeResponses,
+          403: { description: "Project settings permission required" },
+          404: { description: "No such Project" },
+          409: { description: "Project unavailable or settings revision has changed" },
+          503: { description: "Project registration settings unavailable" },
+        },
+      },
+      handler: ({ params, request, principal }) => present(Effect.gen(function* () {
+        return yield* integration(() => forwardToProject({
+          projectId: params.projectId,
+          wildcardPath: "zelavis/api/v1/auth/registration/settings",
+          query: new URLSearchParams(),
+          request,
+          principal,
+          permissions: ["project.settings.manage"],
+          allowFrontend: false,
+        }));
+      }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+    };
+  });
+
+  const accountAccessRoute: ZelavisServerRoute = {
+    id: "runtime.projects.auth.accounts.access.set",
+    method: "PUT",
+    path: "/projects/:projectId/auth/accounts/:accountId/access",
+    access: { permissions: ["project.users.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    maxRequestBodyBytes: ACCOUNT_ACCESS_BODY_BYTES,
+    invalidJsonBodyCode: "invalid_account_access",
+    spec: {
+      operationId: "setProjectAccountAccess",
+      summary: "Replace a human account's access in one Project",
+      tags: ["runtime", "auth"],
+      pathParams: { projectId: { type: "string", required: true }, accountId: { type: "string", required: true } },
+      requestBody: { required: true, schema: accountAccessInputJsonSchema },
+      responses: {
+        200: { description: "Current account access and revision", schema: accountAccessResultJsonSchema },
+        400: { description: "Invalid account access" },
+        403: { description: "Delegation or account modification forbidden" },
+        404: { description: "Project or account not found" },
+        409: { description: "Project unavailable or account access revision changed" },
+        503: { description: "Project unavailable or access changed but its security event could not be recorded" },
+      },
+    },
+    handler: ({ params: { projectId, accountId }, request, principal, body }) => present(Effect.gen(function* () {
+      const invalid = { status: 400, body: { error: "Invalid account access.", code: "invalid_account_access" } };
+      const forbidden = { status: 403, body: { error: "The caller cannot delegate this account access.", code: "account_access_forbidden" } };
+      const decoded = yield* Effect.result(evaluate(() => decodeSetAccountAccessInput(body)));
+      if (decoded._tag === "Failure" || !isCanonicalProjectId(projectId) ||
+          !accountId || accountId === "." || accountId === "..") return invalid;
+      const input = decoded.success;
+      const scope = { type: "project" as const, projectId };
+      const canDelegate = (permission: string) => principalHasPermission(principal, permission, scope) &&
+        (permission !== "system.services.manage" || principal?.permissions?.includes(permission) === true ||
+          principal?.permissions?.includes("*") === true);
+      if (input.role !== "user" || input.permissions.length !== 0 ||
+          input.grants.some((grant) => grant.scope.type !== "project" || grant.scope.projectId !== projectId ||
+            !canDelegate(grant.permission))) return forbidden;
+
+      const forwarding = { projectId, principal, permissions: ["project.users.manage"], allowFrontend: false };
+      // The exact read supplies old authority that must be delegable even when
+      // the replacement removes it. No child wildcard is needed for this check.
+      const read = yield* integration(() => forwardToProject({
+        ...forwarding,
+        wildcardPath: "zelavis/api/v1/auth/accounts",
+        query: new URLSearchParams({ accountId }),
+        request: new Request(request.url, { headers: request.headers, signal: request.signal }),
+      }));
+      if (read.status !== 200) return read;
+      if (!(read.body instanceof Uint8Array)) return { status: 502, body: { error: "Invalid Project account response." } };
+      const bytes = read.body;
+      const snapshot = yield* Effect.result(evaluate(() => decodeProjectAccountAuthority(JSON.parse(new TextDecoder().decode(bytes)))));
+      if (snapshot._tag === "Failure") return { status: 502, body: { error: "Invalid Project account response." } };
+      const [current] = snapshot.success;
+      if (!current) return { status: 404, body: { error: "Account not found.", code: "account_not_found" } };
+      if (current.id !== accountId) return { status: 502, body: { error: "Invalid Project account response." } };
+      if (current.accessRevision !== input.expectedRevision) {
+        return { status: 409, body: { error: "The account access revision has changed.", code: "account_access_conflict" } };
+      }
+      const names = projectAccountAccessPermissions(projectId, current, input);
+      if (!names || names.some((permission) => !canDelegate(permission))) return forbidden;
+      const accountAccessDigest = yield* projectAccountAccessDigest(accountId, input, names);
+      return yield* integration(() => forwardToProject({
+        ...forwarding,
+        wildcardPath: `zelavis/api/v1/auth/accounts/${encodeURIComponent(accountId)}/access`,
+        query: new URLSearchParams(),
+        request,
+        accountAccessDigest,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  };
 
   const proxyRoutes = methods.map((method) => ({
     id: `runtime.projects.proxy.${method.toLowerCase()}`,
@@ -880,5 +1015,5 @@ export function createProjectGatewayRoutes(
     }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
-  return [...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
+  return [...registrationSettingsRoutes, accountAccessRoute, ...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
 }

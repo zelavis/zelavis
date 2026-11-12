@@ -50,12 +50,14 @@ export class SessionService {
   constructor(
     private readonly repository: SessionRepository,
     private readonly accounts: Pick<AccountRepository, "findById" | "mutate">,
+    private readonly tokenPrefix = "zvs_",
   ) {}
 
-  private currentEpoch(accountId: string): Promise<number> {
+  private currentEpoch(accountId: string): Promise<number | null> {
     const self = this;
-    return present(Effect.gen(function* (): Effect.fn.Return<number, IntegrationFailure> {
-    return ((yield* integrationValue(self.accounts.findById(accountId))))?.sessionEpoch ?? 0;
+    return present(Effect.gen(function* (): Effect.fn.Return<number | null, IntegrationFailure> {
+    const account = yield* integration(() => self.accounts.findById(accountId));
+    return account && !account.registrationPending ? account.sessionEpoch ?? 0 : null;
   }));
   }
 
@@ -66,7 +68,9 @@ export class SessionService {
       throw new IdentityValidationError("Session creation requires an accountId.");
     }
 
-    return (yield* integrationValue(self.issue(input, (yield* integrationValue(self.currentEpoch(input.accountId))))));
+    const epoch = yield* integration(() => self.currentEpoch(input.accountId));
+    if (epoch === null) throw new IdentityValidationError("Session account is unavailable.");
+    return yield* integration(() => self.issue(input, epoch));
   }));
   }
 
@@ -82,7 +86,7 @@ export class SessionService {
     }
     const tokenBytes = new Uint8Array(32);
     requireCrypto().getRandomValues(tokenBytes);
-    const token = `zvs_${toBase64Url(tokenBytes)}`;
+    const token = `${self.tokenPrefix}${toBase64Url(tokenBytes)}`;
     const session = (yield* integrationValue(self.repository.create({
       id: `session_${globalThis.crypto.randomUUID()}`,
       accountId: input.accountId,
@@ -180,6 +184,7 @@ export class SessionService {
     let epoch: number | undefined;
     (yield* integrationValue(self.accounts.mutate(accountId, (account) => {
       epoch = undefined;
+      if (account?.registrationPending) throw new IdentityValidationError("Session account is unavailable.");
       if (!account) return account;
       epoch = (account.sessionEpoch ?? 0) + 1;
       return { ...account, sessionEpoch: epoch, updatedAt: new Date() };

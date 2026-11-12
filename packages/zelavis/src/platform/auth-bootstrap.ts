@@ -153,6 +153,24 @@ export function createPlatformAuthBootstrap(
   }
 
   return {
+    isComplete() {
+      return present(Effect.gen(function* () {
+        if (options.store) {
+          const record = yield* integrationValue(options.store.get(BOOTSTRAP_CLAIM_NAMESPACE, BOOTSTRAP_CLAIM_KEY));
+          return record !== undefined && readClaim(record)?.status === "complete";
+        }
+        return yield* bootstrapGate.withPermit(Effect.gen(function* () {
+          const accounts = yield* integrationValue(completedAccounts());
+          const owner = accounts.find((account) =>
+            account.metadata?.principalType !== "service" &&
+            account.roles?.includes("owner") &&
+            account.permissions?.includes("*"));
+          if (!owner) return false;
+          const credentials = yield* integrationValue(auth.credentials.listByAccountId(owner.id));
+          return credentials.some((credential) => credential.accountId === owner.id);
+        }));
+      }));
+    },
     status() {
     return present(Effect.gen(function* () {
       return {

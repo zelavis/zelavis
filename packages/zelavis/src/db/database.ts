@@ -6,6 +6,7 @@ import { PartitionUnavailable, ShardInUse, TenantRelocated } from "./errors.js";
 import { shardPlacementOver, type ShardPlacementApi, type ShardPlacementHost } from "./shard-placement.js";
 import { BranchNotMergeable, InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
+import { CARRY_SNAPSHOT, type CarrySnapshotInput } from "./document-writes.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
@@ -1091,8 +1092,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       propagating(globalBase.documents.delete(input), () => [
         replication.documentIdentity(input.collection, input.id),
       ]),
-    write: (input) =>
-      propagating(globalBase.documents.write(input), writtenIdentities),
+    // A compacted snapshot refreshes the replicas once all its targets exist.
+    write: (input) => (input as CarrySnapshotInput)[CARRY_SNAPSHOT] !== undefined
+      ? globalBase.documents.write(input)
+      : propagating(globalBase.documents.write(input), writtenIdentities),
 
     // The collection itself changed, or every document in it did.
     rewrite: (input) => relevelling(globalBase.documents.rewrite(input)),

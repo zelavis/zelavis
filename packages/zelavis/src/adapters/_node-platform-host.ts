@@ -94,6 +94,8 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
   let supervisor: Effect.Success<ReturnType<typeof createNodeRuntimeSupervisor>> | undefined;
   const headers = (projectId?: string) => Effect.fn("PlatformHost.ingressAuthority")(function* (input: import("node:http").IncomingHttpHeaders) {
     const sanitized = { ...input }; delete sanitized[NODE_RUNTIME_PREVIEW_ID]; delete sanitized[NODE_RUNTIME_PREVIEW_KEY];
+    // Persistent preview listeners serve HTTP directly. Only Platform ingress receives the Edge proxy's protocol.
+    if (projectId) delete sanitized["x-forwarded-proto"];
     return () => Effect.sync(() => projectId ? { ...sanitized, [NODE_RUNTIME_PREVIEW_ID]: projectId, [NODE_RUNTIME_PREVIEW_KEY]: token } : sanitized);
   });
   const closePreviews = Effect.gen(function* () {

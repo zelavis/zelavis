@@ -19,6 +19,7 @@ const output = fileURLToPath(
 );
 
 const css = readFileSync(source, "utf8");
+const surfaceTokens = readFileSync(new URL("../app/surface-tokens.css", import.meta.url), "utf8").trimEnd();
 
 function extractBlock(selector) {
   const start = css.indexOf(`${selector} {`);
@@ -35,15 +36,17 @@ function extractBlock(selector) {
 const light = extractBlock(":root");
 const dark = extractBlock(".dark");
 
-const stylesheet = `/* Generated from the design tokens in app/service-page-tokens.css. Do not edit. */
+const stylesheet = `/* Generated from app/service-page-tokens.css and app/surface-tokens.css. Do not edit. */
+${surfaceTokens}
+
 :root {
 ${light}
   color-scheme: light;
+  overscroll-behavior: contain;
 }
 
-/* Framed pages cannot see the dashboard's theme class, so they follow the
-   viewer's system preference. A page that wants to follow the dashboard's
-   explicit choice can set data-theme on its own root. */
+/* The service-page runtime sets data-theme from the dashboard. Without it,
+   use the browser's preferred color scheme. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
 ${dark}

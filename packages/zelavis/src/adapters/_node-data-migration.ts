@@ -6,12 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import { Data, Effect, Stream } from "effect";
 import { evaluate, integration, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { arrayOf, isJsonObject, isSafeInteger, isString, isUnknown, objectFields, optional, parseJson, type JsonValidator } from "../core/json-validation.js";
-import { CARRY_COLLECTION, CARRY_DOCUMENTS, REPLAY_HISTORY, type CarriedDocument, type CarryCollectionInput, type CarryDocumentsInput, type ReplayedChange, type ReplayHistoryInput } from "../db/document-writes.js";
+import { CARRY_COLLECTION, CARRY_DOCUMENTS, CARRY_SNAPSHOT, REPLAY_HISTORY, type CarriedDocument, type CarryCollectionInput, type CarryDocumentsInput, type CarrySnapshotInput, type ReplayedChange, type ReplayHistoryInput } from "../db/document-writes.js";
 import { ZELAVIS_DB_BACKUP_V1, type BackupEvent, type BackupsApi } from "../db/backup.js";
 import { crossTenantIndexDefinitionOf } from "../db/cross-tenant-index.js";
 import { GLOBAL_TENANT } from "../db/topology.js";
 import { SYSTEM_PLACEMENTS } from "../db/topology-store.js";
 import type { DocumentsApi } from "../db/document-model.js";
+import type { Seq } from "../db/model.js";
 import { openNodeDatabase, readShardLocations } from "../db/node-host.js";
 import {
   comparableDocument, EXPORT_EVENT_CAP, exportedDocument, exportedEvent, exportHeader, exportManifest, isExportTime, isLayout4DurableRecord, MAX_EXPORT_LINE_CHARS,
@@ -41,8 +42,9 @@ import {
  * time-series state, and layout-2 idempotency receipts (counted in `dropped`). Layout 4 also carries durable
  * workload, workflow, outbox, aggregate and idempotency records and rebuilds cross-Tenant indexes from their definitions.
  *
- * Each partition's export is streamed for indexing, document replay, verification and durable restore. The working
- * memory is one index entry per distinct record plus one batch and one line, independent of the history's length.
+ * Each partition's export is streamed for indexing, document import, verification and durable restore. The working
+ * memory is one index entry per distinct record, one reserved identifier per live snapshot document, one batch and one
+ * line, independent of the history's length.
  *
  * It only reads the source and writes under `workDirectory`, so a failure leaves the source exactly as it was and removes
  * the staging it made. Swapping the result in, and keeping the old data, belong to the caller.
@@ -100,7 +102,7 @@ const treeBytes = (directory: string): Effect.Effect<number, DataMigrationFailur
 });
 /** A copy of the source, its export (about as large) and the migrated database, plus room to spare. */
 const STAGING_FACTOR = 3.5;
-/** Changes, inserts or settled ids per request: what one transaction of the migrated database holds. */
+/** Changes, reservations, inserts or settled ids per request: what one transaction of the migrated database holds. */
 const WRITE_BATCH = 500;
 const COLLECTION_FIELDS = ["surface", "metadata", "indexes", "checks", "references", "analyzer", "spatial", "embedding", "edges", "measures", "columns"] as const;
 const SCHEMA_NAMESPACE = "zv.schema", ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
@@ -350,12 +352,35 @@ const replayLog = (file: string, index: TenantIndex, documents: DocumentsApi, te
 });
 
 /**
- * The second pass of a `state` Tenant: its final documents, inserted under everything a document must satisfy, in the
- * export's order. The earlier engine lists a state export by record identifier, so the documents keep the order their
- * identifiers had, which is the order a read without one answers in.
+ * A `state` Tenant's final documents, inserted under everything a document must satisfy, in export order. The earlier
+ * engine lists a state export by record identifier, so the documents keep their read order. Reserve every destination
+ * identifier first so a reference to a later document can be checked and posted when the earlier one is written.
  */
 const recreateState = (file: string, index: TenantIndex, documents: DocumentsApi, tenant: string, names: SourceNames) => Effect.gen(function* () {
   const documentPrefix = names.documentPrefix(tenant);
+  const livePut = (event: ExportedEvent, at: number) => {
+    const track = index.records.get(event.seq);
+    return track?.live === true && track.lastPut === at && track.namespace.startsWith(documentPrefix) ? track : undefined;
+  };
+  const assigned = new Map<string, Seq>();
+  let reservations: Array<{ readonly collection: string; readonly id: string }> = [];
+  const reserve = Effect.gen(function* () {
+    if (reservations.length === 0) return;
+    const write = {
+      operations: [],
+      [CARRY_SNAPSHOT]: { _tag: "Reserve", documents: reservations, assigned },
+    } satisfies CarrySnapshotInput & Record<string, unknown>;
+    yield* documents.write(write).pipe(Effect.mapError((error) => fail(`Document IDs of Tenant "${tenant}" could not be reserved: ${error._tag}.`, error)));
+    reservations = [];
+  });
+  yield* readExport(file, tenant, (event, at) => Effect.gen(function* () {
+    const track = livePut(event, at);
+    if (track === undefined) return;
+    reservations.push({ collection: track.namespace.slice(documentPrefix.length), id: track.key });
+    if (reservations.length >= WRITE_BATCH) yield* reserve;
+  }));
+  yield* reserve;
+
   let batch: Array<ExportedDocument> = [];
   let recreated = 0, historyDropped = 0;
   const flush = Effect.gen(function* () {
@@ -366,15 +391,16 @@ const recreateState = (file: string, index: TenantIndex, documents: DocumentsApi
         ...(typeof d.expiresAt === "string" ? { expiresAt: d.expiresAt } : {}),
       })),
       [CARRY_DOCUMENTS]: batch.map(carriedOf),
-    } satisfies CarryDocumentsInput & Record<string, unknown>;
+      [CARRY_SNAPSHOT]: { _tag: "Insert", assigned },
+    } satisfies CarryDocumentsInput & CarrySnapshotInput & Record<string, unknown>;
     yield* documents.write(write).pipe(Effect.mapError((error) => fail(`Documents of Tenant "${tenant}" could not be recreated: ${error._tag}.`, error)));
     recreated += batch.length;
     for (const d of batch) if ((d.version ?? 1) > 1) historyDropped += 1;
     batch = [];
   });
   yield* readExport(file, tenant, (event, at) => Effect.gen(function* () {
-    const track = index.records.get(event.seq);
-    if (track === undefined || !track.live || track.lastPut !== at || !track.namespace.startsWith(documentPrefix)) return;
+    const track = livePut(event, at);
+    if (track === undefined) return;
     batch.push(yield* documentOf(event, tenant, track.namespace.slice(documentPrefix.length), track.key));
     if (batch.length >= WRITE_BATCH) yield* flush;
   }));
@@ -383,7 +409,7 @@ const recreateState = (file: string, index: TenantIndex, documents: DocumentsApi
 });
 
 /**
- * The third pass: the recreated Tenant holds exactly the documents the earlier engine exported, with the same data,
+ * Verify the recreated Tenant holds exactly the documents the earlier engine exported, with the same data,
  * version, times and expiry, and, for a replayed history, a final state the collections' constraints allow as they stand.
  */
 const verifyDocuments = (file: string, index: TenantIndex, documents: DocumentsApi, tenant: string, names: SourceNames) => Effect.gen(function* () {
@@ -611,6 +637,10 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
           }
         }
         if (carryDurable) yield* restoreDurableRecords(file, tenant, index, tenantApi.backups);
+        if (tenant === GLOBAL_TENANT && index.header.history === "state") {
+          yield* opened.database.replication.refresh
+            .pipe(Effect.mapError((error) => fail(`App-wide replicas could not be refreshed: ${error._tag}.`, error)));
+        }
       }
       const indexes = opened.database.crossTenantIndexes;
       for (const definition of manifest.crossTenantIndexes ?? []) {

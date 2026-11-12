@@ -3,6 +3,7 @@ import type { FuzorRouter } from "fuzor/runtime";
 import { object, type Config, type Project } from "./api.ts";
 import { backRow, button, link, node } from "./dom.ts";
 import { ROOT } from "./mount.ts";
+import { canAccess } from "./navigation-menu.ts";
 
 const names = ["Home", "Notifications", "Assistant", "Search", "Account"] as const;
 /** A second living Swiper owns utility depth; the main navigation/workspace remains mounted. */
@@ -34,23 +35,30 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
   const entry = (title: string, path: string) => link(title, path, { class: "utility-link" });
   function renderRoot(name: string, config?: Config) {
     const body = node("nav", { "aria-label": `${name} shortcuts`, class: "utility-menu" });
-    if (name === "notifications") body.append(entry("Security checklist", "/server/security"), entry("Server logs", "/server/logs"), entry("Resource usage", "/server/resources"));
-    if (name === "assistant") {
+    const allowed = (permission: string) => canAccess(config?.access, { permissions: [permission] });
+    if (name === "notifications" && allowed("server.manage")) body.append(entry("Security checklist", "/server/security"), entry("Server logs", "/server/logs"), entry("Resource usage", "/server/resources"));
+    if (name === "assistant" && allowed("assistant.use")) {
       const project = currentProject ?? projects[0]?.id;
       body.append(entry("Open chat", `/assistant${project ? `?project=${encodeURIComponent(project)}` : ""}`), node("strong", { class: "sidebar-label" }, "Projects"));
       for (const item of projects) body.append(entry(item.name, `/assistant?project=${encodeURIComponent(item.id)}`));
-      body.append(entry("Build a project", "/projects?new=1"), entry("Inspect services", "/services"));
+      if (allowed("projects.create")) body.append(entry("Build a project", "/projects?new=1"));
+      if (allowed("system.services.manage")) body.append(entry("Inspect services", "/services"));
     }
     if (name === "search") {
       const input = node("input", { type: "search", name: "zelavis-sidebar-search", placeholder: "Search Zelavis", "aria-label": "Search Zelavis" });
       const results = node("div", { class: "utility-menu", "aria-live": "polite" });
-      const destinations = [{ name: "Projects", path: "/projects" }, { name: "Server", path: "/server" }, { name: "Settings", path: "/settings" }, ...projects.map(item => ({ name: item.name, path: `/projects/${encodeURIComponent(item.id)}` }))];
+      const destinations = [{ name: "Projects", path: "/projects" },
+        ...(allowed("server.manage") ? [{ name: "Server", path: "/server" }] : []),
+        ...(allowed("system.settings.manage") ? [{ name: "Settings", path: "/settings" }] : []),
+        ...projects.map(item => ({ name: item.name, path: `/projects/${encodeURIComponent(item.id)}` }))];
       const filter = () => { const matches = destinations.filter(item => item.name.toLowerCase().includes(input.value.toLowerCase().trim())); results.replaceChildren(...matches.map(item => entry(item.name, item.path))); if (!matches.length) results.append(node("p", {}, "No matching destinations.")); };
       input.addEventListener("input", filter); filter(); body.append(input, results);
     }
     if (name === "account") {
       const access = object(config?.access), principal = object(access.principal);
-      body.append(node("div", { class: "utility-account" }, node("small", {}, "Signed in"), node("strong", {}, typeof access.label === "string" ? `${access.label} dashboard` : "Runtime dashboard"), node("span", {}, typeof principal.id === "string" ? principal.id : "local project")), entry("Account overview", "/projects"), branch("Settings", "settings"), button("Log out", onSignOut, { class: "utility-link" }));
+      body.append(node("div", { class: "utility-account" }, node("small", {}, "Signed in"), node("strong", {}, typeof access.label === "string" ? `${access.label} dashboard` : "Runtime dashboard"), node("span", {}, typeof principal.id === "string" ? principal.id : "local project")), entry("Account overview", "/projects"),
+        ...(allowed("system.settings.manage") ? [branch("Settings", "settings")] : []),
+        button("Log out", onSignOut, { class: "utility-link" }));
     }
     return body;
   }
@@ -58,12 +66,14 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
     projects = list; currentProject = projectId;
     const url = new URL(router.url());
     const utility = url.searchParams.get("sidebarUtility") ?? "";
+    controls[1].hidden = !canAccess(config?.access, { permissions: ["server.manage"] });
+    controls[2].hidden = !canAccess(config?.access, { permissions: ["assistant.use"] });
     const active = names.findIndex(name => name.toLowerCase() === utility);
-    const opened = active > 0;
+    const opened = active > 0 && !controls[active].hidden;
     controls.forEach((control, index) => { control.setAttribute("aria-pressed", String(index === (opened ? active : 0))); control.setAttribute("aria-expanded", String(opened && index === active)); });
     view.hidden = !opened;
     if (!opened) { signature = ""; return false; }
-    const panel = utility === "account" ? url.searchParams.get("sidebarUtilityPanel") : null;
+    const panel = utility === "account" && canAccess(config?.access, { permissions: ["system.settings.manage"] }) ? url.searchParams.get("sidebarUtilityPanel") : null;
     const depth = panel === "language" ? 2 : panel === "settings" ? 1 : 0;
     const next = JSON.stringify([utility, projectId, projects.map(item => [item.id, item.name]), config?.access]);
     if (next !== signature) {

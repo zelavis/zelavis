@@ -71,9 +71,10 @@ const clockRecord = objectFields<ClockRecord>({
 });
 const anyRecord = (_value: unknown): _value is unknown => true;
 
-/** How a result and an exit become JSON and back: the success and error are already encoded by their own schemas. */
-const ResultJson = Schema.toCodecJson(Workflow.Result({ success: Schema.Any, error: Schema.Any }));
-const ExitJson = Schema.toCodecJson(Schema.Exit(Schema.Any, Schema.Any, Schema.Defect()));
+/** Success and error are already encoded by their own schemas. JSON omits the field when that value is undefined. */
+const OutcomeValue = Schema.optionalKey(Schema.Any);
+const ResultJson = Schema.toCodecJson(Workflow.Result({ success: OutcomeValue, error: OutcomeValue }));
+const ExitJson = Schema.toCodecJson(Schema.Exit(OutcomeValue, OutcomeValue, Schema.Defect()));
 
 /** Records of one kind, by key, in the partition's own transactions. */
 const recordsIn = (store: ObjectStoreApi) => {

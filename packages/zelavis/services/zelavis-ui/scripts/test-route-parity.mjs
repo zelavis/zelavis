@@ -134,6 +134,10 @@ const qualify = Effect.scoped(Effect.gen(function*() {
     for (const entry of process.argv.includes("--actions-only") ? [] : cases) {
       const url = origin + "/zelavis" + entry.example;
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
+      if (entry.path === "/sign-up") {
+        yield* io(() => page.waitForURL(origin + "/zelavis/login?registration=closed"));
+        yield* io(() => page.getByText("Registration is closed.", { exact: true }).waitFor());
+      }
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
       else if (entry.example === "/projects/parity-lab/database") {
         yield* io(() => page.locator(".database-head").getByRole("link", { name: "Manage tenants", exact: true }).waitFor());
@@ -191,6 +195,12 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.frameLocator("iframe.service-frame").locator("#out[data-result]").waitFor());
   const resultText = yield* io(() => extensionResult.getAttribute("data-result"));
   assert.deepEqual(JSON.parse(resultText), { opaque: true, select: true, dialog: true });
+  const extensionTheme = page.frameLocator("iframe.service-frame").locator("html");
+  for (const theme of ["dark", "light"]) {
+    yield* io(() => page.locator("html").evaluate((root, theme) => { root.dataset.dashboardTheme = theme; }, theme));
+    yield* io(() => page.frameLocator("iframe.service-frame").locator(`html[data-theme="${theme}"]`).waitFor({ state: "attached" }));
+    assert.equal(yield* io(() => extensionTheme.getAttribute("data-theme")), theme);
+  }
   assert.match(yield* io(() => page.locator("nav, aside, .sidebar").first().innerText()), /Extensions[\s\S]*Platform extension/);
   const platformAnonymous = yield* io(() => fetch(new URL(platformSrc, origin)));
   assert.equal(platformAnonymous.status, 200, "Platform capability needs no cookie");
@@ -612,7 +622,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.route("**/api/v1/runtime/projects", managedProjects));
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     yield* io(() => page.setViewportSize(viewport));
-    for (const [section, title] of [["domains", "Domains"], ["files", "Files"], ["app-database", "App database"], ["setup", "Setup"], ["backups", "Backups"], ["logs", "Logs"], ["updates", "Updates"], ["admin", "App Admin"]]) {
+    for (const [section, title] of [["domains", "Connect a hostname"], ["files", "Files"], ["app-database", "App database"], ["setup", "Setup"], ["backups", "Backups"], ["logs", "Logs"], ["updates", "Updates"], ["admin", "App Admin"]]) {
       yield* visit("/projects/parity-lab/" + section);
       yield* io(() => page.locator(".content").getByText(title, { exact: true }).first().waitFor());
       assert.equal(errors.length, 0, errors.join("\n"));

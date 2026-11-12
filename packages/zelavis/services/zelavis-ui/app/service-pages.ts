@@ -144,6 +144,25 @@ export const servicePageScreen = Effect.fn("new-ui.servicePageScreen")(function*
   // expiring capability to read that bundle (`platform/page-capability.ts`), so its scripts and styles load as well as its HTML.
   const src = page.trusted ? page.src : yield* sandboxedPageSrc(page.src, projectId);
   const frame = node("iframe", { src, title: page.title, class: "service-frame", sandbox: page.trusted ? "allow-scripts allow-same-origin allow-forms allow-popups" : "allow-scripts allow-forms", referrerpolicy: "no-referrer" });
+  // The resolved palette is public and goes only to this frame. An opaque
+  // sandbox cannot be named as a postMessage target origin.
+  const root = frame.ownerDocument.documentElement;
+  const targetOrigin = page.trusted ? new URL(src, frame.ownerDocument.baseURI).origin : "*";
+  const publishTheme = () => {
+    const theme = root.dataset.dashboardTheme;
+    if (frame.isConnected && (theme === "light" || theme === "dark")) {
+      frame.contentWindow?.postMessage({ zelavis: "service-page-theme", theme }, targetOrigin);
+    }
+  };
+  yield* Effect.acquireRelease(Effect.sync(() => {
+    const observer = new MutationObserver(publishTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-dashboard-theme"] });
+    frame.addEventListener("load", publishTheme);
+    return observer;
+  }), observer => Effect.sync(() => {
+    observer.disconnect();
+    frame.removeEventListener("load", publishTheme);
+  }));
   if (!page.trusted && page.apiPath) yield* installServiceBroker(frame, { serviceName: page.serviceName, apiPath: page.apiPath });
-  return node("section", { class: "panel service-page" }, frame);
+  return node("section", { class: "service-page" }, frame);
 });

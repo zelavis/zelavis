@@ -482,6 +482,7 @@ export interface ZelavisProjectGatewayAuthorityInput {
   /** The App Tenant the Platform resolved for this caller. */
   readonly tenantId: string;
   readonly permissions: readonly string[];
+  readonly accountAccessDigest?: string;
 }
 
 export interface ZelavisProjectCreateInput {
@@ -532,6 +533,8 @@ export interface ZelavisProjectManager {
    * serving runtime meanwhile.
    */
   view(id: string): Promise<ZelavisProjectRecord | undefined>;
+  /** Run a short trusted store mutation while the Project exists and is not deleting. */
+  withLiveProject<A>(id: string, mutate: (project: ZelavisProjectRecord) => Effect.Effect<A, TaggedFailure>): Effect.Effect<A, TaggedFailure>;
   versions(id?: string): Promise<ZelavisProjectVersions>;
   /** Values for the application's own setup (a database address, a generated password). Secrets only with `reveal`. */
   setupValues(id: string, options?: { readonly reveal?: boolean }): Promise<readonly ZelavisProjectSetupValue[]>;
@@ -680,6 +683,10 @@ function mapWithConcurrency<TValue, TResult>(values: readonly TValue[], concurre
 
 /** Longest accepted raw Project identifier before normalization. */
 const MAX_PROJECT_ID_INPUT_LENGTH = 256;
+
+export function isCanonicalProjectId(id: string): boolean {
+  return id.length <= MAX_PROJECT_ID_INPUT_LENGTH && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id);
+}
 
 function normalizeProjectId(value: string): string {
   if (value.length > MAX_PROJECT_ID_INPUT_LENGTH) {
@@ -2294,7 +2301,17 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             if (project && !toLocal) yield* write({ ...project, placement: { nodeId: lease.owner, dispatchedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
         }));
     });
-    const manager: EffectOperations<ZelavisProjectManager> = {
+    const withLiveProject: ZelavisProjectManager["withLiveProject"] = (id, mutate) => Effect.gen(function* () {
+        const projectId = yield* evaluate(() => normalizeProjectId(id));
+        return yield* withProjectLifecycle(projectId, () => Effect.gen(function* () {
+            const project = yield* requireProject(projectId);
+            if (project.deletion) {
+                return yield* Effect.fail(new ZelavisProjectConflictError("The Project is being deleted."));
+            }
+            return yield* mutate(project);
+        }));
+    });
+    const manager: EffectOperations<Omit<ZelavisProjectManager, "withLiveProject">> = {
         runtime: {
             driver: runtime.name,
             availableKinds: availableRuntimeKinds,
@@ -2870,7 +2887,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         void present(manager.reconcile()).catch(() => undefined);
     }
     const { runtime: description, ...operations } = manager;
-    return Object.assign(presentOperations(operations), { runtime: description });
+    return Object.assign(presentOperations(operations), { runtime: description, withLiveProject });
 });
 export function createProjectManager(options: ZelavisProjectManagerOptions): Promise<ZelavisProjectManager> {
   return present(makeProjectManager(options));

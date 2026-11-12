@@ -1,7 +1,6 @@
 <!-- plan-writer supplement
-verified-at: 57449988a6
+verified-at: f30953612f
 verified-on: 2026-11-10
-lessons-through: 2026-11-09
 sources:
   - AGENTS.md
   - .agents/skills/plan-writer/SKILL.md
@@ -17,6 +16,7 @@ sources:
   - packages/zelavis/package.json
   - packages/zelavis/services/zelavis-ui/package.json
   - packages/zelavis/services/zelavis-ui/scripts/test-route-parity.mjs
+  - packages/zelavis/test/capability-parity.test.mjs
   - .github/workflows/ci.yml
 -->
 
@@ -123,9 +123,11 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 
 - `packages/zelavis/test/*.test.mjs` run with `node --test` (`packages/zelavis/package.json`),
   using helpers such as `_platform.mjs`, `_database.mjs` and `_runtime.mjs`.
-- Tests import the built output (`../dist/...`), so build first: `pnpm --filter zelavis run build`,
-  then `node --test test/<file>.test.mjs` from `packages/zelavis`. The build prints its `tsc`
-  script lines; success is exit 0 with no `error TS` line (lesson: follower-failover-removals-drill).
+- Tests import the built output (`../dist/...`), so build first with `pnpm --filter zelavis run build`
+  from the repository root. Run focused tests from the root with
+  `pnpm --filter zelavis exec node --test test/<file>.test.mjs`. Some suites inspect package-relative
+  source paths, so a direct root-level `node --test packages/zelavis/test/...` fails for capability
+  parity (`packages/zelavis/test/capability-parity.test.mjs` → `collect`).
 - Recipe runtime failures are tested by wrapping the real local Agent runner:
   `test/recipe-project-runtime.test.mjs` → `setup(t, { agent })` and
   `test/recipe-contract2.test.mjs` → `setup(t, first, { strict })`. The plan controller is tested
@@ -140,9 +142,6 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 - A real Platform with a real remote Agent on one machine: `test/project-failover.test.mjs` (Platform behind a plain
   HTTP server, `createRemoteProjectAgent` with an `openssl` certificate, trust read from the System Store) and
   `test/remote-project-agent.test.mjs` (a test-made Ed25519 trust key with `createHttpsProjectDispatcher`).
-- A TLS Agent hosting remote App shards for one test file: `test/_remote-shard-fixture.mjs` → `startRemoteShardAgent`
-  (`commit`, `access`, `engine`, `restart`, `closeAgent`); a real Platform with a remote Agent behind a cuttable proxy and a real
-  `@zelavis/app` Project: `test/app-shard-remote.test.mjs` → `setup` (lesson: remote-shard-reads-and-replicas planning).
 - Failure paths and crash/recovery cases are required. New state machines get seeded model tests
   with reproducible seeds (`AGENTS.md § TigerStyle Adaptation`).
 - `packages/zelavis/test/capability-parity.test.mjs` must cover a new operation. A new dashboard
@@ -174,9 +173,6 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 - Reading before the transaction → check inside it.
 - A per-Tenant loop → a change-driven design.
 - A shim to keep old data working → delete it and recreate development Projects.
-- Typing a database step as `Effect<…, DbError>` → check its real failures first: a drain
-  (`router.drained`) fails with `PlacementInUse`, which is not part of `DbError`
-  (`packages/zelavis/src/db/errors.ts`; lesson: follower-failover-removals-drill).
 - Writing anything in `.claude/` → never, not even a link: guidance, skills, references and plans
   live only in `AGENTS.md` and `.agents/`; `scripts/test/claude-folder.test.mjs` (in
   `pnpm test:repo-rules`) fails on anything there but `settings.local.json` and `worktrees/`
@@ -188,59 +184,8 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 - A new Platform record keyed by Project identity without a deletion participant → register one
   beside `project-placement-authority` and `app-data-placement` in `src/index.ts`
   (`AGENTS.md § Platform And App Service Boundary`).
-- Reading a Project during its start with `projects.get` → use `projects.view`: a start holds the Project's lifecycle
-  until it is ready, and `get` waits on it (lesson: project-failover-and-shard-placement).
-- A new `ZELAVIS_*` variable for a Project's engine process → add it to the allow-list the host hands its engine
-  (`src/adapters/_node-project-runner.ts` → `inheritedProjectLeaseEnvironment`, `src/adapters/_project-lease-environment.ts`
-  → `PROJECT_LEASE_VARIABLES`); otherwise it never reaches the engine (lesson: project-failover-and-shard-placement).
-- Platform → remotely placed Project traffic → the signed `route` dispatch: the Agent, not the Platform, signs the
-  Project's Gateway envelope (`src/adapters/_remote-project-agent.ts` → `route`; lesson: project-failover-and-shard-placement).
-- Tests that kill Project processes → select them from `GET /runtime/debug/processes` by their Project directory: the
-  listing holds every Project process on the machine (lesson: project-failover-and-shard-placement).
-- `zelavis/db` handles: `forTenant("service:…")` is allowed; `forPart` throws `UnknownPart` synchronously on an undivided
-  Tenant; `openNodeDatabase` answers `database` (Effect API) and `api` (Promise API) (lesson: project-failover-and-shard-placement).
-- Planning on a Docker drill (`pnpm release:qualify:*`) → run it once at `HEAD` first;
-  `release:qualify:failover` takes `ZELAVIS_QUALIFY_DRILLS=<names>` and `ZELAVIS_QUALIFY_KEEP=1`
-  (`distribution/scripts/qualify-failover.mjs`; lesson: follower-failover-removals-drill).
-
-- Citing a plan the job names → check it still exists in `.agents/plans/`: finished plans are deleted by planning runs, so take
-  their decisions from the reference they fed (for remote shards, `two-fabrics-placement-contract.md`) (lesson:
-  remote-shard-reads-and-replicas planning).
-- Freshness by `git diff <Verified-at>..HEAD` alone → also `git status --porcelain`: large features can sit untracked in the working
-  tree (the whole remote-shard implementation did on 2026-11-08), invisible to a commit diff (lesson: remote-shard-reads-and-replicas planning).
-- Giving a read a typed failure for a store or transport problem → reads die on store errors (`src/db/errors.ts` →
-  `dieUnlessMoving`: only `TenantMoving` and domain errors fail), so a remote read path must die the same way (lesson:
-  remote-shard-reads-and-replicas planning).
-
-- Assuming a read is a pure function of database bytes because it performs no writes → inspect its transitive use of
-  writer-owned memory. `getVectorIndex` returns a mutable in-memory index, and similarity and hybrid queries can consult it
-  even when `approximate` is omitted (`src/db/document-reads.ts` → `findDocuments`, `inSimilarityOrder`; lesson:
-  02-shard-reader-and-tenant-reads). Test the same request after building and changing the index.
-- Serializing `Schema.TaggedError` by enumerating fields → `Error.cause` is non-enumerable; check required schema fields and
-  round-trip them (`src/db/errors.ts` → `StoreError`; lesson: 02-shard-reader-and-tenant-reads).
-- Running a build while the full verification tests use `dist/` → the build cleans that directory and causes unrelated
-  module-not-found failures; run builds and full verification sequentially (lesson: 02-shard-reader-and-tenant-reads).
-
-- A new database route → also update the route inventory in `test/db-database-service.test.mjs` ("the database service
-  mounts the same routes on the db runtime API") and the CLI usage string, besides the parity test (lesson:
-  remote-shard-reads-and-replicas, part 5).
-- Asserting a tagged refusal by its message → assert its fields (`ShardOperationInvalid.reason`, `_tag`) (lesson:
-  remote-shard-reads-and-replicas, part 5).
-- A Node identity from the database → `openNodeDatabase`'s origin is `local`; the Project's Node comes from its
-  authenticated channel (the Project capability's `node`) (lesson: remote-shard-reads-and-replicas, part 5).
-- A follower pass that reports `more` (`FollowerPass.more`) → run another pass before pausing, or a quiet copy stays
-  behind after a burst (lesson: remote-shard-reads-and-replicas, part 4).
-- Deleting a finished part file of a split plan before its overview is `done` → never: later parts lose the execution
-  reports they hand over from (lesson: remote-shard-reads-and-replicas, part 4).
-- Planning in a session worktree → check it holds the commit the job builds on (`git merge-base --is-ancestor <commit> HEAD`):
-  a worktree can be cut from `main` while the work lives on `dev`, hundreds of commits apart. A fresh worktree also has no
-  `node_modules`; run `pnpm install` before any build or test there (lesson: data-migration-carries-history planning).
-- Reading what an earlier release did → there are no `zelavis@` git tags past alpha.9; find the release commit with
-  `git log -S'"version": "2.0.0-alpha.<n>"' -- packages/zelavis/package.json` and read its source with `git show <commit>:<path>`
-  (lesson: data-migration-carries-history planning).
-- Relying on an earlier engine's export → alpha.25 to alpha.42 `backups.exportTenant` reads at most 1,000,000 entries of the
-  whole shard's log, not of the Tenant's, and silently stops there; an export is complete only if checked against that engine's
-  own reads (lesson: data-migration-carries-history planning).
+- Reading an earlier Zelavis release → find its version commit with
+  `git log -S'"version": "2.0.0-alpha.<n>"' -- packages/zelavis/package.json` and read its source with `git show <commit>:<path>`.
 
 ## 10. Forbidden patterns
 

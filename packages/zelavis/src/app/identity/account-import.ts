@@ -20,7 +20,7 @@
 import { Effect } from "effect";
 import { integrationValue, present, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import type { Account } from "./domain/entities.js";
-import type { AccountService } from "./services/account-service.js";
+import { hasReservedAccountMetadata, type AccountService } from "./services/account-service.js";
 import type { CredentialService } from "./services/credential-service.js";
 import { PASSWORD_PROVIDER } from "./providers/password.js";
 import { legacyPasswordHash, type FirebaseHashConfig } from "./core/legacy-password.js";
@@ -123,6 +123,9 @@ export function importAccounts(
       seen.add(identifier);
       if (account.metadata !== undefined && (account.metadata === null || typeof account.metadata !== "object" || Array.isArray(account.metadata))) {
         problems.push({ row, reason: "metadata is not an object" }); continue;
+      }
+      if (account.metadata && hasReservedAccountMetadata(account.metadata)) {
+        problems.push({ row, reason: "metadata contains a reserved identity field" }); continue;
       }
       const held = email !== undefined ? yield* integrationValue(services.accounts.findByEmail(email)) : yield* integrationValue(services.accounts.findByUsername(username!));
       if (held !== null) { skipped.push({ row, identifier }); continue; }

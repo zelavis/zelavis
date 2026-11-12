@@ -4,7 +4,7 @@ import type {
   AuthAttemptRepository,
   AuthSecurityEventRepository,
 } from "../contracts/repositories.js";
-import type { AuthSecurityEvent } from "../domain/entities.js";
+import type { AuthenticationSecurityEvent, AuthSecurityEvent } from "../domain/entities.js";
 import { AuthRateLimitError, IdentityValidationError } from "../core/errors.js";
 
 const DEFAULT_MAX_ATTEMPTS = 5;
@@ -57,7 +57,7 @@ export class AuthSecurityService {
 
   private event(
     context: AuthAttemptContext,
-    input: Omit<AuthSecurityEvent, "id" | "provider" | "subjectHash" | "occurredAt">,
+    input: Omit<AuthenticationSecurityEvent, "id" | "provider" | "subjectHash" | "occurredAt">,
   ): Promise<void> {
     const self = this;
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {

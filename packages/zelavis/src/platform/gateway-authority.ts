@@ -45,6 +45,8 @@ export interface ZelavisGatewayAuthorityClaims {
   readonly tenantId: string;
   /** Permissions the caller actually holds for this Project. Never a wildcard. */
   readonly permissions: readonly string[];
+  /** Optional proof for a single conditional App account access edit. */
+  readonly accountAccessDigest?: string;
   /** Milliseconds since the epoch after which this envelope is refused. */
   readonly expiresAt: number;
   /** Single-use value so a captured envelope cannot be replayed inside its window. */
@@ -83,6 +85,7 @@ function canonicalClaims(claims: ZelavisGatewayAuthorityClaims): string {
     [...claims.permissions],
     claims.expiresAt,
     claims.nonce,
+    ...(claims.accountAccessDigest === undefined ? [] : [claims.accountAccessDigest]),
   ]);
 }
 
@@ -163,7 +166,7 @@ export function verifyGatewayAuthority(
   } catch {
     return undefined;
   }
-  if (!Array.isArray(decoded) || decoded.length !== 10) return undefined;
+  if (!Array.isArray(decoded) || (decoded.length !== 10 && decoded.length !== 11)) return undefined;
 
   const [
     projectId,
@@ -176,6 +179,7 @@ export function verifyGatewayAuthority(
     permissions,
     expiresAt,
     nonce,
+    accountAccessDigest,
   ] = decoded;
 
   if (
@@ -190,7 +194,8 @@ export function verifyGatewayAuthority(
     !Array.isArray(permissions) ||
     permissions.some((entry) => typeof entry !== "string") ||
     typeof expiresAt !== "number" ||
-    typeof nonce !== "string"
+    typeof nonce !== "string" ||
+    (decoded.length === 11 && (typeof accountAccessDigest !== "string" || !/^[a-f0-9]{64}$/u.test(accountAccessDigest)))
   ) {
     return undefined;
   }
@@ -222,6 +227,7 @@ export function verifyGatewayAuthority(
     permissions: permissions as readonly string[],
     expiresAt,
     nonce,
+    ...(accountAccessDigest === undefined ? {} : { accountAccessDigest }),
   };
 }));
   }

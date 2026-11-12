@@ -82,6 +82,7 @@ export function createBunSqliteSystemStore(options: {
   const compareAndDeleteStatement = database.query(`
     DELETE FROM zelavis_system_records
     WHERE namespace = ? AND record_key = ? AND updated_at = ?
+      AND (? = 0 OR value_json = ?)
   `);
 
   function toRecord(row: unknown): ZelavisSystemStoreRecord {
@@ -149,11 +150,13 @@ export function createBunSqliteSystemStore(options: {
       ).changes > 0;
       return changed ? { namespace, key, value, updatedAt } : undefined;
     },
-    compareAndDelete(namespace, key, expectedUpdatedAt) {
+    compareAndDelete(namespace, key, expectedUpdatedAt, expectedValue) {
       return compareAndDeleteStatement.run(
         namespace,
         key,
         expectedUpdatedAt,
+        expectedValue === undefined ? 0 : 1,
+        expectedValue === undefined ? null : JSON.stringify(expectedValue),
       ).changes > 0;
     },
     delete(namespace, key) {

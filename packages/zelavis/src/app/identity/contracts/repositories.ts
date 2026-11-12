@@ -1,3 +1,4 @@
+import type { RegistrationControl } from "../domain/registration.js";
 import type {
   Account,
   AuthAttemptState,
@@ -84,7 +85,13 @@ export interface IdentityAuthorizationFlowRepository {
   ): Promise<IdentityAuthorizationFlow | null>;
 }
 
+export interface IdentityRegistrationRepository {
+  read(): Promise<RegistrationControl | null>;
+  mutate(mutation: Mutation<RegistrationControl>): Promise<RegistrationControl | null>;
+}
+
 export interface IdentityRepositories {
+  registration: IdentityRegistrationRepository;
   accounts: AccountRepository;
   sessions: SessionRepository;
   credentials: CredentialRepository;

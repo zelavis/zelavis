@@ -47,6 +47,14 @@ const families = Object.keys(components).sort((left, right) => right.length - le
 const attempted = new Set<string>(); // At most the fixed component-family count; failed imports retry on reload.
 defineBrand("zv");
 
+window.addEventListener("message", event => {
+  if (window.parent === window || event.source !== window.parent || event.origin !== location.origin) return;
+  const message = event.data;
+  if (message?.zelavis === "service-page-theme" && (message.theme === "light" || message.theme === "dark")) {
+    document.documentElement.dataset.theme = message.theme;
+  }
+});
+
 function familyOf(element: Element): string | undefined {
   if (customElements.get(element.localName)) return;
   const name = element.localName.replace(/^(?:zv|fuzor)-/, "");

@@ -1,13 +1,19 @@
 import { bodyFlag, required, runTable, type CliTable } from "./command-table.js";
+import { decodeSetAccountAccessInput } from "../app/identity/domain/account-access.js";
 
 const usage =
-  "zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|import-accounts|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url URL] [--token TOKEN] [--json]   (service accounts: zelavis auth service-accounts …)";
+  "zelavis auth <providers|oauth-providers|registration-status|registration-settings|set-registration-settings|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|set-account-access|create-account|import-accounts|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url URL] [--token TOKEN] [--json]   (service accounts: zelavis auth service-accounts …)";
 
 const table: CliTable = {
   name: "auth",
   usage,
   valued: ["--data"],
   actions: {
+    "registration-status": { run: (input) => input.client.auth.registrationStatus() },
+    "registration-settings": { run: (input) => input.client.auth.admin.registrationSettings() },
+    "set-registration-settings": {
+      run: (input) => input.client.auth.admin.setRegistrationSettings(bodyFlag(input, "--data", "auth set-registration-settings")),
+    },
     providers: { run: (input) => input.client.auth.providers() },
     "oauth-providers": { run: (input) => input.client.auth.oauthProviders() },
     "sign-up": { run: (input) => input.client.auth.signUp(required(input, 0, "A provider") as string, bodyFlag(input, "--data", "auth sign-up") as { identifier: string }) },
@@ -20,7 +26,11 @@ const table: CliTable = {
     "recovery-providers": { run: (input) => input.client.auth.recoveryProviders() },
     recover: { run: (input) => input.client.auth.beginRecovery(required(input, 0, "A provider"), bodyFlag(input, "--data", "auth recover")) },
     "complete-recovery": { run: (input) => input.client.auth.completeRecovery(required(input, 0, "A provider"), bodyFlag(input, "--data", "auth complete-recovery")).then(() => ({ recovered: true })) },
-    accounts: { run: (input) => input.client.auth.admin.accounts() },
+    accounts: { run: (input) => input.client.auth.admin.accounts(input.positional[0]) },
+    "set-account-access": {
+      run: (input) => input.client.auth.admin.setAccountAccess(required(input, 0, "An account id"),
+        decodeSetAccountAccessInput(bodyFlag(input, "--data", "auth set-account-access"))),
+    },
     "create-account": { run: (input) => input.client.auth.admin.createAccount(bodyFlag(input, "--data", "auth create-account")) },
     "import-accounts": { run: (input) => input.client.auth.admin.importAccounts(bodyFlag(input, "--data", "auth import-accounts")) },
     "create-credentials": { run: (input) => input.client.auth.admin.createCredentials(bodyFlag(input, "--data", "auth create-credentials")) },

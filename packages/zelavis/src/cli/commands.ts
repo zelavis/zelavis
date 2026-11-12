@@ -161,7 +161,7 @@ Usage:
   zelavis debug <processes|updates|project <id>> [--url <url>] [--token <token>] [--json]
   zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
-  zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis auth <providers|oauth-providers|registration-status|registration-settings|set-registration-settings|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|set-account-access|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
   zelavis runtime <config|access|settings|update-settings> [--data JSON] [--url <url>] [--token <token>] [--json]
@@ -219,6 +219,9 @@ Commands:
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes;
+                            registration-settings and set-registration-settings manage a Project's signup;
+                            domains, add-domain, verify-domain and remove-domain manage its hostnames;
+                            set-account-access PROJECT ACCOUNT changes a Project account's authority;
                             tenants, create-tenant, delete-tenant and branch-tenant list, add, remove
                             and copy the Tenants of an App Project's database; export-tenant and restore-tenant
                             back up and restore one of them.

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, present, integrationValue, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Canonical Edge route publication store.
  *
@@ -41,6 +41,14 @@ const CURRENT_PUBLICATION_KEY = "current";
 
 export type ZelavisEdgeTlsMode = "managed" | "external" | "none";
 
+export interface ProjectHostnameOwner {
+  readonly host: string;
+  readonly projectId: string;
+  readonly domainId: string;
+}
+
+export const projectDomainRouteId = (domainId: string) => `project-domain:${domainId}`;
+
 /**
  * TLS and scope configuration for a hostname served through Zelavis Edge.
  *
@@ -57,6 +65,7 @@ export interface ZelavisEdgeHostname {
   tlsMode: ZelavisEdgeTlsMode;
   /** Opaque reference. Required when tlsMode is `"managed"`. */
   certificateRef?: string;
+  projectDomain?: { domainId: string; verifiedAt: string; routing: "blocked" | "active" };
   createdAt: string;
   updatedAt: string;
 }
@@ -157,6 +166,13 @@ export interface ZelavisEdgeRouteStore {
   // -- Hostname operations --------------------------------------------------
 
   putHostname(hostname: ZelavisEdgeHostname): Promise<ZelavisEdgeHostname>;
+  claimProjectHostname(owner: ProjectHostnameOwner, verifiedAt: string): Promise<boolean>;
+  stageProjectHostname(owner: ProjectHostnameOwner, tlsMode: "external" | "managed", certificateRef?: string): Promise<boolean>;
+  activateProjectHostname(owner: ProjectHostnameOwner): Promise<boolean>;
+  blockProjectHostname(owner: ProjectHostnameOwner): Promise<boolean>;
+  releaseProjectHostname(owner: ProjectHostnameOwner): Promise<boolean>;
+  putProjectDomainRoute(owner: ProjectHostnameOwner, route: ZelavisEdgeRoute): Promise<ZelavisEdgeRoute>;
+  deleteProjectDomainRoute(owner: ProjectHostnameOwner): Promise<boolean>;
   getHostname(host: string): Promise<ZelavisEdgeHostname | undefined>;
   deleteHostname(host: string): Promise<boolean>;
   listHostnames(
@@ -273,12 +289,20 @@ function validateHostname(hostname: ZelavisEdgeHostname): ZelavisEdgeHostname {
       "Hostname certificateRef must not exceed 512 characters.",
     );
   }
+  const proof = hostname.projectDomain;
+  if (proof !== undefined && (hostname.scope !== "project" || !isRecord(proof) ||
+      typeof proof.domainId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(proof.domainId) ||
+      typeof proof.verifiedAt !== "string" || !Number.isFinite(Date.parse(proof.verifiedAt)) ||
+      (proof.routing !== "blocked" && proof.routing !== "active"))) {
+    throw new ZelavisEdgeValidationError("Stored Project hostname proof is invalid.");
+  }
   return {
     host,
     scope: hostname.scope,
     ...(hostname.projectId ? { projectId: hostname.projectId.trim() } : {}),
     tlsMode: hostname.tlsMode,
     ...(certificateRef ? { certificateRef } : {}),
+    ...(proof ? { projectDomain: proof } : {}),
     createdAt: hostname.createdAt,
     updatedAt: hostname.updatedAt,
   };
@@ -593,48 +617,64 @@ export function createZelavisEdgeRouteStore(
 
   // -- Hostname operations --------------------------------------------------
 
-  function putHostname(
-    input: ZelavisEdgeHostname,
-  ): Promise<ZelavisEdgeHostname> {
-    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeHostname, IntegrationFailure> {
-    const validated = validateHostname(input);
-    const existing = (yield* integrationValue(store.get(HOSTNAMES_NAMESPACE, validated.host)));
-    if (existing) {
-      const updated: ZelavisEdgeHostname = {
-        ...validated,
-        createdAt: readHostname(existing.value).createdAt,
-        updatedAt: timestamp(),
-      };
+  function putHostname(input: ZelavisEdgeHostname): Promise<ZelavisEdgeHostname> {
+    return present(Effect.gen(function* () {
+      const validated = yield* evaluate(() => validateHostname(input));
+      if (validated.projectDomain) return yield* new IntegrationFailure(
+        new ZelavisEdgeValidationError("Project domain claims require DNS verification."));
       for (let attempt = 0; attempt < 5; attempt++) {
-        const record = (yield* integrationValue(store.get(HOSTNAMES_NAMESPACE, validated.host)));
-        if (!record) {
-          // Deleted concurrently — insert instead.
-          break;
+        const record = yield* integration(() => store.get(HOSTNAMES_NAMESPACE, validated.host));
+        const existing = record ? readHostname(record.value) : undefined;
+        if (existing && (existing.projectDomain || existing.scope !== validated.scope || existing.projectId !== validated.projectId)) {
+          return yield* new IntegrationFailure(new ZelavisEdgeValidationError("The hostname already belongs to another scope."));
         }
-        const written = (yield* integrationValue(store.compareAndSet(
-          HOSTNAMES_NAMESPACE,
-          validated.host,
-          record.updatedAt,
-          storeValue(updated),
-          record.value,
-        )));
-        if (written) return updated;
+        const updated = { ...validated, createdAt: existing?.createdAt ?? timestamp(), updatedAt: timestamp() };
+        if (record) {
+          if (yield* integration(() => store.compareAndSet(HOSTNAMES_NAMESPACE, validated.host, record.updatedAt, storeValue(updated), record.value))) return updated;
+        } else {
+          const result = yield* integration(() => store.setIfAbsent(HOSTNAMES_NAMESPACE, validated.host, storeValue(updated)));
+          if (result.created) return updated;
+        }
       }
-    }
-    const created: ZelavisEdgeHostname = {
-      ...validated,
-      createdAt: timestamp(),
-      updatedAt: timestamp(),
-    };
-    const result = (yield* integrationValue(store.setIfAbsent(
-      HOSTNAMES_NAMESPACE,
-      validated.host,
-      storeValue(created),
-    )));
-    if (result.created) return created;
-    // Lost the race — retry as an update.
-    return (yield* integrationValue(putHostname(input)));
-  }));
+      return yield* new IntegrationFailure(new ZelavisEdgeValidationError("The hostname changed during the update."));
+    }));
+  }
+
+  const ownsHostname = (row: ZelavisEdgeHostname, owner: ProjectHostnameOwner) =>
+    row.scope === "project" && row.projectId === owner.projectId && row.projectDomain?.domainId === owner.domainId;
+
+  function claimProjectHostname(owner: ProjectHostnameOwner, verifiedAt: string): Promise<boolean> {
+    return present(Effect.gen(function* () {
+      const row = yield* evaluate(() => validateHostname({
+        host: owner.host, scope: "project", projectId: owner.projectId, tlsMode: "none",
+        projectDomain: { domainId: owner.domainId, verifiedAt, routing: "blocked" },
+        createdAt: timestamp(), updatedAt: timestamp(),
+      }));
+      const result = yield* integration(() => store.setIfAbsent(HOSTNAMES_NAMESPACE, row.host, storeValue(row)));
+      return result.created || ownsHostname(readHostname(result.record.value), owner);
+    }));
+  }
+
+  function changeProjectHostname(owner: ProjectHostnameOwner,
+    update: (row: ZelavisEdgeHostname) => ZelavisEdgeHostname | undefined,
+  ): Promise<boolean> {
+    return present(Effect.gen(function* () {
+      const host = normalizeHostValue(owner.host);
+      const record = yield* integration(() => store.get(HOSTNAMES_NAMESPACE, host));
+      if (!record) return false;
+      const row = readHostname(record.value);
+      if (!ownsHostname(row, owner)) return false;
+      const next = update(row);
+      if (next === row) return true;
+      if (!next) return yield* integration(() => store.compareAndDelete(HOSTNAMES_NAMESPACE, host, record.updatedAt, record.value));
+      const checked = yield* evaluate(() => validateHostname({ ...next, updatedAt: timestamp() }));
+      return Boolean(yield* integration(() => store.compareAndSet(HOSTNAMES_NAMESPACE, host, record.updatedAt, storeValue(checked), record.value)));
+    }));
+  }
+
+  function setProjectHostnameRouting(owner: ProjectHostnameOwner, routing: "active" | "blocked"): Promise<boolean> {
+    return changeProjectHostname(owner, row => row.projectDomain!.routing === routing ? row :
+      { ...row, projectDomain: { ...row.projectDomain!, routing } });
   }
 
   function getHostname(
@@ -650,7 +690,11 @@ export function createZelavisEdgeRouteStore(
   function deleteHostname(host: string): Promise<boolean> {
     return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
     const normalized = normalizeHostValue(host);
-    return (yield* integrationValue(store.delete(HOSTNAMES_NAMESPACE, normalized)));
+    const record = yield* integration(() => store.get(HOSTNAMES_NAMESPACE, normalized));
+    if (!record) return false;
+    if (readHostname(record.value).projectDomain) return yield* new IntegrationFailure(
+      new ZelavisEdgeValidationError("Use the Project domain operation to withdraw this hostname."));
+    return yield* integration(() => store.compareAndDelete(HOSTNAMES_NAMESPACE, normalized, record.updatedAt, record.value));
   }));
   }
 
@@ -672,9 +716,16 @@ export function createZelavisEdgeRouteStore(
 
   // -- Route operations -----------------------------------------------------
 
-  function putRoute(input: ZelavisEdgeRoute): Promise<ZelavisEdgeRoute> {
+  function putRoute(input: ZelavisEdgeRoute, owner?: ProjectHostnameOwner): Promise<ZelavisEdgeRoute> {
     return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeRoute, IntegrationFailure> {
     const validated = validateRoute(input);
+    if (validated.id.startsWith("project-domain:")) {
+      const hostname = owner ? yield* integration(() => getHostname(owner.host)) : undefined;
+      if (!owner || !hostname || !ownsHostname(hostname, owner) || validated.id !== projectDomainRouteId(owner.domainId) ||
+          validated.scope !== "project" || validated.projectId !== owner.projectId || validated.hostname !== owner.host) {
+        return yield* new IntegrationFailure(new ZelavisEdgeValidationError("This route is owned by a verified Project domain."));
+      }
+    }
     const existing = (yield* integrationValue(store.get(ROUTES_NAMESPACE, validated.id)));
     if (existing) {
       const updated: ZelavisEdgeRoute = {
@@ -706,7 +757,7 @@ export function createZelavisEdgeRouteStore(
       storeValue(created),
     )));
     if (result.created) return created;
-    return (yield* integrationValue(putRoute(input)));
+    return (yield* integrationValue(putRoute(input, owner)));
   }));
   }
 
@@ -720,10 +771,19 @@ export function createZelavisEdgeRouteStore(
   }));
   }
 
-  function deleteRoute(id: string): Promise<boolean> {
+  function deleteRoute(id: string, owner?: ProjectHostnameOwner): Promise<boolean> {
     return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
     const normalized = normalizeRouteId(id);
-    return (yield* integrationValue(store.delete(ROUTES_NAMESPACE, normalized)));
+    if (!normalized.startsWith("project-domain:")) return yield* integration(() => store.delete(ROUTES_NAMESPACE, normalized));
+    if (!owner || normalized !== projectDomainRouteId(owner.domainId)) return yield* new IntegrationFailure(
+      new ZelavisEdgeValidationError("This route is owned by a verified Project domain."));
+    const record = yield* integration(() => store.get(ROUTES_NAMESPACE, normalized));
+    if (!record) return false;
+    const route = readRoute(record.value);
+    if (route.scope !== "project" || route.projectId !== owner.projectId || route.hostname !== owner.host) {
+      return yield* new IntegrationFailure(new ZelavisEdgeValidationError("The Project domain route has a different owner."));
+    }
+    return yield* integration(() => store.compareAndDelete(ROUTES_NAMESPACE, normalized, record.updatedAt, record.value));
   }));
   }
 
@@ -767,7 +827,7 @@ export function createZelavisEdgeRouteStore(
     const routeRecords = (yield* integrationValue(store.list(ROUTES_NAMESPACE)));
     for (const record of routeRecords) {
       const route = readRoute(record.value);
-      if (route.projectId === normalizedProjectId) {
+      if (route.projectId === normalizedProjectId && !route.id.startsWith("project-domain:")) {
         if ((yield* integrationValue(store.delete(ROUTES_NAMESPACE, route.id)))) {
           deleted += 1;
         }
@@ -777,8 +837,8 @@ export function createZelavisEdgeRouteStore(
     const hostnameRecords = (yield* integrationValue(store.list(HOSTNAMES_NAMESPACE)));
     for (const record of hostnameRecords) {
       const hostname = readHostname(record.value);
-      if (hostname.projectId === normalizedProjectId) {
-        if ((yield* integrationValue(store.delete(HOSTNAMES_NAMESPACE, hostname.host)))) {
+      if (hostname.projectId === normalizedProjectId && !hostname.projectDomain) {
+        if (yield* integration(() => store.compareAndDelete(HOSTNAMES_NAMESPACE, hostname.host, record.updatedAt, record.value))) {
           deleted += 1;
         }
       }
@@ -791,23 +851,23 @@ export function createZelavisEdgeRouteStore(
 
   function compile(): Promise<ZelavisEdgeCompiledPublication> {
     return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeCompiledPublication, IntegrationFailure> {
-    const hostnames = ((yield* integrationValue(listHostnames()))) as ZelavisEdgeHostname[];
-    const routes = ((yield* integrationValue(listRoutes()))) as ZelavisEdgeRoute[];
-    const requiredCapabilities = deriveEdgeCapabilities(routes, hostnames);
-    const certificateRefs = [
-      ...new Set(
-        hostnames
-          .map((h) => h.certificateRef)
-          .filter((ref): ref is string => typeof ref === "string"),
-      ),
-    ].sort();
-
-    // Advance the revision counter atomically.
+    // Read desired state again after a competing compiler advances the pointer.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const pointerRecord = (yield* integrationValue(store.get(
-        PUBLICATIONS_NAMESPACE,
-        CURRENT_PUBLICATION_KEY,
-      )));
+      const pointerRecord = yield* integration(() => store.get(PUBLICATIONS_NAMESPACE, CURRENT_PUBLICATION_KEY));
+      const inventory = yield* integration(() => listHostnames());
+      const claims = new Map(inventory.filter(row => row.projectDomain).map(row => [row.host, row]));
+      const routes = (yield* integration(() => listRoutes())).filter(route => {
+        const claim = claims.get(route.hostname);
+        if (!claim) return !route.id.startsWith("project-domain:");
+        // The external terminator owns publication. Keep its local target in
+        // the inventory without programming a second public router.
+        if (claim.tlsMode === "external") return false;
+        return route.id === projectDomainRouteId(claim.projectDomain!.domainId) && route.projectId === claim.projectId;
+      });
+      const routedHosts = new Set(routes.map(route => route.hostname));
+      const hostnames = inventory.filter(row => !row.projectDomain || routedHosts.has(row.host));
+      const requiredCapabilities = deriveEdgeCapabilities(routes, hostnames);
+      const certificateRefs = [...new Set(hostnames.flatMap(row => row.certificateRef ? [row.certificateRef] : []))].sort();
 
       const currentRevision = pointerRecord
         ? readCurrentPointer(pointerRecord.value).revision
@@ -892,6 +952,18 @@ export function createZelavisEdgeRouteStore(
 
   return {
     putHostname,
+    claimProjectHostname,
+    stageProjectHostname: (owner, tlsMode, certificateRef) => changeProjectHostname(owner, row => ({
+      ...row, tlsMode, ...(certificateRef ? { certificateRef } : {}),
+    })),
+    activateProjectHostname: owner => setProjectHostnameRouting(owner, "active"),
+    blockProjectHostname: owner => setProjectHostnameRouting(owner, "blocked"),
+    releaseProjectHostname: owner => changeProjectHostname(owner, row => {
+      if (row.projectDomain!.routing !== "blocked") throw new ZelavisEdgeValidationError("Block the hostname before releasing it.");
+      return undefined;
+    }),
+    putProjectDomainRoute: (owner, route) => putRoute(route, owner),
+    deleteProjectDomainRoute: owner => deleteRoute(projectDomainRouteId(owner.domainId), owner),
     getHostname,
     deleteHostname,
     listHostnames,

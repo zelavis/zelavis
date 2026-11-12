@@ -95,14 +95,14 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
     { id: "site-frontend", kind: "frontend", runtime: { status: "running", url: frontend.url } },
   ];
 
-  let signed = 0;
+  const signed = [];
   const routes = createProjectGatewayRoutes({
     projects: {
       get: async () => project,
       view: async () => project,
       listOwned: async () => owned,
-      signGatewayAuthority: async () => {
-        signed += 1;
+      signGatewayAuthority: async (projectId, authority) => {
+        signed.push({ projectId, permissions: authority.permissions });
         return "signed-envelope";
       },
     },
@@ -119,7 +119,7 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
     projectErrorResponse: (error) => ({ status: 500, body: { error: String(error) } }),
   });
 
-  const get = routes.find((route) => route.method === "GET");
+  const get = routes.find((route) => route.id === "runtime.projects.proxy.get");
   const call = (path) =>
     get.handler({
       params: { projectId: "site", path },
@@ -138,7 +138,7 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
       undefined,
       "a frontend is third-party code and must never receive Platform authority",
     );
-    assert.equal(signed, 0, "no envelope should even be signed for a frontend");
+    assert.equal(signed.length, 0, "no envelope should even be signed for a frontend");
 
     const controlResponse = await call("zelavis/api/v1/runtime/config");
     const controlBody = JSON.parse(new TextDecoder().decode(controlResponse.body));
@@ -152,7 +152,19 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
       "signed-envelope",
       "the runtime still receives its authority envelope",
     );
-    assert.equal(signed, 1);
+    assert.equal(signed.length, 1);
+
+    const registrationSettings = routes.find((route) => route.id === "runtime.projects.auth.registration.settings.get");
+    const settingsResponse = await registrationSettings.handler({
+      params: { projectId: "site", path: "about" },
+      query: new URLSearchParams({ target: "other-site" }),
+      request: new Request("http://localhost/runtime/projects/site/auth/registration/settings"),
+      principal: { id: "owner", type: "user", permissions: ["*"] },
+    });
+    const settingsBody = JSON.parse(new TextDecoder().decode(settingsResponse.body));
+    assert.equal(settingsBody.path, "/zelavis/api/v1/auth/registration/settings");
+    assert.equal(settingsBody.headers["x-zelavis-authority"], "signed-envelope");
+    assert.deepEqual(signed[1], { projectId: "site", permissions: ["project.settings.manage"] });
   } finally {
     frontend.server.close();
     runtime.server.close();

@@ -271,6 +271,16 @@ export function compileTraefikPublication(
         ...(routeMiddlewares.length > 0 ? { middlewares: routeMiddlewares } : {}),
       };
 
+      // Project-managed ACME renewal must reach the host-matched challenge before redirection.
+      if (hostnameConfig?.projectDomain && hostnameConfig.tlsMode === "managed") {
+        routers[`router_${route.scope}_${safeId}_acme`] = {
+          entryPoints: [httpEntryPoint],
+          rule: `${rule} && (PathPrefix(\`/.well-known/acme-challenge/\`) || Path(\`/.well-known/zelavis-project-domain\`))`,
+          service: serviceName,
+          priority: Math.max(1, priority + 1),
+        };
+      }
+
       // HTTP redirect router
       if (redirectHttpToHttps) {
         needsRedirectMiddleware = true;

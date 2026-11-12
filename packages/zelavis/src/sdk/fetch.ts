@@ -1,3 +1,8 @@
+import type { AddProjectDomainInput, ProjectDomain, ProjectDomainList, RemoveProjectDomainResult, VerifyProjectDomainInput } from "../edge/project-domains.js";
+import type { RegistrationSettings, RegistrationStatus, SetRegistrationSettingsInput } from "../app/identity/domain/registration.js";
+export type { RegistrationSettings, RegistrationStatus, SetRegistrationSettingsInput } from "../app/identity/domain/registration.js";
+import type { AccountAccessResult, SetAccountAccessInput } from "../app/identity/domain/account-access.js";
+export type { AccountAccessResult, SetAccountAccessInput, ConcreteAccountGrant, HumanAccountRole } from "../app/identity/domain/account-access.js";
 import type { AccountImportInput, AccountImportResult } from "../app/identity/account-import.js";
 import {
   createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient, createWriterLeasesClient,
@@ -292,6 +297,10 @@ export interface ZelavisAuthAccount {
   readonly updatedAt: string;
 }
 
+export interface ZelavisAdministrativeAuthAccount extends ZelavisAuthAccount {
+  readonly accessRevision: number;
+}
+
 export interface ZelavisAuthSession {
   readonly id: string;
   readonly accountId: string;
@@ -339,6 +348,7 @@ export interface ZelavisServiceAccountCreateInput {
 }
 
 export interface ZelavisAuthClient {
+  registrationStatus(): Promise<RegistrationStatus>;
   providers(): Promise<readonly string[]>;
   oauthProviders(): Promise<readonly string[]>;
   signUp(provider: string, input: { identifier: string; password?: string; displayName?: string; [key: string]: unknown }): Promise<ZelavisAuthSessionResult>;
@@ -361,8 +371,11 @@ export interface ZelavisAuthClient {
   bootstrapStatus(): Promise<Awaited<ReturnType<IdentityBootstrapCapability["status"]>> & { readonly available: boolean; readonly tokenRequired: boolean }>;
   bootstrap(input: Parameters<IdentityBootstrapCapability["bootstrap"]>[0]): Promise<{ readonly account: Awaited<ReturnType<IdentityBootstrapCapability["bootstrap"]>>["account"]; readonly session: { readonly token: string; readonly session: ZelavisAuthSession } }>;
   readonly admin: {
-    accounts(): Promise<ZelavisIdentityResult<"accounts", "list">>;
-    createAccount(input: Parameters<IdentityApi["accounts"]["create"]>[0]): Promise<ZelavisIdentityResult<"accounts", "create">>;
+    registrationSettings(): Promise<RegistrationSettings>;
+    setRegistrationSettings(input: SetRegistrationSettingsInput): Promise<RegistrationSettings>;
+    accounts(accountId?: string): Promise<readonly ZelavisAdministrativeAuthAccount[]>;
+    setAccountAccess(accountId: string, input: SetAccountAccessInput): Promise<AccountAccessResult>;
+    createAccount(input: Parameters<IdentityApi["accounts"]["create"]>[0]): Promise<ZelavisAdministrativeAuthAccount>;
     /** Import accounts from another system; see `AccountImportInput`. Same contract as `zelavis auth import-accounts`. */
     importAccounts(input: AccountImportInput): Promise<AccountImportResult>;
     /** Credentials for an account: `{ accountId, provider, … }`, as the provider defines them. */
@@ -1546,6 +1559,13 @@ export interface ZelavisProjectSetupReveal {
 }
 
 export interface ZelavisProjectsClient {
+  domains(projectId: string): Promise<ProjectDomainList>;
+  addDomain(projectId: string, input: AddProjectDomainInput): Promise<ProjectDomain>;
+  verifyDomain(projectId: string, hostname: string, input: VerifyProjectDomainInput): Promise<ProjectDomain>;
+  removeDomain(projectId: string, hostname: string, expectedRevision: number): Promise<RemoveProjectDomainResult>;
+  registrationSettings(projectId: string): Promise<RegistrationSettings>;
+  setRegistrationSettings(projectId: string, input: SetRegistrationSettingsInput): Promise<RegistrationSettings>;
+  setAccountAccess(projectId: string, accountId: string, input: SetAccountAccessInput): Promise<AccountAccessResult>;
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
   /** What a person needs to finish the application's own setup; a secret carries no value. Needs `project.view`. */
   setup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
@@ -2210,6 +2230,7 @@ export function createZelavisClient(
     services: createServicesClient(json),
     workloads: (projectId) => createWorkloadsClient(json, projectId),
     auth: {
+      registrationStatus: () => json<RegistrationStatus>("/auth/registration"),
       providers: () => json<readonly string[]>("/auth/providers"),
       oauthProviders: () => json<readonly string[]>("/auth/oauth/providers"),
       signUp: (provider, input) =>
@@ -2258,7 +2279,13 @@ export function createZelavisClient(
       bootstrapStatus: () => json("/auth/bootstrap"),
       bootstrap: (input) => json("/auth/bootstrap", { method: "POST", body: input }),
       admin: {
-        accounts: () => json("/auth/accounts"),
+        registrationSettings: () => json<RegistrationSettings>("/auth/registration/settings"),
+        setRegistrationSettings: (input) => json<RegistrationSettings>("/auth/registration/settings", { method: "PUT", body: input }),
+        accounts: (accountId) => json(accountId === undefined ? "/auth/accounts"
+          : `/auth/accounts?${new URLSearchParams({ accountId })}`),
+        setAccountAccess: (accountId, input) => json<AccountAccessResult>(
+          `/auth/accounts/${dataName(accountId, "account id")}/access`, { method: "PUT", body: input },
+        ),
         createAccount: (input) => json("/auth/accounts", { method: "POST", body: input }),
         importAccounts: (input) => json("/auth/accounts/import", { method: "POST", body: input }),
         createCredentials: (input) => json("/auth/credentials", { method: "POST", body: input }),
@@ -2991,6 +3018,20 @@ function createProjectsClient(
     return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId, action), { method: "POST" })))).project;
   }));
   return {
+    domains: projectId => json<ProjectDomainList>(projectPath(projectId, "domains")),
+    addDomain: (projectId, input) => json<ProjectDomain>(projectPath(projectId, "domains"), { method: "POST", body: input }),
+    verifyDomain: (projectId, hostname, input) => json<ProjectDomain>(
+      projectPath(projectId, `domains/${encodeURIComponent(hostname)}/verify`), { method: "POST", body: input }),
+    removeDomain: (projectId, hostname, expectedRevision) => json<RemoveProjectDomainResult>(
+      projectPath(projectId, `domains/${encodeURIComponent(hostname)}?revision=${expectedRevision}`), { method: "DELETE" }),
+    registrationSettings: (projectId) => json<RegistrationSettings>(projectPath(projectId, "auth/registration/settings")),
+    setRegistrationSettings: (projectId, input) => json<RegistrationSettings>(
+      projectPath(projectId, "auth/registration/settings"), { method: "PUT", body: input },
+    ),
+    setAccountAccess: (projectId, accountId, input) => json<AccountAccessResult>(
+      projectPath(projectId, `auth/accounts/${dataName(accountId, "account id")}/access`),
+      { method: "PUT", body: input },
+    ),
     versions: projectId => json<ZelavisProjectVersions>(projectId === undefined ? "/runtime/project-versions" : projectPath(projectId, "versions")),
     setup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup")).then(result => result.values),
     revealSetup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup/reveal"), { method: "POST" }).then(result => result.values),

@@ -39,6 +39,10 @@ The private `zelavis-ui-legacy` package is reference material only.
 - The dashboard consumes public capabilities; authorization, lifecycle and
   persistence belong to the runtime. Public changes need JS SDK, HTTP and CLI
   parity. Use a real Project ID and its exact Gateway proxy for Project data.
+- Read caller authority from authenticated `runtime/access`. Public
+  `runtime/config` carries runtime configuration. Keep browser and server-view
+  navigation on the same caller's grants, and clear cached navigation when the
+  caller changes.
 - Trust is runtime `scope`. Only `system` services may choose privileged menu
   surfaces. A folder-discovered, installed or unscoped service is an extension.
   Config and registry listing must agree about scope.

@@ -1,4 +1,5 @@
 import { dashboardSection } from "../app/routes.ts";
+import { isPublicAuthPath } from "../app/dashboard-routes.ts";
 import { clearDraftJournals } from "../app/grids/drafts.ts";
 import { Effect, Fiber } from "effect";
 import { getRouter, mountIslands } from "fuzor/runtime";
@@ -7,10 +8,10 @@ import { ApiError, bootstrap, loadConfig, object, request, type Config, type Pro
 import { button, link, message, node } from "../app/dom.ts";
 import { createSidebar } from "../app/sidebar.ts";
 import { loadScreen, type ScreenContext } from "../app/screens.ts";
-import { mounted, ROOT, unmounted } from "../app/mount.ts";
+import { mounted, unmounted } from "../app/mount.ts";
 import { startUpdateWatch } from "../app/update-watch.ts";
 import { mountUpdateBanner } from "../app/update-views.ts";
-import { loadPlatformMenu, loadProjectMenu } from "../app/navigation-menu.ts";
+import { canAccess, loadPlatformMenu, loadProjectMenu } from "../app/navigation-menu.ts";
 
 export function mount(host: HTMLElement) {
   registerButton();
@@ -29,6 +30,7 @@ export function mount(host: HTMLElement) {
   let config: Config | undefined;
   let mutating = false;
   let generation = 0;
+  let workspacePath: string | undefined;
   const projectCache = new Map<string, { project: Project; runtime?: Config; menu?: unknown }>();
   // The document owns the frame; startup attaches behavior without replacing its DOM.
   const required = <T extends HTMLElement>(selector: string): T => {
@@ -65,12 +67,17 @@ export function mount(host: HTMLElement) {
     content.inert = false; sidebar.inert = false; footer.inert = false;
     toggleButton.disabled = false; signOutButton.disabled = false; refresh.removeAttribute("disabled");
   };
-  // Login/setup are presentations over the existing authority, with no dashboard navigation.
-  const initialPath = unmounted(new URL(router.url()).pathname);
-  host.classList.toggle("auth-layout", initialPath === "/login" || initialPath === "/setup");
-  sidebarController.setAuth(initialPath === "/login" || initialPath === "/setup");
+  const initialAuth = isPublicAuthPath(unmounted(new URL(router.url()).pathname));
+  host.classList.toggle("auth-layout", initialAuth);
+  sidebarController.setAuth(initialAuth);
 
   const menuSnapshots = new Map<string, string>();
+  function receiveConfig(latest: Config) {
+    if (JSON.stringify(config?.access) !== JSON.stringify(latest.access)) {
+      sidebarController.clearNavigation(); menuSnapshots.clear(); projectCache.clear();
+    }
+    config = latest;
+  }
   /** The sidebar's menus come from what the Platform reports; they load beside the page and replace the basic ones. */
   function loadMenu(projectId: string | undefined, project?: Project, runtime?: Config) {
     const control = config;
@@ -81,7 +88,7 @@ export function mount(host: HTMLElement) {
     if (!work) return;
     const requested = new URL(router!.url()).pathname;
     fork(work.pipe(Effect.tap(items => Effect.sync(() => {
-      if (disposed || new URL(router!.url()).pathname !== requested) return;
+      if (disposed || new URL(router!.url()).pathname !== requested || JSON.stringify(config?.access) !== JSON.stringify(control.access)) return;
       // Rebuilding the sidebar under someone's fingers loses their keypress, so an unchanged menu is left alone.
       const serialized = JSON.stringify(items);
       host.dataset.menuReady = projectId ?? "platform";
@@ -123,10 +130,13 @@ export function mount(host: HTMLElement) {
       if (project) projectCache.set(projectId, { project, runtime: runtime ?? cached?.runtime, menu: menu ?? cached?.menu });
       project = project ?? cached?.project; runtime = runtime ?? cached?.runtime; menu = menu ?? cached?.menu;
     }
-    const auth = path === "/login" || path === "/setup";
+    const auth = isPublicAuthPath(path);
     host.classList.toggle("auth-layout", auth);
     sidebarController.setAuth(auth);
-    if (auth) return;
+    if (auth) {
+      sidebarController.clearNavigation(); menuSnapshots.clear(); projectCache.clear();
+      return;
+    }
     sidebarController.sync(path, projectId, project, runtime ?? (projectId ? undefined : config), menu);
     const matched = router!.matches().at(-1)?.handle as { pageLabel?: string } | undefined;
     title.textContent = matched?.pageLabel ?? "Workspace";
@@ -143,6 +153,12 @@ export function mount(host: HTMLElement) {
     if (pageFiber) Effect.runFork(Fiber.interrupt(pageFiber));
     const url = new URL(router!.url());
     const path = unmounted(url.pathname);
+    if (workspacePath !== path) {
+      workspacePath = path;
+      content.scrollTo({ top: 0, left: 0 });
+    }
+    const publicAuth = isPublicAuthPath(path);
+    if (publicAuth) { stopUpdates?.(); stopUpdates = undefined; }
     const params = router!.params();
     const projectId = params.projectId;
     const section = dashboardSection(path, params);
@@ -155,6 +171,7 @@ export function mount(host: HTMLElement) {
       const raw = outlet.querySelector<HTMLElement>("[data-project-context]")?.dataset.projectContext;
       if (raw) {
         const loaded = JSON.parse(raw);
+        if (config) receiveConfig({ ...config, access: loaded.access });
         sidebarController.setProjects(loaded.projects);
         navigation(path, projectId, loaded.project, loaded.runtime, loaded.menu);
         loadMenu(projectId, loaded.project, loaded.runtime);
@@ -173,13 +190,16 @@ export function mount(host: HTMLElement) {
     pageFiber = fork(Effect.gen(function*() {
       const status = yield* bootstrap(context.config);
       if (status.required && path !== "/setup") { navigate("/setup"); return; }
-      if (!status.required && path !== "/login" && path !== "/setup") yield* request(`${context.config.api.basePath}/runtime/access`);
-      const latest = yield* loadConfig;
+      const access = !status.required && !publicAuth ? yield* request(`${context.config.api.basePath}/runtime/access`) : undefined;
+      const latest = { ...yield* loadConfig, access };
       if (disposed || version !== generation) return;
-      config = latest; context.config = latest;
+      receiveConfig(latest); context.config = latest;
       shellReady();
-      if (!projectId && path !== "/login" && path !== "/setup" && path !== "/logout") loadMenu(undefined);
-      if (path !== "/login" && path !== "/setup") stopUpdates = startUpdateWatch(latest.api.basePath);
+      if (!projectId && !publicAuth && path !== "/logout") loadMenu(undefined);
+      const seesUpdates = !publicAuth && canAccess(latest.access, { permissions: ["system.updates.view"], scope: { type: "system" } });
+      updateBanner.hidden = !seesUpdates;
+      if (seesUpdates) stopUpdates = startUpdateWatch(latest.api.basePath);
+      else { stopUpdates?.(); stopUpdates = undefined; }
       navigation(path, projectId);
       const screen = router!.route()?.kind === "not-found"
         ? node("section", { class: "panel" }, node("h1", {}, "Page not found"), node("p", {}, "This address does not match a dashboard route."), link("Projects", "/"))
@@ -191,7 +211,7 @@ export function mount(host: HTMLElement) {
       }
     }).pipe(Effect.scoped, Effect.catch(error => Effect.sync(() => {
       if (disposed || version !== generation) return;
-      if (error.status === 401 && path !== "/login") { navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`); return; }
+      if (error.status === 401 && !publicAuth) { navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`); return; }
       legacyContent.replaceChildren(message(error.message, true), button("Retry", reload));
     }))));
   }
@@ -213,10 +233,21 @@ export function mount(host: HTMLElement) {
   const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && new URL(router!.url()).searchParams.has("sidebarUtility")) sidebarController.closeUtility();
     else if (event.key === "Escape" && matchMedia("(max-width: 1023px)").matches) sidebarController.showMenu(); };
   host.addEventListener("keydown", escape);
-  fork(loadConfig.pipe(Effect.flatMap(value => bootstrap(value).pipe(Effect.map(status => ({ value, status })))), Effect.tap(({ value, status }) => Effect.sync(() => {
+  fork(Effect.gen(function* () {
+    const value = yield* loadConfig;
     config = value;
-    if (status.required && new URL(router.url()).pathname !== `${ROOT}/setup`) navigate("/setup"); else reload();
-  })), Effect.catch(error => Effect.sync(() => legacyContent.replaceChildren(message(error.message, true))))));
+    const status = yield* bootstrap(value);
+    const path = unmounted(new URL(router.url()).pathname);
+    if (status.required && path !== "/setup") { navigate("/setup"); return; }
+    const access = !status.required && !isPublicAuthPath(path) ? yield* request(`${value.api.basePath}/runtime/access`) : undefined;
+    receiveConfig({ ...value, access });
+    reload();
+  }).pipe(Effect.catch(error => Effect.sync(() => {
+    const url = new URL(router.url());
+    const path = unmounted(url.pathname);
+    if (error.status === 401 && !isPublicAuthPath(path)) navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`);
+    else legacyContent.replaceChildren(message(error.message, true));
+  }))));
   return () => {
     disposed = true; themeMedia.removeEventListener("change", applyTheme); window.removeEventListener("storage", applyTheme);
     outlet.removeEventListener("zelavis:database-drawn", workspaceDrawn);

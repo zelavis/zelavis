@@ -184,6 +184,10 @@ export interface ZelavisServerRoute<TService = unknown> {
   host?: ZelavisRouteHostMatcher;
   access?: ZelavisAccessRequirement | readonly ZelavisAccessRequirement[];
   meta?: Record<string, unknown>;
+  /** Maximum request bytes after access checks, before body parsing. */
+  maxRequestBodyBytes?: number;
+  /** Machine-readable code for invalid JSON before the handler is reached. */
+  invalidJsonBodyCode?: string;
   /** Typed schema metadata for OpenAPI generation and SDK codegen. */
   spec?: ZelavisRouteSpec;
   handler: (

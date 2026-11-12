@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import type { ApiError, Config, Project } from "./api.ts";
 import { empty } from "./dom.ts";
 import { assistantScreen } from "./assistant-pages.ts";
-import { loginScreen, logoutScreen, setupScreen } from "./auth-pages.ts";
+import { loginScreen, logoutScreen, setupScreen, signUpScreen } from "./auth-pages.ts";
 import { fabricScreen } from "./fabric-pages.ts";
 import { hostScreens } from "./host-pages.ts";
 import { marketplaceScreen as platformMarketplace } from "./marketplace-pages.ts";
@@ -29,6 +29,7 @@ export interface ScreenContext {
 export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: ScreenContext) {
   if (context.path === "/assistant") return yield* assistantScreen(context);
   if (context.path === "/login") return yield* loginScreen(context);
+  if (context.path === "/sign-up") return yield* signUpScreen(context);
   if (context.path === "/setup") return yield* setupScreen(context);
   if (context.path === "/logout") return yield* logoutScreen(context);
   if (context.path === "/server/logs") return yield* logsScreen(context);

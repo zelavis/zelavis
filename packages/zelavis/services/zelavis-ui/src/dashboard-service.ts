@@ -2,6 +2,7 @@ import { serverNavigationMenu } from "./server-navigation.ts";
 import { Effect } from "effect";
 import { zelavis } from "zelavis/sdk";
 import type { ZelavisPlatformFrontendContext } from "zelavis";
+import { isPublicAuthPath } from "./auth-routes.ts";
 import { mountOf, requestIntoBuild, responseOutOfBuild } from "./mount-rewrite.ts";
 
 export function register(context: Partial<ZelavisPlatformFrontendContext> = {}) {
@@ -25,6 +26,7 @@ export function register(context: Partial<ZelavisPlatformFrontendContext> = {}) 
     if (!entering) return { status: 404, headers: { "content-type": "text/plain; charset=utf-8" }, body: "Not found" };
     // The incoming request owns the response stream, beyond this handler Promise.
     const response = responseOutOfBuild(yield* Effect.tryPromise({ try: () => handler!(entering), catch: cause => cause }), mount);
+    if (isPublicAuthPath(new URL(request.url).pathname.slice(mount.length))) response.headers.set("cache-control", "no-store");
     return { status: response.status, headers: Object.fromEntries(response.headers), body: response.body ?? undefined };
   }).pipe(Effect.timeout("30 seconds"), Effect.catchCause(cause => Effect.gen(function*() {
     yield* Effect.logError("Fuzor dashboard delivery failed", cause);

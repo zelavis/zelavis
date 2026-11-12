@@ -8,6 +8,7 @@ import type { DashboardHandle } from "./routes.ts";
 
 import { activeItemIndex, canonicalPath, createMenuStore, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 import { mounted, unmounted } from "./mount.ts";
+import { canAccess, platformMenu, projectMenu } from "./navigation-menu.ts";
 
 /**
  * A label wider than its row ends in an ellipsis. Where a pointer hovers (or the keyboard focuses) the row, and motion is
@@ -82,10 +83,18 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     host.classList.toggle("utility-open", utilityVisible);
     const flat = !media.matches;
     const basePanels = panelsFor(projectId, project, runtime, menu, projectList, flat);
+    const control = options.config();
+    const projectListPanel = basePanels.find(panel => panel.id === "projects")!;
+    if (!canAccess(control?.access, { permissions: ["projects.create"] })) {
+      projectListPanel.items = projectListPanel.items.filter(item => item.path !== "/projects?new=1");
+    }
+    const platformItems = menus.get(undefined) ?? (control ? platformMenu(control, []) : []);
+    const platformPanels = workspacePanels(basePanels, platformItems);
     // The desktop shell has no Projects slide, so a trail or a link that still names it goes to what it led to.
     const withoutProjects = (ids: readonly string[]) => flat ? ids.filter(id => id !== "projects") : ids;
-    const reported = menus.get(projectId);
-    const panels = reported !== undefined ? workspacePanels(basePanels, reported, projectId) : basePanels;
+    const reported = menus.get(projectId) ?? (control && project && runtime
+      ? projectMenu({ control, project, runtime, content: [], tables: [], workloads: {} }) : []);
+    const panels = projectId ? workspacePanels(platformPanels, reported, projectId) : platformPanels;
     const matches = router.matches();
     const handle = matches.at(-1)?.handle as DashboardHandle | undefined;
     const url = new URL(router.url());
@@ -159,5 +168,5 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   swiper.addEventListener("swiperslidechange", changed);
   const resized = () => { if (auth) { if (content.parentNode !== main) main.append(content); return; } sync(snapshot.path, snapshot.projectId, snapshot.project, snapshot.runtime, snapshot.menu); };
   media.addEventListener("change", resized); reduced.addEventListener("change", resized);
-  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { menus.set(projectId, items); resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth) { if (content.parentNode !== main) main.append(content); mobileSlide.remove(); host.dataset.shellAdopted = "true"; } }, dispose() { mobileBack.removeEventListener("click", openMenu); utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
+  return { sync, showMenu, clearNavigation() { menus.clear(); projectList = []; }, setWorkspaceNavigation(items: unknown, projectId?: string) { menus.set(projectId, items); resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth) { if (content.parentNode !== main) main.append(content); mobileSlide.remove(); host.dataset.shellAdopted = "true"; } }, dispose() { mobileBack.removeEventListener("click", openMenu); utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
 }

@@ -1,17 +1,12 @@
 import { Effect } from "effect";
-import { array, bootstrap, label, object, request } from "./api.ts";
-import { button, message, node } from "./dom.ts";
-import { stripMount } from "./mount.ts";
+import { array, bootstrap, label, object, registrationStatus, request } from "./api.ts";
+import { button, link, message, node } from "./dom.ts";
+import { resolveReturnTo } from "./mount.ts";
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
+import { authFormError } from "./auth-form.ts";
 
-/** Sign in, sign out and first-run setup. Setup is the one-time claim of the first owner, then the Edge step. */
-
-/** A `returnTo` from the URL is untrusted: only same-site absolute paths are accepted, so sign-in is never an open redirect. */
-export function resolveReturnTo(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
-  return stripMount(value) || "/";
-}
+/** Public account pages. Setup claims the first owner and then offers Edge configuration. */
 
 const IN_PROGRESS = "zelavis.setup.in-progress";
 /** Marks this tab as mid-wizard after the owner exists, so the wizard stays open for the Edge step. */
@@ -23,8 +18,19 @@ const field = (id: string, title: string, attrs: Record<string, string> = {}) =>
   return { input, element: node("label", { for: id }, node("span", {}, title), input) };
 };
 
+const CLOSED_LOGIN = "/login?registration=closed";
+const offersPasswordSignup = (status: { enabled: boolean; providers: readonly string[] }) =>
+  status.enabled && status.providers.includes("password");
+
+const authCard = (title: string, ...children: (Node | undefined)[]) =>
+  node("section", { class: "auth-card" }, node("div", { class: "brand" }, "◈ Zelavis"), node("h1", {}, title), ...children);
+
 export const loginScreen = Effect.fn("ui.loginScreen")(function*(context: ScreenContext) {
-  const status = yield* bootstrap(context.config);
+  const [status, registration] = yield* Effect.all([
+    bootstrap(context.config),
+    registrationStatus(context.config).pipe(Effect.result),
+  ], { concurrency: 2 });
+  const canSignUp = registration._tag === "Success" && offersPasswordSignup(registration.success);
   const providers = status.providers;
   // `password` is built into Zelavis and covers both identifier kinds; an installation that replaced it falls through to whatever it offers.
   const provider = providers.includes("password") ? "password" : providers[0];
@@ -38,9 +44,67 @@ export const loginScreen = Effect.fn("ui.loginScreen")(function*(context: Screen
     event.preventDefault();
     if (!provider || submit.hasAttribute("disabled")) return;
     submit.setAttribute("disabled", "");
-    context.run(request(`${context.config.api.basePath}/auth/authenticate/${encodeURIComponent(provider)}`, "POST", { identifier: identifier.input.value, password: password.input.value }).pipe(Effect.ensuring(Effect.sync(() => submit.removeAttribute("disabled")))), () => context.navigate(resolveReturnTo(context.url.searchParams.get("returnTo"))));
+    context.run(request(`${context.config.api.basePath}/auth/authenticate/${encodeURIComponent(provider)}`, "POST", { identifier: identifier.input.value, password: password.input.value }).pipe(Effect.ensuring(Effect.sync(() => submit.removeAttribute("disabled")))), () => context.navigate(resolveReturnTo(context.url.searchParams.get("returnTo"), context.url.origin)));
   });
-  return node("section", { class: "auth-card" }, node("div", { class: "brand" }, "◈ Zelavis"), node("h1", {}, "Login to Zelavis"), node("p", {}, "Authenticate with an installed Zelavis auth provider."), form);
+  return authCard("Login to Zelavis",
+    !canSignUp && context.url.searchParams.get("registration") === "closed" ? message("Registration is closed.") : undefined,
+    form, canSignUp ? link("Create account", "/sign-up", { class: "auth-link" }) : undefined);
+});
+
+export const signUpScreen = Effect.fn("ui.signUpScreen")(function*(context: ScreenContext) {
+  const status = yield* registrationStatus(context.config);
+  if (!offersPasswordSignup(status)) {
+    context.navigate(CLOSED_LOGIN);
+    return authCard("Registration is closed", link("Login", "/login", { class: "auth-link" }));
+  }
+  const identifier = field("signup-identifier", "Email or username", { autocomplete: "username", maxlength: "254", required: "" });
+  const name = field("signup-name", "Display name (optional)", { autocomplete: "name", maxlength: "120" });
+  const passwordAttributes = { type: "password", autocomplete: "new-password", minlength: "15", maxlength: "1024", required: "" };
+  const password = field("signup-password", "Password", passwordAttributes);
+  const confirm = field("signup-confirm", "Confirm password", passwordAttributes);
+  const statusRegion = node("div", { "aria-live": "polite" });
+  const submit = node("button", { type: "submit", class: "primary" }, "Create account");
+  const form = node("form", { class: "form" }, identifier.element, name.element, password.element, confirm.element, statusRegion, submit);
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    if (submit.disabled) return;
+    statusRegion.replaceChildren();
+    if (password.input.value !== confirm.input.value) {
+      statusRegion.replaceChildren(message("The passwords do not match.", true));
+      confirm.input.focus();
+      return;
+    }
+    const displayName = name.input.value.trim();
+    submit.disabled = true;
+    const input = {
+      identifier: identifier.input.value.trim(),
+      password: password.input.value,
+      ...(displayName ? { displayName } : {}),
+    };
+    const work = Effect.gen(function* () {
+      const result = yield* Effect.result(request(`${context.config.api.basePath}/auth/sign-up/password`, "POST", input));
+      if (result._tag === "Success") return "created" as const;
+      if (result.failure.code !== "registration_closed") return result.failure;
+      form.hidden = true;
+      yield* Effect.result(registrationStatus(context.config));
+      return "closed" as const;
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => {
+        password.input.value = "";
+        confirm.input.value = "";
+        submit.disabled = false;
+      })),
+    );
+    context.run(work, outcome => {
+      if (location.pathname !== context.url.pathname) return;
+      if (outcome === "created") context.navigate("/projects");
+      else if (outcome === "closed") context.navigate(CLOSED_LOGIN);
+      else {
+        statusRegion.replaceChildren(message(authFormError(outcome), true));
+      }
+    });
+  });
+  return authCard("Create an account", form, link("Back to login", "/login", { class: "auth-link" }));
 });
 
 export const logoutScreen = Effect.fn("ui.logoutScreen")(function*(context: ScreenContext) {

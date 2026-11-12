@@ -5,14 +5,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Effect, Exit, Cause } from "effect";
 import { migrateDataLayout } from "../dist/adapters/_node-data-migration.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { openNodeDatabase } from "../dist/db/node-host.js";
+import { DEFAULT_LOCAL_SHARDS, GLOBAL_TENANT } from "../dist/db/topology.js";
 
 // The earlier engine is replaced by a stand-in release tree whose database "opens" whatever `fake.json` in the shard
 // directory says it holds. This exercises the real worker process, export files, recreation and verification.
 // The format-migration harness covers the published engines themselves.
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64");
-const collection = (tenant, name, extra = {}, at = 0) => ({ kind: "put", seq: 1, version: 1, at, identity: { namespace: `zv.collection/${tenant}`, key: name }, body: b64({ name, surface: "database", ...extra }) });
-const document = (tenant, name, seq, id, data, version = 1, extra = {}, at = 0) => ({ kind: "put", seq, version, at, identity: { namespace: `doc/${tenant}/${name}`, key: id }, body: b64({ id, collection: name, data, version, ...extra }) });
+const collection = (tenant, name, extra = {}, at = 0) => ({ kind: "put", seq: 1, version: 1, at, identity: { namespace: tenant === undefined ? "zv.collection" : `zv.collection/${tenant}`, key: name }, body: b64({ name, surface: "database", ...extra }) });
+const document = (tenant, name, seq, id, data, version = 1, extra = {}, at = 0) => ({ kind: "put", seq, version, at, identity: { namespace: tenant === undefined ? `doc/${name}` : `doc/${tenant}/${name}`, key: id }, body: b64({ id, collection: name, data, version, ...extra }) });
 const retractOf = (seq, version, ms = 0) => ({ kind: "retract", seq, version, at: ms });
 const iso = (ms) => new Date(ms).toISOString();
 const CREATED = "2026-10-01T08:00:00.000Z", UPDATED = "2026-10-20T17:30:00.000Z", EXPIRES = "2027-01-01T00:00:00.000Z";
@@ -30,7 +32,9 @@ const decode = (body) => JSON.parse(Buffer.from(body, "base64").toString("utf8")
 export const openNodeDatabase = async ({ directory }) => {
   ${crash ? 'throw new Error("earlier engine crashed while opening");' : ""}
   const fake = JSON.parse(await readFile(join(directory, "fake.json"), "utf8"));
-  const tenants = Object.keys(fake).filter((key) => !key.startsWith("__"));
+  const partitions = Object.keys(fake).filter((key) => !key.startsWith("__"));
+  const global = "zv.global";
+  const tenants = partitions.filter((key) => key !== global);
   const sourceFormat = ${sourceFormat};
   const collectionNamespace = (tenant) => sourceFormat === 2 ? "zv.collection/" + tenant : "zv.collection";
   const documentPrefix = (tenant) => sourceFormat === 2 ? "doc/" + tenant + "/" : "doc/";
@@ -39,6 +43,13 @@ export const openNodeDatabase = async ({ directory }) => {
     ...live(tenant).filter((e) => e.identity?.namespace === documentPrefix(tenant) + collection).map((e) => decode(e.body)),
     ...((fake.__extraDocuments ?? {})[tenant] ?? []).filter((d) => d.collection === collection),
   ];
+  const partition = (tenant) => ({
+    backups: { exportTenant: () => ({ events: fake[tenant] }) },
+    documents: {
+      listCollections: () => live(tenant).filter((e) => e.identity?.namespace === collectionNamespace(tenant)).map((e) => decode(e.body)),
+      findPage: ({ collection }) => ({ documents: documents(tenant, collection) }),
+    },
+  });
   return { close: async () => {}, database: {
     tenants: () => tenants,
     shardOf: () => "shard-0",
@@ -47,14 +58,13 @@ export const openNodeDatabase = async ({ directory }) => {
     }) }) },
     maintenance: { status: () => sourceFormat === 2
       ? [{ shard: "shard-0", records: 0, bytes: 0, compactedTo: fake.__compactedTo ?? 0 }]
-      : tenants.map((partition) => ({ shard: "shard-0", partition, compactedTo: fake.__compactedTo ?? 0 })) },
-    forTenant: (tenant) => ({
-      backups: { exportTenant: () => ({ events: fake[tenant] }) },
-      documents: {
-        listCollections: () => live(tenant).filter((e) => e.identity?.namespace === collectionNamespace(tenant)).map((e) => decode(e.body)),
-        findPage: ({ collection }) => ({ documents: documents(tenant, collection) }),
-      },
-    }),
+      : partitions.map((partition) => ({ shard: partition === global ? global : "shard-0", partition, compactedTo: fake.__compactedTo ?? 0 })) },
+    forTenant: partition,
+    global: partitions.includes(global) ? partition(global) : undefined,
+    topology: {
+      placement: { current: () => ({ collections: fake.__placements ?? {} }) },
+      subdivision: { current: () => ({ tenants: {} }) },
+    },
   } };
 };\n`);
   return platform;
@@ -285,6 +295,147 @@ test("a Tenant whose earlier log was compacted exports as state, and only its fi
       assert.deepEqual(feed.map((event) => [event.type, event.documentId]), [["document.upserted", "u1"], ["document.upserted", "u2"]], "one event per live document");
       const u2 = await Effect.runPromise(opened.database.forTenant(t).documents.findById({ collection: "users", id: "u2" }));
       assert.deepEqual([u2.version, u2.createdAt, u2.updatedAt], [3, CREATED, UPDATED]);
+    } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a compacted export keeps references and graph links to documents in later batches", async () => {
+  const t = "tenant-a";
+  const posts = {
+    references: [{ name: "author", path: "author", collection: "users", onDelete: "restrict" }],
+    edges: [{ name: "wrote", path: "author", collection: "users" }],
+  };
+  const { root, input } = await fixture({
+    __compactedTo: 5,
+    [t]: [
+      collection(t, "users"),
+      { ...collection(t, "posts", posts), seq: 2 },
+      document(t, "posts", 3, "p1", { author: "late" }, 4, { createdAt: CREATED, updatedAt: UPDATED }),
+      ...Array.from({ length: 500 }, (_, i) => document(t, "users", i + 4, `u${i}`, {})),
+      document(t, "users", 504, "late", { name: "Late author" }),
+    ],
+  });
+  try {
+    const report = await Effect.runPromise(migrateDataLayout(input));
+    assert.deepEqual([report.tenantsWithoutHistory, report.eventsCarried, report.documents], [1, 0, 502]);
+    const opened = await openNodeDatabase({ directory: report.shardsDirectory });
+    try {
+      const documents = opened.database.forTenant(t).documents;
+      const run = Effect.runPromise;
+      const post = await run(documents.findById({ collection: "posts", id: "p1" }));
+      assert.deepEqual([post.data.author, post.version, post.createdAt, post.updatedAt], ["late", 4, CREATED, UPDATED]);
+      const linked = await run(documents.findMany({ collection: "users", linked: { collection: "posts", id: "p1", edge: "wrote" } }));
+      assert.deepEqual(linked.map((author) => author.id), ["late"]);
+      const feed = (await feedOf(opened, t)).filter((event) => event.documentId !== undefined);
+      assert.equal(feed.length, 502, "one event per document");
+      assert.equal(feed[0].documentId, "p1");
+      assert.equal(feed.at(-1).documentId, "late");
+      const deletion = await Effect.runPromiseExit(documents.delete({ collection: "users", id: "late" }));
+      assert.ok(Exit.isFailure(deletion), "the restored reference still restricts deletion");
+      assert.equal(Cause.squash(deletion.cause)._tag, "ReferenceViolation");
+    } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a compacted export with a dangling reference is refused and leaves the source intact", async () => {
+  const t = "tenant-a";
+  const posts = { references: [{ name: "author", path: "author", collection: "users", onDelete: "restrict" }] };
+  const { root, source, input } = await fixture({
+    __compactedTo: 5,
+    [t]: [
+      collection(t, "users"),
+      { ...collection(t, "posts", posts), seq: 2 },
+      ...Array.from({ length: 500 }, (_, i) => document(t, "users", i + 3, `u${i}`, {})),
+      document(t, "posts", 503, "p1", { author: "absent" }),
+    ],
+  });
+  try {
+    const file = join(source, "fake.json");
+    const before = await readFile(file);
+    const exit = await Effect.runPromiseExit(migrateDataLayout(input));
+    assert.ok(Exit.isFailure(exit));
+    const error = Cause.squash(exit.cause);
+    assert.equal(error._tag, "DataMigrationFailure");
+    assert.equal(error.cause?._tag, "ReferenceViolation");
+    assert.match(error.cause.reason, /there is no document "absent" in "users"/);
+    await assert.rejects(stat(input.workDirectory), { code: "ENOENT" });
+    assert.deepEqual(await readFile(file), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a compacted export keeps a same-collection cycle across batches", async () => {
+  const t = "tenant-a";
+  const links = {
+    references: [{ name: "peer", path: "peer", collection: "nodes", onDelete: "restrict" }],
+    edges: [{ name: "peer", path: "peer", collection: "nodes" }],
+  };
+  const fillers = Array.from({ length: 499 }, (_, i) => `f${i}`);
+  const { root, input } = await fixture({
+    __compactedTo: 5,
+    [t]: [
+      collection(t, "nodes", links),
+      document(t, "nodes", 2, "first", { peer: "last" }),
+      ...fillers.map((id, i) => document(t, "nodes", i + 3, id, {})),
+      document(t, "nodes", 502, "last", { peer: "first" }),
+    ],
+  });
+  try {
+    const report = await Effect.runPromise(migrateDataLayout(input));
+    const opened = await openNodeDatabase({ directory: report.shardsDirectory });
+    try {
+      const documents = opened.database.forTenant(t).documents;
+      for (const [id, target] of [["first", "last"], ["last", "first"]]) {
+        const linked = await Effect.runPromise(documents.findMany({
+          collection: "nodes", linked: { collection: "nodes", id, edge: "peer" },
+        }));
+        assert.deepEqual(linked.map((peer) => peer.id), [target]);
+      }
+      const feed = (await feedOf(opened, t)).filter((event) => event.documentId !== undefined);
+      assert.deepEqual(feed.map((event) => event.documentId), ["first", ...fillers, "last"]);
+    } finally { await opened.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a compacted App-wide export restores forward graph links and Tenant replicas", async () => {
+  const t = "tenant-a";
+  const { root, input } = await fixture({
+    __compactedTo: 5,
+    __placements: { users: "replicated", posts: "replicated" },
+    [t]: [],
+    [GLOBAL_TENANT]: [
+      collection(undefined, "users"),
+      { ...collection(undefined, "posts", { edges: [{ name: "wrote", path: "author", collection: "users" }] }), seq: 2 },
+      document(undefined, "posts", 3, "p1", { author: "late" }),
+      ...Array.from({ length: 499 }, (_, i) => document(undefined, "users", i + 4, `u${i}`, {})),
+      document(undefined, "users", 503, "late", { name: "Late author" }),
+    ],
+  }, { sourceFormat: 4 });
+  try {
+    const report = await Effect.runPromise(migrateDataLayout(input));
+    assert.deepEqual([report.tenants, report.documents], [1, 501]);
+    // Opening the database refreshes the replicas. Inspect the staged copies first.
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      for (const shard of DEFAULT_LOCAL_SHARDS) {
+        const replica = (yield* makeNodeSqliteStore(shard, report.shardsDirectory)).partition(GLOBAL_TENANT);
+        const post = yield* replica.lookup("doc/posts", "p1");
+        const author = yield* replica.lookup("doc/users", "late");
+        assert.notEqual(post, undefined, `${shard} has the staged post`);
+        assert.notEqual(author, undefined, `${shard} has the staged author`);
+        const manifest = yield* replica.manifestOf(post);
+        assert.deepEqual(manifest?.edges.map(([, target]) => target), [author], `${shard} has the staged edge`);
+      }
+    })));
+    const opened = await openNodeDatabase({ directory: report.shardsDirectory });
+    try {
+      const db = opened.database;
+      const linked = await Effect.runPromise(db.global.documents.findMany({
+        collection: "users", linked: { collection: "posts", id: "p1", edge: "wrote" },
+      }));
+      assert.deepEqual(linked.map((author) => author.id), ["late"]);
+      const shared = db.forTenant(t).shared;
+      const post = await Effect.runPromise(shared.findById({ collection: "posts", id: "p1" }));
+      const author = await Effect.runPromise(shared.findById({ collection: "users", id: "late" }));
+      assert.deepEqual([post?.data.author, author?.data.name], ["late", "Late author"]);
     } finally { await opened.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

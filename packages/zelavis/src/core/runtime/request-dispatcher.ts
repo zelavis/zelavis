@@ -865,12 +865,30 @@ const executeResolvedRoute = <TService = unknown>(
       };
     }
 
-    const body = yield* integrationValue(parseRequestBody(request));
+    const { maxRequestBodyBytes, invalidJsonBodyCode } = resolvedRoute.route;
+    const parsed = yield* integration(() => parseRequestBody(request, maxRequestBodyBytes)).pipe(
+      Effect.map((body) => ({ body })),
+      Effect.catchIf(
+        (failure) => invalidJsonBodyCode !== undefined && unwrapFailure(failure) instanceof SyntaxError,
+        () => Effect.succeed({ invalidJson: true as const }),
+      ),
+    );
+    if ("invalidJson" in parsed) {
+      return {
+        matched: true,
+        response: toResponse({
+          status: 400,
+          headers: { "cache-control": "no-store" },
+          body: { error: "Request body is not valid JSON.", code: invalidJsonBodyCode },
+        }),
+        resolvedRoute,
+      };
+    }
     const result = yield* integration(() => resolvedRoute.route.handler({
       service: resolvedRoute.endpointGroup.context,
       params,
       query: new URL(request.url).searchParams,
-      body,
+      body: parsed.body,
       headers: toHeaderMap(request.headers),
       requestHeaders: request.headers,
       request,

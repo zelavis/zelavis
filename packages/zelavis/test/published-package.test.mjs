@@ -160,6 +160,8 @@ test("the default services ship their manifest and built output, not their sourc
   assert.equal(await shipped("services/zelavis-ui/.fuzor/web/dist-spa"), true, "the dashboard's browser assets");
   assert.equal(await shipped("services/zelavis-ui/.fuzor/dist-backend/entry.mjs"), true, "the dashboard's server entry");
   assert.equal(await shipped("services/zelavis-ui/.fuzor/fuzor-build.json"), true, "which Fuzor built the dashboard");
+  assert.equal(await shipped("services/zelavis-ui/dist/identity-frontend.js"), true, "the native App auth frontend entry");
+  assert.deepEqual((await readdir(join(unpacked, "services/zelavis-ui/dist/identity-assets"))).sort(), ["identity.css", "identity.js"]);
   for (const leftover of ["app", "tests", "test-results", "node_modules", "islands", "behaviors", "scripts", "src", "components", "pages", ".fuzor/legacy-output", ".fuzor/dist-spa"]) {
     assert.equal(await shipped(`services/zelavis-ui/${leftover}`), false, `services/zelavis-ui/${leftover} must not be published`);
   }

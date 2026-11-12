@@ -1,3 +1,5 @@
+export { isPublicAuthPath } from "../src/auth-routes.ts";
+
 /**
  * Every page the dashboard serves, as route patterns. A page is a native screen in app/screens.ts or a module it calls; the route
  * parity test visits each one at desktop and mobile sizes. Keep this a plain list of string literals.
@@ -5,6 +7,7 @@
 export const dashboardRoutes = [
   "/",
   "/login",
+  "/sign-up",
   "/setup",
   "/logout",
   "/assistant",
@@ -34,6 +37,7 @@ export const dashboardRoutes = [
   "/projects/:projectId/marketplace",
   "/projects/:projectId/agents",
   "/projects/:projectId/auth",
+  "/projects/:projectId/domains",
   "/projects/:projectId/content",
   "/projects/:projectId/content/new",
   "/projects/:projectId/content/:contentType",

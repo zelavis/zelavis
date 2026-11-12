@@ -172,6 +172,18 @@ export interface CarryDocumentsInput {
   readonly [CARRY_DOCUMENTS]?: ReadonlyArray<CarriedDocument | undefined>;
 }
 
+/** Destination IDs reserved in export order for a compacted partition in private migration staging. */
+export const CARRY_SNAPSHOT: unique symbol = Symbol("zelavis.db.carrySnapshot");
+export interface CarrySnapshotInput {
+  readonly [CARRY_SNAPSHOT]?:
+    | {
+        readonly _tag: "Reserve";
+        readonly documents: ReadonlyArray<{ readonly collection: string; readonly id: string }>;
+        readonly assigned: Map<string, Seq>;
+      }
+    | { readonly _tag: "Insert"; readonly assigned: ReadonlyMap<string, Seq> };
+}
+
 /**
  * A collection recreated as it was in another database, for this package's own use: the data-layout migration creates
  * each collection with the creation time the earlier engine recorded, and stamps the creation's events `at` (the time of
@@ -265,6 +277,27 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     manifestFor, currentAt, currentNamed, remember, forget,
   } = core;
   const { orderedPage, rebuildIndex, findDocuments } = reads;
+  const reserveSnapshot = Effect.fnUntraced(function* (
+    documents: ReadonlyArray<{ readonly collection: string; readonly id: string }>,
+    assigned: Map<string, Seq>,
+  ) {
+    const reserved = yield* transactChecked((txn) => Effect.gen(function* () {
+      const names = new Set<string>();
+      for (const { collection, id } of documents) {
+        const name = nameOf(collection, id);
+        if (assigned.has(name) || names.has(name)) {
+          return yield* new DocumentConflict({ collection, id, reason: "this document id was already reserved" });
+        }
+        names.add(name);
+      }
+      const batch = new Map<string, Seq>();
+      for (const name of names) batch.set(name, yield* txn.allocate);
+      return batch;
+    }));
+    for (const [name, seq] of reserved) assigned.set(name, seq);
+    return [];
+  });
+
   /**
    * Refuse a document its collection's constraints do not allow: a check it
    * fails, or values a unique index already has another document holding.
@@ -276,11 +309,20 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     doc: Document,
     seq: Seq,
     pending: Pending,
+    assigned?: ReadonlyMap<string, Seq>,
   ): Effect.Effect<
     ReadonlyArray<readonly [string, Seq]>,
     CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch | DbError
   > =>
     Effect.gen(function* () {
+      const resolveTarget = Effect.fnUntraced(function* (collection: string, id: string) {
+        // A document may name itself before its put lands.
+        if (collection === doc.collection && id === doc.id) return seq;
+        const named = yield* currentNamed(pending, collection, id);
+        // A pending retraction takes precedence over a snapshot reservation.
+        if (named === undefined) return assigned?.get(nameOf(collection, id));
+        return named.document === null ? undefined : named.seq;
+      });
       const embedding = collection?.embedding;
       if (embedding !== undefined) {
         const wrong = describeVector(embedding, readPath(doc.data, embedding.field));
@@ -306,12 +348,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         if (typeof value !== "string") {
           return yield* refused(`${reference.path} holds ${JSON.stringify(value)}, which is not a document id`);
         }
-        // A document may name itself; it does not exist until this write lands.
-        if (reference.collection === doc.collection && value === doc.id) continue;
-        // Named in this transaction counts: an author and a post naming it can
-        // be written together, and one deleted here no longer counts.
-        const named = yield* currentNamed(pending, reference.collection, value);
-        if (named === undefined || named.document === null) {
+        if ((yield* resolveTarget(reference.collection, value)) === undefined) {
           return yield* refused(`there is no document "${value}" in "${reference.collection}"`);
         }
       }
@@ -356,15 +393,11 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           if (typeof id !== "string") {
             return yield* refused(`${definition.path} holds ${JSON.stringify(id)}, which is not a document id`);
           }
-          if (definition.collection === doc.collection && id === doc.id) {
-            edges.push([type, seq]);
-            continue;
-          }
-          const named = yield* currentNamed(pending, definition.collection, id);
-          if (named === undefined || named.document === null) {
+          const target = yield* resolveTarget(definition.collection, id);
+          if (target === undefined) {
             return yield* refused(`there is no document "${id}" in "${definition.collection}"`);
           }
-          edges.push([type, named.seq]);
+          edges.push([type, target]);
         }
       }
       return edges;
@@ -389,10 +422,11 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     seq: Seq,
     pending: Pending,
     loaded?: StoredCollection,
+    assigned?: ReadonlyMap<string, Seq>,
   ) =>
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
-      const edges = yield* enforceConstraints(collection, doc, seq, pending);
+      const edges = yield* enforceConstraints(collection, doc, seq, pending, assigned);
       yield* putDocument(txn, doc, seq, pending, collection, edges);
     });
 
@@ -620,6 +654,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     },
     seq: Seq,
     carried?: CarriedDocument,
+    assigned?: ReadonlyMap<string, Seq>,
   ) =>
     Effect.gen(function* () {
       const collection = yield* requireCollection(input.collection);
@@ -639,7 +674,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           ? { expiresAt: new Date(Date.now() + input.ttlMs).toISOString() }
           : typeof input.expiresAt === "string" ? { expiresAt: input.expiresAt } : {}),
       };
-      yield* documentPut(txn, doc, seq, pending, collection);
+      yield* documentPut(txn, doc, seq, pending, collection, assigned);
       return doc;
     });
 
@@ -1445,19 +1480,38 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
 
     write: (input) =>
       Effect.gen(function* () {
-        const replay = (input as ReplayHistoryInput)[REPLAY_HISTORY];
-        if (replay !== undefined) {
-          if (!isReplayRequest(replay) || !Array.isArray(input.operations) || input.operations.length !== 0
-            || (input.emit ?? []).length !== 0 || input.idempotencyKey !== undefined
-            || (input as WriteAlongInput)[WRITE_ALONG] !== undefined || (input as CarryDocumentsInput)[CARRY_DOCUMENTS] !== undefined) {
-            return yield* Effect.die(new RangeError(`A history replay is one request of 1 to ${MAX_BATCH} changes or ids, and nothing else.`));
-          }
-          return replay._tag === "Changes" ? yield* replayChanges(replay.changes) : yield* settleReplayed(replay.collection, replay.ids);
-        }
         const operations = input.operations;
         const emit = input.emit ?? [];
         const along = (input as WriteAlongInput)[WRITE_ALONG];
         const carry = (input as CarryDocumentsInput)[CARRY_DOCUMENTS];
+        const replay = (input as ReplayHistoryInput)[REPLAY_HISTORY];
+        const snapshot = (input as CarrySnapshotInput)[CARRY_SNAPSHOT];
+        if (snapshot !== undefined) {
+          if (typeof snapshot !== "object" || snapshot === null || !(snapshot.assigned instanceof Map)
+            || !Array.isArray(operations) || operations.length > MAX_BATCH || !Array.isArray(emit) || emit.length !== 0
+            || input.idempotencyKey !== undefined || along !== undefined || replay !== undefined) {
+            return yield* Effect.die(new RangeError("A compacted snapshot request cannot carry other writes or a receipt."));
+          }
+          if (snapshot._tag === "Reserve") {
+            const documents = snapshot.documents;
+            if (operations.length !== 0 || carry !== undefined || !Array.isArray(documents)
+              || documents.length < 1 || documents.length > MAX_BATCH
+              || documents.some((document) => typeof document?.collection !== "string" || typeof document?.id !== "string")) {
+              return yield* Effect.die(new RangeError(`A snapshot reservation takes 1 to ${MAX_BATCH} document identities and nothing else.`));
+            }
+            return yield* reserveSnapshot(documents, snapshot.assigned);
+          }
+          if (snapshot._tag !== "Insert" || operations.some((operation) => operation?._tag !== "Insert" || typeof operation.id !== "string")) {
+            return yield* Effect.die(new RangeError("A snapshot insert requires Insert operations with explicit document ids."));
+          }
+        }
+        if (replay !== undefined) {
+          if (!isReplayRequest(replay) || !Array.isArray(operations) || operations.length !== 0
+            || emit.length !== 0 || input.idempotencyKey !== undefined || along !== undefined || carry !== undefined) {
+            return yield* Effect.die(new RangeError(`A history replay is one request of 1 to ${MAX_BATCH} changes or ids, and nothing else.`));
+          }
+          return replay._tag === "Changes" ? yield* replayChanges(replay.changes) : yield* settleReplayed(replay.collection, replay.ids);
+        }
         if (!Array.isArray(operations) || !Array.isArray(emit)
           || (operations.length + emit.length === 0 && along === undefined) || operations.length > MAX_BATCH) {
           return yield* Effect.die(
@@ -1485,6 +1539,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         // allocation commit per entry followed by the data commit.
         const ids = operations.map((operation) =>
           operation._tag === "Insert" ? operation.id ?? crypto.randomUUID() : operation.id);
+        const assigned = snapshot?.assigned;
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             // One overlay for the batch: each change sees what the ones before
@@ -1493,11 +1548,16 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             const written: Array<DocumentWritten> = [];
             for (const [at, operation] of operations.entries()) {
               if (operation._tag === "Insert") {
+                const id = ids[at]!;
+                const seq = assigned === undefined ? yield* txn.allocate : assigned.get(nameOf(operation.collection, id));
+                if (seq === undefined) {
+                  return yield* Effect.die(new RangeError(`Snapshot document "${operation.collection}/${id}" has no reserved id.`));
+                }
                 const document = yield* applyInsert(txn, pending, {
-                  collection: operation.collection, id: ids[at]!, data: operation.data,
+                  collection: operation.collection, id, data: operation.data,
                   ...(operation.expiresAt === undefined ? {} : { expiresAt: operation.expiresAt }),
                   ...(operation.ttlMs === undefined ? {} : { ttlMs: operation.ttlMs }),
-                }, yield* txn.allocate, carry?.[at]);
+                }, seq, carry?.[at], assigned);
                 written.push({ _tag: "Inserted", document });
                 continue;
               }

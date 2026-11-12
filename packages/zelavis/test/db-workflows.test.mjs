@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Deferred, Effect, Fiber, Layer, Schema } from "effect";
-import { Activity, Workflow } from "effect/workflow";
+import { Deferred, Effect, Fiber, Layer, Schedule, Schema } from "effect";
+import { Activity, DurableDeferred, Workflow } from "effect/workflow";
 import { makeDatabase, partitionMapFor, startFromOutbox, tenantWriteActivity } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
@@ -99,6 +99,72 @@ test("a saga cut off by a restart resumes without running a recorded step again"
       assert.deepEqual([yield* balance(db, "alice"), yield* balance(db, "bob")], [90, 110]);
     }).pipe(Effect.provide(Layer.provideMerge(transferLayer(db, second), db.workflowEngine)));
   })));
+});
+
+test("a completed workflow with no result can be polled and retried after reopening", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-void-workflow-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const workflow = Workflow.make("VoidWorkflow", { payload: { id: Schema.String }, idempotencyKey: ({ id }) => id });
+  const payload = { id: "once" };
+  let runs = 0;
+  const layer = workflow.toLayer(() => Effect.sync(() => { runs += 1; }));
+  const run = (effect) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const db = yield* open(dir);
+    return yield* effect.pipe(Effect.provide(Layer.provideMerge(layer, db.workflowEngine)));
+  })));
+
+  assert.equal(await run(workflow.execute(payload)), undefined);
+  await run(Effect.gen(function* () {
+    const result = yield* workflow.poll(yield* workflow.executionId(payload));
+    assert.equal(result._tag, "Some");
+    assert.equal(result.value._tag, "Complete");
+    assert.equal(result.value.exit._tag, "Success");
+    assert.equal(result.value.exit.value, undefined);
+    assert.equal(yield* workflow.execute(payload), undefined);
+  }));
+  assert.equal(runs, 1);
+});
+
+test("a reopened workflow reuses void activity results and durable deferred completions", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-void-workflow-resume-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const workflow = Workflow.make("VoidStepWorkflow", {
+    payload: { id: Schema.String }, success: Schema.String, idempotencyKey: ({ id }) => id,
+  });
+  const payload = { id: "once" };
+  const gate = DurableDeferred.make("gate", { success: Schema.String });
+  const completed = DurableDeferred.make("completed", { success: Schema.Any });
+  let steps = 0;
+  const layer = workflow.toLayer(Effect.fnUntraced(function* () {
+    yield* Activity.make({ name: "void-step", success: Schema.Any, execute: Effect.sync(() => { steps += 1; }) });
+    const signal = yield* DurableDeferred.await(gate);
+    yield* DurableDeferred.await(completed);
+    return signal;
+  }));
+  const run = (effect) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const db = yield* open(dir);
+    return yield* effect.pipe(Effect.provide(Layer.provideMerge(layer, db.workflowEngine)));
+  })));
+
+  await run(Effect.gen(function* () {
+    const executionId = yield* workflow.executionId(payload);
+    const token = yield* DurableDeferred.tokenFromPayload(completed, { workflow, payload });
+    yield* DurableDeferred.succeed(completed, { token, value: undefined });
+    yield* workflow.execute(payload, { discard: true });
+    const result = yield* workflow.poll(executionId).pipe(
+      Effect.repeat({ while: (result) => result._tag === "None", schedule: Schedule.spaced("5 millis") }),
+      Effect.timeout("5 seconds"),
+    );
+    assert.equal(result._tag, "Some");
+    assert.equal(result.value._tag, "Suspended");
+  }));
+
+  await run(Effect.gen(function* () {
+    const token = yield* DurableDeferred.tokenFromPayload(gate, { workflow, payload });
+    yield* DurableDeferred.succeed(gate, { token, value: "resumed" });
+    assert.equal(yield* workflow.execute(payload).pipe(Effect.timeout("5 seconds")), "resumed");
+  }));
+  assert.equal(steps, 1);
 });
 
 test("a Tenant's outbox starts one execution per message, and a message delivered twice starts one", (t) => {

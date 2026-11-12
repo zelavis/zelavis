@@ -6,12 +6,26 @@ Run it with `pnpm run ci:ui` from the repository root. Set `PARITY_SHOTS=<direct
 
 | Area | Routes |
 |---|---|
-| Account | `/login`, `/setup`, `/logout` |
+| Account | `/login`, `/sign-up`, `/setup`, `/logout` |
 | Platform | `/`, `/projects`, `/marketplace`, `/services`, `/assistant`, `/settings`, `/settings/appearance` |
 | Server | `/server`, `/server/resources`, `/server/security`, `/server/runtimes`, `/server/domains`, `/server/access` (+ `/users`, `/permissions`), `/server/backups`, `/server/logs`, `/server/terminal`, `/server/database`, `/server/fabric` (+ section and detail) |
-| Project | `/projects/:projectId` (+ `/backend`, `/extensions`, `/agents`, `/settings`, `/frontend`, `/auth`, `/users`, `/storage`, `/media`, `/marketplace`, `/database`, `/database/new`) |
+| Project | `/projects/:projectId` (+ `/backend`, `/extensions`, `/agents`, `/settings`, `/frontend`, `/auth`, `/domains`, `/users`, `/storage`, `/media`, `/marketplace`, `/database`, `/database/new`) |
 | Content Studio | `/projects/:projectId/content` (+ `/new`, `/:contentType`, `/:contentType/fields`, `/:contentType/:entryId`) |
 | Workloads | `/projects/:projectId/workloads` (+ `/functions`, `/jobs`, `/schedules`, `/webhooks`, `/new`, `/logs`, `/settings`, `/:workloadKind/:workloadId`) |
-| Managed apps | `/projects/:projectId/:managedSection` (domains, files, app-database, setup, backups, logs, updates, admin) and service-owned pages |
+| Managed apps | `/projects/:projectId/:managedSection` (files, app-database, setup, backups, logs, updates, admin) and service-owned pages |
 
 Known gaps against the original React dashboard, to be built here when they matter: saved grid views and column pinning in the database workspace, charts on the Resources page (the Platform reports no host metrics yet, so the page says so rather than inventing numbers).
+
+The embedded browser suite also qualifies Platform and exact Project registration
+settings, revision conflicts, closed and stale signup forms, duplicate-account
+refusal, rate-limit feedback, signup sessions and login after enrollment closes.
+It repeats public signup at a nested dashboard mount and mobile width. Account
+access drawers are reconstructed from `?accountAccess=<account-id>` in Platform
+and Project Users. Browser checks cover conditional saves, protected accounts,
+advanced-grant preservation, customer inventory and menu filtering, session
+revocation, and a Project settings delegate with no runtime-management grant.
+
+The embedded suite connects a customer-owned Project hostname through the
+dashboard with fixture DNS and a local HTTPS reverse proxy. It checks the
+TXT challenge at desktop and mobile widths, exact grants, real native App
+signup and control-plane isolation, Server Domains inventory, and withdrawal.

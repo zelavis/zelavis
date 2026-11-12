@@ -33,8 +33,8 @@ only this. Write no plan, and change no file.
 
 ## If the job is `refresh`
 
-When the job is just `refresh`, do only step 0 of Phase 1 (supplement, lessons, removing finished
-plans, refreshing open plans) and report what changed. Write no new plan.
+When the job is just `refresh`, do only step 0 of Phase 1: check the supplement, remove finished
+plans, refresh open plans, and report what changed. Write no new plan.
 
 ## Which repositories
 
@@ -55,9 +55,8 @@ one line and stop: that is the one thing you cannot decide.
 
 The plan's **home** is the `in` repository, or the current one. Everything this skill says about
 "the repository" holds for each repository the job names, as follows:
-- **Step 0 runs in every named repository**: its supplement is created on the first run there
-  (that run is the repository's initializer) and kept current on every run after, its lessons,
-  finished plans and open plans are handled there as well. Read each one's own instruction
+- **Step 0 runs in every named repository**: create or refresh its supplement and maintain its
+  finished and open plans there. Read each one's own instruction
   files, gates and conventions: a change in a repository follows that repository's rules, and
   where two repositories' rules differ, each binds its own files.
 - **One plan, in the home.** Steps that change another repository say which in their Files
@@ -65,8 +64,8 @@ The plan's **home** is the `in` repository, or the current one. Everything this 
   the home steps that rely on them. Section 1 gives each repository its own System today and
   Pattern to mirror, and section 7 runs each repository's own full verification. Say how the
   home picks up the change (a sibling checkout it builds from, a workspace link, a local
-  path), and never plan a publish or release of the other repository unless the job asks for
-  one: that is outside the repositories, so it is a `[!]` line.
+  path). Include publishing or releasing the other repository only when the job asks for it.
+  If the requested outcome depends on a release outside the job, record that dependency as a blocker.
 - **Only named repositories are changed.** When the job needs a change in a repository it did
   not name, that change is a `[!]` line saying exactly what is needed and where, so the user
   can allow it with `with <repo>`.
@@ -113,8 +112,8 @@ runs without interruption:
   forbidden patterns, files that must not be touched) still binds in full.
 - **Not asking is not permission to act outside the named repositories.** Committing, pushing,
   publishing, deploying, sending anything to an outside service and spending money stay off
-  unless the job itself asks for them. They are left undone and recorded as `[!]`, never asked
-  about.
+  unless the job itself asks for them. Omit optional actions. Record a missing authorization
+  as a blocker only when it prevents a required outcome.
 
 ## Phase 1: Understand the project and the job
 
@@ -124,9 +123,8 @@ runs without interruption:
    [The project supplement](#the-project-supplement) below:
    - **Missing:** study the repository and create it.
    - **Present:** run its freshness check, and update it if anything it relies on has changed.
-   - **Either way:** add the lessons from execution reports written since the last run, then
-     remove finished plans and refresh the open ones (all three are described below the
-     freshness check).
+   - **Either way:** remove finished plans and refresh the open ones as described below the
+     freshness check.
 
    Then read it in full. Its rules win over this skill where they conflict, except
    [Decide, don't ask](#decide-dont-ask), and your plan must apply them. Section 0 of the plan
@@ -224,9 +222,9 @@ Apply all of it.
   do not work); prefer `<command>; echo "exit $?"` over judging success through a pipe.
 - **Same yardstick.** A check the plan adds beside an existing one compares the same thing (the
   same fields, the same depth), or the plan says why it differs. Tell the implementer that a new
-  check disagreeing with an old one that passes is a finding, never noise: it investigates it
-  in its own session until it knows the cause, then fixes it when it is in scope or adds it to
-  the checklist with the cause and the fix.
+  check disagreeing with an old one that passes requires investigation in the same session.
+  Resolve it during execution when it affects the requested outcome or a required check. Apply
+  the blocked-work rule below if a concrete prerequisite prevents resolution.
 - **Every import.** For each file a step touches, test files included, list every import the new
   code needs, as the exact import line to add or the existing line to change. Code that uses a
   symbol the plan never imports is a gap the implementer has to guess at.
@@ -241,6 +239,7 @@ Apply all of it.
 about this repository, so each run starts from proven project knowledge instead of
 rediscovering it. It is a digest, not policy: every fact cites its source, and the project's
 instruction files win over it. A rule change belongs in those files, never only here.
+Maintain the supplement from current repository sources. Execution reports belong to their plans.
 
 ### Format
 
@@ -250,7 +249,6 @@ It starts with this header, which the freshness check reads:
 <!-- plan-writer supplement
 verified-at: <short git commit the content was last checked against>
 verified-on: <YYYY-MM-DD>
-lessons-through: <YYYY-MM-DD of the newest execution report learned from, or none>
 sources:
   - <every file the content was taken from: instruction files, manifests, CI, references>
 -->
@@ -316,37 +314,19 @@ guidance as a source.
    change in git.
 6. Without git, do step 2, and re-read every source and cited file modified after `verified-on`.
 
-The check cannot notice that a better example of a pattern has appeared somewhere it never
-looked. That is acceptable: the supplement gives leads, and Phase 1 step 8 still checks every
-claim the plan makes against the live code. If you find a better canonical example while
-planning, put it in the supplement.
+The supplement gives leads. Phase 1 step 8 checks every claim the plan makes against the live code.
 
-### Lessons from execution reports (every run)
+### Remove finished plans
 
-After the freshness check, read the execution report entries in `.agents/plans/`, single plans
-and parts alike, dated on or after `lessons-through` (a report from that same day may be newer
-than the last run; a lesson the supplement already cites for that plan is not added again). A
-plan worked on by several sessions has one entry per session, so read each of them. For each "Context the plan lacked" item and each
-deviation:
-- **True of the project in general** (it would matter to other jobs): add it to the section it
-  belongs in, usually Traps, cited as `(lesson: <plan file name>)`.
-- **A mistake in planning** (a wrong symbol, missing context, a step too large): add it to Traps
-  as guidance for plan writers, such as "check X before citing it".
-- **Specific to that one job**: skip it.
-- **A gap or error in the instruction files**: do not fix it here. Report it in section 0 of the
-  plan, with suggested wording for the instruction file.
-
-Then set `lessons-through` to the newest report date you read. If there were no new reports,
-change nothing.
-
-**Then remove finished plans,** so `.agents/plans/` only ever holds open work:
-- **Delete** a single plan whose `Status` is `done`, and a split plan's whole folder once its
-  overview's `Status` is `done`, but only after you have read its report into the supplement.
-- **Keep** everything `planned`, `in progress`, `stopped at step <n>`, `partly done` or
-  `needs replanning`.
-- **Done work stays findable:** the code it changed is in Git history and what it taught is in
-  the supplement's lessons. The plan file itself is gone, since plans are never committed.
-- **Report** each deleted plan by name in section 0 of the new plan.
+- Delete a single plan marked `done` with no open checklist items. Delete a split plan's folder
+  once its overview and every part are marked `done` and no part has open checklist items.
+  Keep unfinished plans and their reports.
+- Discard execution reports with the completed plan. Do not extract lessons, update the supplement
+  from those reports, or create archives or retrospectives as part of cleanup.
+- Remove references created solely for a finished plan after checking that no open plan, skill,
+  documentation or code still needs them. Keep open follow-ups in the plan until resolved or moved
+  to the project's existing tracker.
+- Report deleted plans by name in chat.
 
 **Then refresh every open plan,** so none goes stale while it waits. For each plan or part not
 `done`, run the same freshness check as for the supplement, against its `Verified-at`:
@@ -360,18 +340,14 @@ A plan with a `Repositories:` line is checked in each repository against that re
 commit, and each commit it lists is updated once that repository is checked.
 
 Correct what moved: line numbers, excerpts, a renamed symbol, a step whose premise changed.
-Open added items (`A<n>`) are checked like steps. A line an implementer marked `[!]` "needs
-replanning" is replanned: rewrite the step (or item) against the code as it is now, with its
-context and check, and set it back to `[ ]`. Leave `[x]` lines and execution reports
-untouched, and never drop a `[ ]` or `[!]` added item: one the code has since made true becomes
-`[x]` with the commit that did it. When a change undoes a decision the plan
-rests on, mark the plan `Status: needs replanning`, say why under its header, and replan it
-before anything else. Set `Verified-at` to `HEAD` once a plan is checked, and change nothing in
-a plan that needed no correction. Report each refreshed plan in section 0 of the new plan, and
+Review blocked steps and added items (`A<n>`). Keep `[!]` while its named prerequisite is
+missing. Once it is satisfied, rewrite the step if needed and return it to `[ ]` if work remains.
+If the step is already fulfilled, run its check and mark it `[x]` with the evidence. Leave
+completed steps and execution reports intact. Adapt stale steps in place when their intent and
+design are still clear. Use `Status: needs replanning` if the plan depends on a new design.
+Name the missing decision under the header. Set `Verified-at` to `HEAD` once a plan is checked.
+Leave plans that needed no correction alone. Report each refreshed plan in section 0 of the new plan, and
 when the job is only to refresh, report there in the chat instead.
-
-Lesson citations are not paths, so the freshness check does not test them. Keep a lesson until
-the code or the rules contradict it, then remove it.
 
 ### Rules for maintaining it
 
@@ -472,25 +448,26 @@ writing anything else. The markers:
 - `[ ]`: not started;
 - `[~]`: started, with the date (`- [~] 3. … (started 2026-11-03)`);
 - `[x]`: done and its check passed, with the date and one line on anything that differed;
-- `[!]`: a line that needs something only the user can physically supply, an action outside the
-  named repositories the job did not ask for, work outside the plan's scope, or replanning, with
-  one line on what and why. It never blocks the other lines.
+- `[!]`: required work waiting on a concrete prerequisite that cannot be resolved in the current
+  execution. Name the prerequisite and the work it blocks. Only dependent steps wait.
 
-**Added items.** Work an implementer leaves behind is added to this checklist, never left in a
-chat message or a report alone (see "Nothing left over lives only in chat" in section 8). An
-added item is numbered `A1`, `A2` and so on, and goes after the last added item and before the
-final Self-audit line, which always stays last:
+**Blocked work.** The default is to finish routine fixes and missing checks in the step where
+they are found. Update the step and record any meaningful deviation in the execution report.
+Defer required work only if it needs an unavailable capability or authorization, a prerequisite
+plan to finish, or a separate architectural design that cannot responsibly be settled during
+execution. Mark the affected step `[!]`. Add an `A<n>` line only if no existing step represents
+the blocked work. Name the dependency or design decision and the check that will prove completion.
+Place that line before Self-audit, which always stays last:
 
 ```
 - [x] 3. <step goal> (2026-11-03)
 - [ ] 4. <step goal>
-- [ ] A1. <what remains, in one sentence> (from step 3: <why it was left>; check: <what proves it done>)
+- [!] A1. <required work> (blocked by: <concrete prerequisite>; check: <what proves it done>)
 - [ ] 5. Self-audit
 ```
 
-Added items are worked like steps: in order, after the planned steps before Self-audit, unless
-a later step needs one first, and each is `[x]` only when its own check passed. A plan is `done`
-only when every line but `[!]` ones is `[x]`; with `[!]` lines left it ends `partly done`.
+Work an item as soon as its blocker clears and mark it `[x]` only after its check passes. A plan
+is `done` when every line is `[x]`. With only `[x]` and `[!]` lines left, it is `partly done`.
 
 Every plan file, including each part, ends with an empty `## Execution report` heading. Each
 session that works on the plan adds its own entry there (see section 8).
@@ -518,9 +495,8 @@ when it truly does not apply, and say so in one line.
 - **In scope** and **Out of scope**, as bullets.
 - **Done means**: checkable conditions covering behavior, tests, gates and docs.
 - The reading of the job you chose, if it could be read more than one way.
-- **Supplement**, per repository: created, updated (and what changed) or found current, the
-  lessons added from execution reports, any conflicts or instruction-file gaps it flagged, and the finished plans
-  it deleted.
+- **Supplement**, per repository: created, updated (and what changed) or found current, plus any
+  conflicts or instruction-file gaps it flagged.
 - **Sources read**: the instruction files and references you read.
 
 ### 1. Context packet
@@ -607,21 +583,16 @@ End with this block, adapted to the project and the plan:
 > **Before changing anything, read `Status` and `## Progress`.**
 > - First compare `Verified-at` with `HEAD`. If any path the plan cites changed since
 >   (`git diff --name-only <Verified-at>..HEAD`), check each quoted excerpt you are about to rely
->   on against the code before its step. When one no longer matches but the step's intent is
->   still clear, follow the code as it is and record the deviation; when the step's premise is
->   gone, mark it `[!]` ("needs replanning: <why>") and carry on with the steps that do not
->   depend on it. `Status: needs replanning` means the whole plan's premise is gone: end the
->   session with one line saying so (`/plan-writer refresh` replans it).
+>   on against the code before its step. Adapt a stale step to the current code and record the
+>   deviation. Use `[!]` only if a concrete prerequisite prevents execution. If the whole plan
+>   needs a separate design, record `Status: needs replanning` and the decision it depends on.
 > - `Status: planned`: you are the first. Set `Status: in progress`.
 > - Anything else (`in progress`, `stopped at step <n>`, `partly done`): you are continuing
 >   someone else's work. First read every entry under `## Execution report`. Then confirm the
->   last `[x]` step's check still passes. If it fails, find out why: fix it when the cause is in
->   this plan's own work, otherwise add it as an item, and carry on. Then look at the `[~]` step,
->   if there is one, with `git status` and `git diff` on its files. Finish it if its change is
->   partly there, or redo it if it is wrong; never redo a step marked `[x]`. Check each `[!]`
->   line too: when what it waited for is now there (the user supplied it, or the job now names
->   the repository or the action), set it to `[ ]` and work it like any other line; a `[!]`
->   "needs replanning" stays for `/plan-writer refresh`. Then set `Status: in progress`.
+>   last `[x]` step's check still passes. Reopen it if its check fails and resolve it using the
+>   rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff`
+>   on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]`
+>   lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another
 >   agent may still be working on it. Check, do not ask: if this plan file, or any file a step's
 >   Files line names, changed in the last 15 minutes, end the session with one line saying the
@@ -635,26 +606,27 @@ End with this block, adapted to the project and the plan:
 > passes, before you start the next step. Never mark `[x]` a step whose check you did not see
 > pass.
 >
-> **Nothing left over lives only in chat.** Whenever a step leaves anything not done, not
-> proven, deferred, "later", "not built", "not done now", "not done yet", a known gap or a
-> follow-up, however you would phrase it, add it to `## Progress` as an added item (`A<n>`,
-> before the Self-audit line, with where it came from, why it was left and the check that will
-> prove it) before you mark the step `[x]`. Never hide it in the step's one-line note. An item
-> inside this plan's scope is `[ ]` and yours to finish: keep working through the checklist,
-> however long it takes, until no `[ ]` line is left. An item that needs something only the user
-> can physically supply, or lies outside the plan's scope, is `[!]`; record it and carry on with
-> the rest.
+> **Finish routine work as you find it.** Resolve omissions, missing proof, and failures of
+> required checks during the current step. Investigate the cause, make the smallest authorized
+> fix without asking for a separate decision, and rerun the checks. A required test that flakes
+> and leaks resources is work to fix now.
+> The Files line tells you where to start. Extend it when the requested outcome or a required
+> check needs a small fix elsewhere in a named repository. Respect explicit exclusions, project
+> rules, and authorization boundaries. Record a meaningful deviation in the execution report.
+> Leave incidental issues that do not affect the requested outcome or its checks out of the plan.
 >
-> **Do not list leftovers to the user.** After a step, and in your final report, never write
-> lists headed "Not done", "Not proven", "Later", "Not built" or the like. Say only how many
-> items you added and which kind, in one line: "Added 3 items to the checklist (A4–A6), 1 needs
-> you (A6)." The checklist is where they live; the user reads it there.
+> **Defer only for a concrete blocker.** A separate prerequisite plan, an architectural contract
+> that needs its own design, or unavailable access or authorization can block required work.
+> Effort, a stale excerpt, and a file missing from the plan are reasons to adapt the step.
+> Verify that no authorized way to finish is available in this run. Mark the blocked step `[!]`
+> and name what must happen first and how to verify completion. Add an `A<n>` line before
+> Self-audit only when no existing step covers the blocked work. Continue with independent steps.
+> Report any remaining blocker and what it prevents in the final reply.
 >
 > Read section 1 first and return to it whenever you are unsure. Carry out section 4 step by step,
 > in order, and run each step's check before starting the next. Tests you write are run in the
-> same step, before you move on; never leave them for the end. Do not redesign, rename or
-> "improve" anything the plan did not ask for. Match the surrounding code's style, naming and
-> comment density.
+> same step, before you move on. Keep changes tied to the requested outcome and its checks.
+> Match the surrounding code's style, naming and comment density.
 >
 > *(Only when the header has a `Repositories:` line.)* Each step's Files line names the
 > repository it changes. Run its check from that repository's root, and follow that
@@ -662,41 +634,26 @@ End with this block, adapted to the project and the plan:
 > `Verified-at` commit. Self-audit re-reads the diff and runs the full verification in every
 > repository the plan names. Change no repository the plan does not name.
 >
-> **When the plan and the code disagree, decide; never improvise and never stop to ask:**
-> - a referenced file or symbol does not exist or differs from the plan: find where it went.
->   When the step's intent is still clear, follow the code and record the deviation; when its
->   premise is gone, mark the step `[!]` ("needs replanning: <why>") and carry on with the steps
->   that do not depend on it;
-> - a check fails and the cause is not a simple mistake in your own change: investigate until
->   you know the cause, fix it when it is inside this plan's scope, otherwise add it as an item;
-> - a gate would need a suppression, baseline entry, wrapper or shim to pass: never add one.
->   Make the honest change pass; when that needs work outside this plan, mark the step `[!]`
->   with the reason and carry on;
-> - the plan contradicts the project's instruction files: those win. Follow them and record
->   where they conflict.
->
-> **An unexpected result is a finding, never noise**: two checks that disagree, a diagnostic
-> that never settles, a number far from what the plan expects. Investigate it in this session
-> until you know its cause, even when every check passes. If the fix stays inside this plan's
-> files and rules, make it and test it; otherwise add it as an item with its cause and the fix.
-> Never report it as "unexplained" without having looked.
+> **When the plan and the code disagree, check the current source.** Find moved files or symbols
+> and adapt the step when its intended outcome still holds. Follow project rules and record any
+> conflict with the plan. Investigate unexpected results before treating checks as evidence. Fix
+> the cause using the repo's normal mechanisms. Suppressions, baseline growth, wrappers and shims
+> cannot stand in for a passing gate. Use the blocker rule only when a concrete dependency remains.
 >
 > *(List the patterns this project forbids, taken from its rules and gates.)* Never edit
 > generated output. Do not commit, push or publish unless told to.
 >
 > **Self-audit before you report done** (the plan's last step). Check your own work once more:
-> - re-read your whole diff (`git diff`, plus new files) against sections 1–5: every step's change
->   is there, nothing is there the plan did not ask for, and no other person's file was touched;
+> - re-read your whole diff (`git diff`, plus new files) against sections 1–5: every change supports
+>   the requested outcome or its required checks, and other people's changes are preserved;
 > - every item of Done means holds, checked, not assumed;
 > - rerun every test the plan added or touched, and the project's full verification, and see
 >   them pass now, after your last edit;
 > - search your diff for the forbidden patterns listed above, leftover debug output, temporary
 >   files and TODOs you added;
-> - every unexpected result you met has a known cause;
-> - no `[ ]` or `[~]` line is left above Self-audit, and every leftover you noticed anywhere (your
->   notes, your diff's comments, test output, this report) is an added item.
-> Fix what the audit finds (only inside the plan's scope), rerun the checks, and record the audit
-> and what it found in your report.
+> - ordinary omissions and check failures found in the audit have been resolved;
+> - no `[ ]` or `[~]` line is left above Self-audit, and any `[!]` names a concrete prerequisite.
+> Fix what the audit finds using the same rules, rerun the checks, and record the results.
 >
 > When you finish or stop, add your own entry under `## Execution report` at the end of this
 > file, below any earlier entries, which you never edit. Head it `### Session <n>: <date>`:
@@ -708,12 +665,10 @@ End with this block, adapted to the project and the plan:
 > - **Decisions taken for the user**: each choice you made that the user might have wanted to
 >   make, with why, so they can overrule it ("none" if there were none);
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their
->   text lives in `## Progress`;
-> - **Context the plan lacked**: what you had to find out yourself, or got wrong at first, that
->   the plan should have told you. Write "none" if there was nothing.
+>   text lives in `## Progress`.
 >
-> Then give the user the same report, shortened, with the added items and the decisions taken as
-> counts only. It asks nothing.
+> Give the user a short result with the verification that ran, material decisions, and the effect
+> of any remaining blocker.
 
 ## Self-check before you hand over the plan
 
@@ -742,8 +697,8 @@ End with this block, adapted to the project and the plan:
       exactly one line per step of section 4 (`[ ]`, or `[!]` for a step that waits on Needs
       from the user), and ends with an empty `## Execution report`.
 - [ ] The file names say what each plan or part is about.
-- [ ] Section 8 keeps "Decide, don't ask", "Nothing left over lives only in chat" and "Do not
-      list leftovers to the user" word for word: adapt the rest of the block, never those rules.
+- [ ] Section 8 directs the implementer to finish routine work as it comes up and reserve added
+      items for required work with a concrete blocker.
 - [ ] Every repository the plan changes was named by the job, has a current supplement, and is
       in the `Repositories:` line with its own `Verified-at`; a change any other repository needs
       is a `[!]` line.

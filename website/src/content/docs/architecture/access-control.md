@@ -117,10 +117,21 @@ principal:
 - reseller: projects and customers owned by that reseller
 - customer: only their projects and allowed project actions
 
-Project creation can assign an initial Project-owner grant, but the creator ID
-is not an authorization shortcut. Owners and superadmins can see all Projects
-regardless of who created them; every other inventory item and action is
-filtered by explicit grants and still enforced by its endpoint.
+The creator ID provides attribution. Inventory and actions use explicit
+permissions. Full Project inventory requires global `projects.list`,
+top-level `project.view` or global wildcard authority.
+Other signed-in principals see only exact `project.view` and scoped wildcard
+Project grants. Deleted and tombstoned Projects are omitted. Scoped inventory
+resolves at most 100 distinct IDs with four concurrent reads.
+
+### Project domain delegation
+
+Grant `project.domains.view` for read-only inventory, or
+`project.domains.manage` to read, add, verify and remove domains. Scope each
+grant to the exact Project. Also grant `project.view` for dashboard inventory
+and navigation. The SDK and CLI can administer domains with the domain grant
+alone. Server Edge inventory and configuration use their own
+`server.edge.view` and `server.edge.manage` permissions.
 
 This is the intended foundation for a future official Hosting Provider module.
 The module should not create a separate customer permission system. It should
@@ -147,6 +158,72 @@ The dashboard login screen calls the same versioned Auth endpoints as other
 clients. `/zelavis/api/v1/runtime/access` requires authentication and returns
 the real session principal. There is no demo-owner fallback or query-string
 identity switch.
+
+## Registration authority
+
+Native Identity owns a registration policy in each runtime's own store. The
+Platform keeps its policy in the System Store and each App keeps its policy in
+its own database. The Platform requires a completed first-owner claim before
+public enrollment. A policy revision serializes disabling registration with
+password and first-time OAuth enrollment. Accounts staged by an interrupted
+enrollment stay unavailable for sign-in until recovery finishes the committed
+account or removes the staged writes.
+
+A registered human starts with the Platform `customer` or App `user` role
+and no grants. App users retain the per-account Tenant default. Changing one
+Project's registration policy requires `project.settings.manage` for that
+exact Project. The Platform gateway forwards only that permission to the App.
+Platform-wide policy changes require `system.settings.manage` in system scope.
+
+The Platform Auth settings page and each Project's Auth page edit these same
+policies. The Project registration control uses the exact settings route, so
+its availability is independent of provider-administration and runtime-config
+reads. The Platform login page offers Create account while password enrollment
+is available. Server policy also refuses an open form after registration closes.
+
+On a native App's site origin, public password forms and self-session routes
+use that App's Identity runtime. The ingress accepts only the selected App's
+cookie or audience-shaped bearer. Identity verifies the token digest, expiry
+and session epoch against the App's own store. Cookie mutations require the
+same browser origin. The public ingress strips Platform and sibling Project
+credentials and sends no Gateway authority. The Platform's authenticated
+management proxy continues to strip child response cookies.
+
+## Human access delegation
+
+Native Identity conditionally replaces a human account's role, permissions and
+concrete scoped grants. The access revision and session epoch commit together
+through the account repository's atomic mutation. Repeated input at an old
+revision fails with HTTP 409. An identical write at the current revision
+preserves sessions.
+
+The runtime bounds admission and serializes account administration. A locally
+authenticated administrator's account authority is refreshed inside that gate.
+Both old and proposed target authority must be held by the actor. Role changes
+use the Platform's `customer`, `operator` and `reseller` labels, or an App's
+`user` label. Elevated labels require the same actor label or a top-level
+wildcard. Owner, service, pending and self-access edits are refused.
+
+The exact Project route first reads only the named App account and intersects
+the current and requested concrete permission names with the caller's exact
+Project authority. The Gateway signs a digest bound to the account, conditional
+input and that permission set in its existing audience-bound, single-use
+envelope. The child rechecks the digest and target revision under its writer
+gate. The digest keeps the 100-entry edit within local header and remote
+dispatch bounds. Generic proxy authority cannot substitute for that proof.
+
+Successful writes append a security event containing actor ID, target ID and
+revision. An audit failure reports the committed revision so callers can read
+the authoritative account. Credential administration and grant-bearing
+creation enforce the same authority checks. Identity metadata remains confined
+to its dedicated operations.
+
+The dashboard consumes the authenticated `/runtime/access` response when
+filtering menus and Project actions. A registered customer can open Projects
+with an empty inventory. Assigning an exact `project.view` grant adds that
+Project and its backend inspection surface. Human access drawers in Platform
+and Project Users use the conditional account endpoints. Existing advanced
+access remains visible, and owner, service and self edits stay protected.
 
 ## App Data Is Its Own Authority
 

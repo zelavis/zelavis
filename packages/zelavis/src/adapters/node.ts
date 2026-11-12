@@ -8,6 +8,9 @@ import { systemStoreComponent } from "../platform/platform-backups.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { createZelavisEdgePreviews } from "../edge/previews.js";
+import { createNodeDnsTxtResolver } from "../domain-verifier.js";
+import { preflightHostname } from "../edge/onboarding.js";
+import { isProjectDomainLoopbackTarget, PROJECT_DOMAIN_PROBE_PATH, type ProjectDomainTlsMode } from "../edge/project-domains.js";
 import { fetchNodeSite } from "./_node-site-fetch.js";
 import { createNodeEdgePreviewHost } from "./_node-edge-previews.js";
 import {
@@ -207,6 +210,8 @@ export interface NodeAdapterOptions {
     kind?: "memory";
   };
   edge?: false;
+  /** Fixed local HTTP listener used by the operator's external TLS terminator. */
+  externalProjectDomainTarget?: string;
   /** Installer-selected host authority, never inferred from an HTTP request. */
   installation?: { prefix: string; instance: string; edge: boolean };
   /** Where machines enroll and the pin to use; published for operators when the host serves one. */
@@ -594,6 +599,29 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         }
       }
 
+      const externalTarget = options.externalProjectDomainTarget;
+      if (externalTarget !== undefined && !isProjectDomainLoopbackTarget(externalTarget)) {
+        return yield* new IntegrationFailure(new Error("External Project domain ingress requires a fixed IPv4 loopback HTTP target with a port."));
+      }
+      const probeProjectDomain = (hostname: string, mode: ProjectDomainTlsMode, target?: string) => present(Effect.gen(function* () {
+        const url = new URL(PROJECT_DOMAIN_PROBE_PATH, target ?? (mode === "managed" ? "https://127.0.0.1" : "http://127.0.0.1"));
+        const result = yield* integration(() => fetchNodeSite(url, {
+          method: "GET", headers: { host: hostname }, signal: AbortSignal.timeout(2500),
+        }, mode === "managed" ? { servername: hostname } : undefined));
+        if (result.body) yield* integration(() => result.body!.cancel());
+        return result.status === 204 && result.headers.get("x-zelavis-project-domain") === "ready";
+      }));
+      const probeProjectDomainWithdrawal = (hostname: string) => present(Effect.gen(function* () {
+        const reachable = yield* integration(() => probeProjectDomain(hostname, "external"));
+        if (!reachable) return false;
+        // The fixed local adapter may fall back to its own certificate after withdrawal.
+        const response = yield* integration(() => fetchNodeSite(new URL(PROJECT_DOMAIN_PROBE_PATH, "https://127.0.0.1"), {
+          method: "GET", headers: { host: hostname }, signal: AbortSignal.timeout(2500),
+        }, { servername: hostname, rejectUnauthorized: false }));
+        if (response.body) yield* integration(() => response.body!.cancel());
+        return response.status === 404 && !response.headers.has("x-zelavis-project-domain");
+      }));
+
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
         : undefined;
@@ -655,6 +683,17 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(!isProjectRuntime ? { projectInstallHost: () => present(availableRequirements(provisionableRequirements(hostOperations !== undefined)).pipe(
             Effect.map((requirements) => ({ drivers: ["js" as const], requirements, ...(runtimePlatform() ? { platform: runtimePlatform()! } : {}) })))) } : {}),
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
+          ...(!isProjectRuntime && systemStore ? { projectDomainIngress: {
+            dns: createNodeDnsTxtResolver(),
+            ...(externalTarget ? { externalTarget } : {}),
+            preflight: (hostname: string) => present(Effect.gen(function* () {
+              const dns = yield* integration(() => preflightHostname(hostname));
+              return dns.valid && dns.dnsResolved && (yield* integration(() => probeProjectDomain(hostname, "external")));
+            })),
+            probe: (hostname: string, mode: ProjectDomainTlsMode) => probeProjectDomain(hostname, mode,
+              mode === "external" ? externalTarget : undefined),
+            probeWithdrawal: probeProjectDomainWithdrawal,
+          } } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),
           ...(edgePreviews ? { edgePreviews } : {}),

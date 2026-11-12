@@ -15,6 +15,7 @@ import { createZelavisEdgePreviews, type ZelavisEdgePreviews } from "../edge/pre
 import { requestNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
 import { ensureProductionEdge } from "../edge/production.js";
+import { classifyProjectPublicAuthRequest, hasCanonicalSitePath, PROJECT_AUTH_API, PROJECT_AUTH_ROOT } from "../platform/project-public-auth.js";
 
 export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configuration: Readonly<Record<string, unknown>>): Effect.fn.Return<NodeRuntimeEngine, TaggedFailure> {
   const options = yield* evaluate(() => {
@@ -72,6 +73,9 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
       const adapter = nodeAdapter({ dataDirectory: options.dataDirectory,
           ...(process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT ? { hostOperationsEndpoint: process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT } : {}),
           ...(options.installation ? { installation: options.installation, ...(!options.installation.edge ? { edge: false as const } : {}) } : {}),
+          ...(process.env.ZELAVIS_EXTERNAL_PROJECT_DOMAIN_TARGET ? {
+            externalProjectDomainTarget: process.env.ZELAVIS_EXTERNAL_PROJECT_DOMAIN_TARGET,
+          } : {}),
           ...(options.servicesDirectory ? { services: { directory: options.servicesDirectory } } : {}),
           ...(options.enrollmentEndpoint ? { enrollmentEndpoint: options.enrollmentEndpoint } : {}),
           ...(process.env.ZELAVIS_CLOUD_POLICY ? { cloud: { policyFile: resolve(process.env.ZELAVIS_CLOUD_POLICY),
@@ -177,6 +181,9 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
         const projectId = request.headers.get(NODE_RUNTIME_PREVIEW_ID);
         if (!projectId) return runtime.fetch(request, context);
         if (!options.custody || request.headers.get(NODE_RUNTIME_PREVIEW_KEY) !== options.custody.token) return Promise.resolve(new Response("Private preview authority required.", { status: 401 }));
+        if (!hasCanonicalSitePath(request, context) && classifyProjectPublicAuthRequest(request.method, new URL(request.url).pathname, PROJECT_AUTH_ROOT, PROJECT_AUTH_API)) {
+          return Promise.resolve(new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } }));
+        }
         const headers = new Headers(request.headers); headers.delete(NODE_RUNTIME_PREVIEW_ID); headers.delete(NODE_RUNTIME_PREVIEW_KEY);
         return previewFetch.get(projectId)?.(new Request(request, { headers })) ?? Promise.resolve(new Response("Preview unavailable.", { status: 503 }));
       };

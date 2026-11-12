@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { present, integrationValue, unwrapFailure, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type {
   AuthenticationInput,
   AuthenticationResult,
@@ -16,9 +16,12 @@ import type { IdentityAuthorizationFlowRepository } from "../contracts/repositor
 import type { Account, IdentityAuthorizationFlow } from "../domain/entities.js";
 import type { AccountService } from "./account-service.js";
 import type { CredentialService } from "./credential-service.js";
+import type { RegistrationService } from "./registration-service.js";
 import type { SessionService } from "./session-service.js";
 import {
+  AuthInvalidCredentialsError,
   IdentityConflictError,
+  RegistrationError,
   IdentityNotFoundError,
   IdentityValidationError,
 } from "../core/errors.js";
@@ -28,6 +31,7 @@ export interface AuthenticationServiceOptions {
   credentials: CredentialService;
   sessions: SessionService;
   authorizationFlows: IdentityAuthorizationFlowRepository;
+  registration: RegistrationService;
 }
 
 export interface BeginAuthorizationCodeInput {
@@ -112,16 +116,28 @@ export class AuthenticationService {
   private providerApi(): CredentialProviderApi {
     return {
       accounts: {
-        create: (account) => this.options.accounts.create(account),
+        create: () => present(Effect.fail(new RegistrationError("EnrollmentRequired", "New accounts require enrollment."))),
         findById: (id) => this.options.accounts.findById(id),
         findByEmail: (email) => this.options.accounts.findByEmail(email),
         findByUsername: (username) => this.options.accounts.findByUsername(username),
       },
       credentials: {
-        create: (credential) => this.options.credentials.create(credential),
+        create: (credential) => present(Effect.gen({ self: this }, function* () {
+          if (!(yield* integration(() => this.options.accounts.findById(credential.accountId)))) {
+            return yield* Effect.fail(new AuthInvalidCredentialsError());
+          }
+          return yield* integration(() => this.options.credentials.create(credential));
+        })),
         findByProviderIdentifier: (registeredProvider, identifier) =>
           this.options.credentials.findByProviderIdentifier(registeredProvider, identifier),
-        update: (credential) => this.options.credentials.update(credential),
+        update: (credential) => present(Effect.gen({ self: this }, function* () {
+          const existing = yield* integration(() => this.options.credentials.findById(credential.id));
+          if (existing?.accountId !== credential.accountId ||
+              !(yield* integration(() => this.options.accounts.findById(credential.accountId)))) {
+            return yield* Effect.fail(new AuthInvalidCredentialsError());
+          }
+          return yield* integration(() => this.options.credentials.update(credential));
+        })),
       },
       sessions: {
         create: (session) => this.options.sessions.create(session),
@@ -222,7 +238,7 @@ export class AuthenticationService {
       providerName,
       identifier,
     ));
-    let account;
+    let account: Account;
     let credential = registered;
     if (flow.mode === "link") {
       const linked = yield* integrationValue(self.options.accounts.findById(flow.accountId!));
@@ -256,42 +272,7 @@ export class AuthenticationService {
       if (!existing) throw new IdentityNotFoundError("The linked account no longer exists.");
       account = existing;
     } else {
-      // Two first logins for one external identity can arrive together. Both
-      // see no credential; one wins the atomic create and the other must adopt
-      // the winner's account rather than leave a second one behind.
-      let created: Account | undefined;
-      const adopted = yield* Effect.gen(function* () {
-        created = yield* integrationValue(self.options.accounts.create({
-          id: generatedId("account"),
-          email: identity.email,
-          username: identity.username ?? (!identity.email ? `oidc_${secureValue(9)}` : undefined),
-          displayName: identity.displayName,
-          verified: identity.verified ?? false,
-          metadata: identity.metadata,
-        }));
-        const newCredential = yield* integrationValue(self.options.credentials.create({
-          id: generatedId("credential"),
-          accountId: created.id,
-          provider: providerName,
-          identifier,
-          metadata: identity.metadata,
-        }));
-        return { account: created, credential: newCredential };
-      }).pipe(Effect.catch((failure) => Effect.gen(function* () {
-        if (created) yield* integrationValue(self.options.accounts.delete(created.id));
-        if (!isConflict(failure)) return yield* Effect.fail(failure);
-        const winner = yield* integrationValue(self.options.credentials.findByProviderIdentifier(
-          providerName,
-          identifier,
-        ));
-        const winnerAccount = winner
-          ? yield* integrationValue(self.options.accounts.findById(winner.accountId))
-          : null;
-        if (!winner || !winnerAccount) return yield* Effect.fail(failure);
-        return { account: winnerAccount, credential: winner };
-      })));
-      credential = adopted.credential;
-      account = adopted.account;
+      return yield* integration(() => self.options.registration.enrollPrepared(providerName, identity));
     }
 
     const session = yield* integrationValue(self.options.sessions.create({
@@ -357,22 +338,22 @@ export class AuthenticationService {
   }
 
   authenticate(providerName: string, input: AuthenticationInput): Promise<AuthenticationResult> {
-    const self = this;
-    return present(Effect.gen(function* (): Effect.fn.Return<AuthenticationResult, IntegrationFailure> {
-    const provider = self.providers.get(providerName);
-
-    if (!provider) {
-      throw new IdentityNotFoundError(
-        `Unknown authentication provider: ${providerName}`,
-      );
-    }
-
-    if (!provider.authenticate) {
-      throw new IdentityValidationError(
-        `Authentication provider ${providerName} requires its Authorization Code workflow.`,
-      );
-    }
-    return (yield* integrationValue(provider.authenticate(input, self.providerApi())));
-  }));
+    return present(Effect.gen({ self: this }, function* () {
+      const provider = this.providers.get(providerName);
+      if (!provider) {
+        return yield* Effect.fail(new IdentityNotFoundError(
+          `Unknown authentication provider: ${providerName}`,
+        ));
+      }
+      const authenticate = provider.authenticate;
+      if (!authenticate) {
+        return yield* Effect.fail(new IdentityValidationError(
+          `Authentication provider ${providerName} requires its Authorization Code workflow.`,
+        ));
+      }
+      const result = yield* integration(() => authenticate.call(provider, input, this.providerApi()));
+      if (result.account.registrationPending) return yield* Effect.fail(new AuthInvalidCredentialsError());
+      return result;
+    }));
   }
 }

@@ -40,11 +40,6 @@ The database layer already holds the hard parts of Parts 3 and 4, natively and m
 | One writer per entity | one writer per partition, a permit, and a writer generation checked in every commit |
 | Shard lock | shard writer claim with a generation; Project placement `{owner, epoch}` CAS with Agent self-fencing |
 
-What Zelavis does not have: an App-facing actor primitive, durable execution of Workloads (jobs, schedules
-and webhooks are definitions without a durable runner: `TODO` "Workloads: durable queues, distributed
-execution, retries, leases, scheduler ownership"), follower failover, and a placement planner for remote
-shards.
-
 ## Decisions
 
 1. **Do not adopt Cluster's `Sharding`/`RunnerStorage` as placement or writer authority.**
@@ -57,9 +52,8 @@ shards.
    - Its SQL drivers need an `SqlClient`; Zelavis has no raw SQL surface, on purpose.
    - It is `unstable`.
 2. **Adopt the Entity programming model as a native App primitive: durable entities.**
-   - **Address:** `(Tenant, entity type, entity id)`. The mailbox is records in the Tenant's own partition
-     (a reserved namespace, `zv.mailbox`), so routing an entity is routing its Tenant: location transparency
-     comes from the existing router, and a moved Tenant keeps its mailboxes.
+   - **Address:** `(Tenant, entity type, entity id)`. The mailbox is stored in the Tenant's own partition.
+     The router places the entity with its Tenant, and a moved Tenant keeps its mailboxes.
    - **Persisted by default.** Enqueue is one partition write; the message id is `(partition, Seq)`, not a
      Snowflake (dense partition-local identifiers stay the rule).
    - **`primaryKey`** is the existing idempotency receipt, so a resent message is recognised, not saved twice.
@@ -83,8 +77,7 @@ shards.
    - **Jobs** are persisted messages to a job entity.
    - **Inbound webhooks** save before answering and take the provider's event id as `primaryKey`.
    - **Outbound webhooks** are outbox messages delivered at least once, with an `Idempotency-Key` header.
-   - **Schedules** are durable wake records (persist wake intent before idle eviction, as the conformance
-     item in the TODO already demands), fired by the Project's single writer. Cluster's `ClusterCron`/`Singleton` idea is used
+   - **Schedules** are durable wake records fired by the Project's single writer. Cluster's `ClusterCron`/`Singleton` idea is used
      with fencing: a duty that must run once runs where the writer generation is held.
 4. **Singleton duties follow the writer.** Cross-Tenant index refresh, backup schedules, workflow resumption
    and schedules run only in the process holding the database's writer claim. No Project runtime advertises
@@ -96,8 +89,6 @@ shards.
      can prove (the leader transport's acknowledgments).
    - Promotion is one CAS raising the epoch; every commit checks the epoch, so a returning old writer is
      refused at its first write.
-   - This is the TODO's "Follower failover" item; it waits for that item's turn after shard movement in the
-     agreed sequence.
 6. **Placement proposals use consistent hashing with bounded loads; placement stays a committed record.**
    - When the two-fabrics contract activates remote shards, the planner proposes `shard → Node` with virtual
      nodes, Node weights from capacity, and a load cap, which minimises movement when Nodes come and go.

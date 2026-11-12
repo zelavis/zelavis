@@ -18,6 +18,8 @@ import type { BundleStore } from "../bundle-store.js";
 export interface ZelavisPlatformFrontendContext {
   /** Path the installation is mounted at, e.g. `/zelavis`. */
   readonly rootPath: string;
+  /** Configured, versioned API mount for the same runtime. */
+  readonly apiBasePath: string;
   readonly title?: string;
   readonly subtitle?: string;
   /** Dev server to proxy to while developing the frontend. */
@@ -40,6 +42,8 @@ export interface ZelavisPlatformFrontendContext {
 export interface ZelavisPlatformFrontend {
   /** Service that serves the frontend at the installation's root path. */
   readonly service: ZelavisRuntimeService<any>;
+  /** Advertises the built-in public App auth pages to the Project operator UI. */
+  readonly appPublicAuth?: true;
   /** Serves the frontend's own assets, when it ships any. */
   readonly bundleStore?: BundleStore;
   /**

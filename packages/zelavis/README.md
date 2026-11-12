@@ -70,6 +70,41 @@ the same guided flow with `zelavis setup`, while automation uses
 `zelavis bootstrap --password-stdin`. All three claim the same durable
 first-owner bootstrap operation.
 
+Public registration starts closed in the Platform and in each App. The
+Platform also requires completed first-owner bootstrap. A saved policy takes
+precedence over the embedded `subsystems.auth.registration` initial setting.
+Use `zelavis auth registration-settings` and `set-registration-settings` for
+the Platform, or `zelavis projects registration-settings PROJECT` and
+`set-registration-settings PROJECT` for a running App. Pass the current
+`revision` as `expectedRevision` to the write. Equivalent operations are
+available through the SDK and the versioned Auth API.
+
+The setting controls password signup and first-time OAuth enrollment. Existing
+users can still sign in. New Platform accounts have the `customer` role and
+new App accounts have the `user` role, with no implicit grants.
+
+An administrator can replace another human account's access with
+`client.auth.admin.setAccountAccess(accountId, input)` or
+`zelavis auth set-account-access ACCOUNT --data JSON --json`.
+The input carries `expectedRevision`, one `role`, `permissions` and explicit
+`grants`. Read `accessRevision` through `auth.admin.accounts(accountId)`.
+Platform role labels are `customer`, `operator` and `reseller`. An App uses
+`user`. The administrator must hold every existing and requested capability.
+Changed access atomically invalidates earlier sessions. A matching no-op keeps
+them valid, and a stale revision returns HTTP 409.
+
+Platform owners can grant customers access to manage exact Project hostnames.
+Project Domains verifies a DNS TXT challenge before routing a hostname to the
+Project. The dashboard, JavaScript SDK and `zelavis projects` commands share
+the same domain operations.
+
+Project account edits use `client.projects.setAccountAccess(projectId, accountId, input)`
+or `zelavis projects set-account-access PROJECT ACCOUNT --data JSON --json`.
+They require `project.users.manage` for that exact App and accept only grants
+for it. Signed-in Platform customers receive an empty Projects inventory until
+granted `project.view` for an existing Project. That permission includes backend
+inspection and database/storage reads.
+
 Access grants with a Project or service scope match only routes declaring the
 same explicit identity. Unscoped and system grants match runtime-wide routes;
 top-level principal permissions express authority spanning scopes. Project Auth

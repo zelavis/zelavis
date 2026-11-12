@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { request } from 'node:http';
 import { createZelavisEdgePreviews } from '../dist/edge/previews.js';
 import { createNodeEdgePreviewHost } from '../dist/adapters/_node-edge-previews.js';
 import { createMemorySystemStore } from '../dist/system-store.js';
@@ -47,4 +48,23 @@ test('owned frontends and remote placements do not open local listeners', async 
   assert.equal(await edge.synchronize({...running,ownerProjectId:'parent'}),undefined);
   assert.equal((await edge.synchronize({...running,placement:{nodeId:'remote'}})).status,'unavailable');
   await edge.close();
+});
+
+test('the preview listener refuses raw request targets normalized into a public auth path', async () => {
+  const host = createNodeEdgePreviewHost('127.0.0.1');
+  const listener = await host.open({ projectId: 'app', port: 0, fetch: async () => new Response('forwarded') });
+  const status = path => new Promise((resolve, reject) => {
+    const incoming = request({ hostname: '127.0.0.1', port: listener.port, path }, response => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    incoming.on('error', reject);
+    incoming.end();
+  });
+  try {
+    assert.equal(await status('/zelavis/login'), 200);
+    assert.equal(await status('/other/../zelavis/login'), 404);
+    assert.equal(await status('/zelavis/%2e/login'), 404);
+    assert.equal(await status('/zelavis\\login'), 404);
+  } finally { await listener.close(); }
 });

@@ -37,6 +37,7 @@ const upstream = createServer(async (req, res) => {
   if (path === `${api}/runtime/config`) return send(config);
   if (path === `${proxy}/runtime/config`) return send({ ...config, serviceRegistry: projectRegistry });
   if (path === `${api}/auth/bootstrap`) return send({ available: true, required: false, providers: ["password"], enrollmentProviders: [] });
+  if (path === `${api}/auth/registration`) return send({ enabled: false, providers: [] });
   if (!req.headers.cookie?.includes("view-session=owner")) return send({ error: "Unauthorized" }, 401);
   observed.push({ path, cookie: req.headers.cookie });
   if (path === `${api}/auth/session` && req.method === "DELETE") { signedOut = true; return send({ ok: true }); }
@@ -187,6 +188,37 @@ try {
     } finally { releaseScripts(); releaseData(); await startup.close(); }
   }
   console.log("Static shell: desktop/mobile HTML frame without JavaScript, native refresh with held scripts/data, prepaint appearance and retained frame geometry passed.");
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${origin}/zelavis/marketplace?sidebarView=content`, { waitUntil: "networkidle" });
+    await page.getByRole("tab", { name: /^Apps/ }).waitFor();
+    const workspace = page.locator("#workspace");
+    await workspace.evaluate(element => {
+      const spacer = document.createElement("div");
+      spacer.style.height = "1600px";
+      element.append(spacer);
+    });
+    const header = page.locator(".header");
+    const headerTop = (await header.boundingBox()).y;
+    const bounds = await workspace.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.wheel(0, 650);
+    await page.waitForFunction(() => document.querySelector("#workspace").scrollTop > 0);
+    await page.mouse.wheel(-650, 2500);
+    await page.waitForFunction(() => {
+      const workspace = document.querySelector("#workspace");
+      return workspace.scrollTop + workspace.clientHeight >= workspace.scrollHeight - 1;
+    });
+    assert.equal((await header.boundingBox()).y, headerTop);
+    assert.deepEqual(await page.evaluate(() => ({
+      x: window.scrollX, y: window.scrollY,
+      width: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      height: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      overscroll: getComputedStyle(document.documentElement).overscrollBehavior,
+    })), { x: 0, y: 0, width: 0, height: 0, overscroll: "none" });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  console.log("Workspace: native content scrolls inside a fixed desktop and mobile shell.");
   const route = `${origin}/zelavis/projects/view-lab/database?databaseTenant=tenant-a&databaseTable=articles&databaseRow=row-a&sidebar=projects/project/database`;
   // A trackpad click often moves slightly between pointerdown and pointerup.
   // Swiper must not consume mouse clicks, even while touch swiping is disabled.
@@ -238,6 +270,52 @@ try {
   await touch.detach();
   await page.setViewportSize({ width: 1440, height: 1000 });
   console.log("Sidebar: desktop/mobile trackpad drift and keyboard Back navigate on the first click; real touch swipes still synchronize the URL");
+  for (const viewport of [{ width: 1440, height: 360 }, { width: 390, height: 360 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${origin}/zelavis/server?sidebar=server&sidebarView=menu`, { waitUntil: "networkidle" });
+    const rail = page.locator("#dashboard-navigation");
+    const menu = rail.locator('swiper-container[aria-label="Platform navigation"] .navigation-panel[aria-hidden="false"]');
+    await menu.getByRole("navigation", { name: "Server navigation" }).waitFor();
+    const assertScrollport = async panel => {
+      const geometry = await panel.evaluate(element => {
+        const aside = element.closest("aside");
+        const sidebar = aside.getBoundingClientRect(), scrollport = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          edge: sidebar.right - parseFloat(getComputedStyle(aside).borderRightWidth) - scrollport.right,
+          inset: parseFloat(style.paddingInlineEnd),
+          thumb: getComputedStyle(element, "::-webkit-scrollbar").width,
+          thumbColor: getComputedStyle(element, "::-webkit-scrollbar-thumb").backgroundColor,
+          overflow: element.scrollHeight - element.clientHeight,
+        };
+      });
+      assert.ok(Math.abs(geometry.edge) < 1, "the sidebar scrollport ends at its divider");
+      assert.ok(geometry.inset >= 14 && geometry.overflow > 0, "inset content overflows within the sidebar");
+      assert.equal(geometry.thumb, "3px");
+      return geometry.thumbColor;
+    };
+    await page.locator("html").evaluate(root => { root.dataset.dashboardTheme = "light"; });
+    assert.equal(await assertScrollport(menu), "rgb(201, 201, 201)");
+    const menuBounds = await menu.boundingBox();
+    const footer = rail.locator(".sidebar-switches");
+    const footerTop = (await footer.boundingBox()).y;
+    await page.mouse.move(menuBounds.x + 30, menuBounds.y + menuBounds.height / 2);
+    await page.mouse.wheel(0, 160);
+    await page.waitForFunction(() =>
+      document.querySelector('#dashboard-navigation swiper-container[aria-label="Platform navigation"] .navigation-panel[aria-hidden="false"]')?.scrollTop > 0);
+    assert.equal((await footer.boundingBox()).y, footerTop, "sidebar footer stays fixed when the menu scrolls");
+    await page.mouse.move(viewport.width - 5, 5);
+    await page.locator("html").evaluate(root => { root.dataset.dashboardTheme = "dark"; });
+    assert.equal(await assertScrollport(menu), "rgb(90, 90, 96)");
+    await footer.getByRole("button", { name: "Account", exact: true }).click();
+    const utility = rail.locator('.sidebar-utilities .utility-panel[aria-hidden="false"]');
+    await utility.getByRole("button", { name: "Log out", exact: true }).waitFor({ state: "attached" });
+    await assertScrollport(utility);
+    await page.locator("html").evaluate(root => { root.dataset.dashboardTheme = "light"; });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  console.log("Sidebar: the menu and utility scrollports reach the edge with a 3px thumb in both themes.");
+
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await page.goto(`${origin}/zelavis/server/resources`, { waitUntil: "networkidle" });

@@ -8,6 +8,20 @@ export * from "./core/types.js";
 export * from "./core/session-authenticator.js";
 export * from "./core/password.js";
 export * from "./domain/entities.js";
+export {
+  ACCOUNT_ACCESS_LIMIT,
+  ACCOUNT_ACCESS_BODY_BYTES,
+  SetAccountAccessInputSchema,
+  decodeSetAccountAccessInput,
+  accountAccessInputJsonSchema,
+  accountAccessResultJsonSchema,
+  type HumanAccountRole,
+  type ConcreteAccountGrant,
+  type SetAccountAccessInput,
+  type AccountAccessResult,
+} from "./domain/account-access.js";
+export * from "./domain/registration.js";
+export * from "./services/registration-service.js";
 export * from "./services/account-service.js";
 export * from "./services/authentication-service.js";
 export * from "./services/credential-service.js";

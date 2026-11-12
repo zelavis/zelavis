@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { present, integration, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
+import { decodeRegistrationControl, type RegistrationControl } from "../domain/registration.js";
 import { IdentityConflictError } from "../core/errors.js";
 import type {
   DatabaseRuntimeApi,
@@ -144,25 +145,58 @@ class IdentityDocumentStore {
   }));
   }
 
+  readRegistration(): Promise<RegistrationControl | null> {
+    return present(Effect.gen({ self: this }, function* () {
+      const collection = "auth_registration";
+      if (!(yield* integration(() => this.database.documents.collectionExists(collection)))) return null;
+      const document = yield* integration(() => this.database.documents.findById({ collection, id: "registration" }));
+      return document ? yield* integration(() => decodeRegistrationControl(document.data)) : null;
+    }));
+  }
+
+  mutateRegistration(mutation: (current: RegistrationControl | null) => RegistrationControl | null) {
+    return this.mutateDocument(
+      "auth_registration",
+      "registration",
+      mutation,
+      decodeRegistrationControl,
+      (control) => {
+        const { slots, ...settings } = decodeRegistrationControl(control);
+        return { ...settings, slots: slots.map((slot) => ({ ...slot })) };
+      },
+    );
+  }
+
   mutate<T extends IdentityEntity>(
     collection: string,
     id: string,
     mutation: (current: T | null) => T | null,
+  ): Promise<T | null> {
+    return this.mutateDocument(collection, id, mutation, deserialize<T>, serialize);
+  }
+
+  private mutateDocument<T>(
+    collection: string,
+    id: string,
+    mutation: (current: T | null) => T | null,
+    decode: (data: JsonObject) => T,
+    encode: (value: T) => JsonObject,
   ): Promise<T | null> {
     const self = this;
     return present(Effect.gen(function* (): Effect.fn.Return<T | null, IntegrationFailure> {
       yield* integrationValue(self.ensure(collection));
       for (let retry = 0; retry < 100; retry += 1) {
         const document = yield* integration(() => self.database.documents.findById({ collection, id }));
-        const current = document ? deserialize<T>(document.data) : null;
+        const current = document ? decode(document.data) : null;
         const next = mutation(current);
+        if (next === current) return current;
         const outcome = yield* Effect.gen(function* (): Effect.fn.Return<{ readonly value: T | null }, IntegrationFailure> {
           if (!document) {
             if (!next) return { value: null };
             yield* integration(() => self.database.documents.insert({
               collection,
               id,
-              data: serialize(next),
+              data: encode(next),
             }));
             return { value: next };
           }
@@ -177,7 +211,7 @@ class IdentityDocumentStore {
           yield* integration(() => self.database.documents.update({
             collection,
             id,
-            data: serialize(next),
+            data: encode(next),
             mode: "replace",
             expectedVersion: document.version,
           }));
@@ -190,7 +224,7 @@ class IdentityDocumentStore {
         );
         if (outcome) return outcome.value;
       }
-      throw new Error("Auth attempt update did not converge after 100 retries.");
+      throw new Error("Identity document mutation did not converge after 100 retries.");
     }));
   }
 }
@@ -352,6 +386,10 @@ export function createDatabaseAuthRepositories(
     list: () => store.list<AuthSecurityEvent>("auth_security_events"),
   };
   return {
+    registration: {
+      read: () => store.readRegistration(),
+      mutate: (mutation) => store.mutateRegistration(mutation),
+    },
     accounts,
     credentials,
     sessions,

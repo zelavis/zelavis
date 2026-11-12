@@ -59,6 +59,7 @@ export const readDatabaseWorkspace = (context: Pick<ServerRequestContext, "reque
     return yield* Effect.gen(function* () {
       const control = object(yield* read(`${API_PREFIX}v1/runtime/config`));
       const base = String(object(control.api).basePath);
+      const access = yield* read(`${base}/runtime/access`);
       if (!projectId) throw new Error("A database view requires a project ID");
       const projects: Record<string, unknown>[] = array(object(yield* read(`${base}/runtime/projects`)).projects).map(value => { const project = object(value); return { ...project, status: object(project.runtime).status }; });
       const project = projects.find(entry => entry.id === projectId);
@@ -99,7 +100,7 @@ export const readDatabaseWorkspace = (context: Pick<ServerRequestContext, "reque
       const recordsJson = JSON.stringify(records);
       // Public answers are bounded (2 MiB); a page of very large documents says so instead of failing the whole view.
       const tooLarge = recordsJson.length > MAX_RECORDS_JSON;
-      return { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, after: after ?? "", next: next ?? "", limit, readonly: Boolean(systemView), ...(queryError || tooLarge ? { queryError: queryError ?? "This page of records is too large to load at once. Choose a smaller page size." } : {}), recordsJson: tooLarge ? "[]" : recordsJson, choicesJson: JSON.stringify(choices), tenantsJson: JSON.stringify(tenants), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu }) } satisfies DatabaseWorkspace;
+      return { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, after: after ?? "", next: next ?? "", limit, readonly: Boolean(systemView), ...(queryError || tooLarge ? { queryError: queryError ?? "This page of records is too large to load at once. Choose a smaller page size." } : {}), recordsJson: tooLarge ? "[]" : recordsJson, choicesJson: JSON.stringify(choices), tenantsJson: JSON.stringify(tenants), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu, access }) } satisfies DatabaseWorkspace;
     }).pipe(Effect.catchCause(cause => {
       const error = Cause.squash(cause);
       if (signal.aborted) return Effect.fail(error);

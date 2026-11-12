@@ -3,12 +3,14 @@
 // are outbox messages delivered with an Idempotency-Key. Each is held to what it promises: kept across a stop,
 // handled once in the database however often it is delivered, and refused where it should be refused.
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createMemoryWorkloadsStore, workloadsEndpointGroup } from "../dist/app/workloads/workloads-service.js";
 import { serveDurableWorkloads, signBody, verifyTimestampedSignature } from "../dist/app/workloads/durable.js";
+import { openNodeDatabase } from "../dist/db/node-host.js";
 import { Effect } from "effect";
-import { openTemporaryDatabase } from "./_database.mjs";
+import { openTemporaryDatabase, temporaryDatabaseDirectory } from "./_database.mjs";
 
 const wait = (millis) => new Promise((resolve) => setTimeout(resolve, millis));
 const until = async (condition, what, millis = 8000) => {
@@ -262,4 +264,315 @@ test("nothing polls: an outbox emit delivers at once, a new definition takes eff
   assert.equal((await api.forTenant("acme").entities.state({ type: "late", id: "x" })).pending, 1, "no handler yet, so it waits");
   await create({ type: "entity", name: "late", code: recording });
   await until(async () => (await api.forTenant("acme").entities.state({ type: "late", id: "x" })).processed === 1, "the new handler takes it without anyone polling", 3000);
+});
+
+const providerResultCode = `
+const validRequestId = (id) => typeof id === "string" && /^conversion-[a-z0-9-]{1,40}$/.test(id);
+const terminal = (status) => status === "succeeded" || status === "failed";
+const reply = (outcome) => ({ reply: { outcome } });
+const readRequest = (documents, id) => documents.findById({ collection: "provider-requests", id });
+
+async function applyResult(documents, requestId, status) {
+  const current = await readRequest(documents, requestId);
+  if (!current) return reply("unknown-request");
+  if (current.data.status !== "pending") {
+    return reply(status === "pending" || status === current.data.status ? "unchanged" : "conflict");
+  }
+  if (status === "pending") return reply("pending");
+  return {
+    writes: [{ _tag: "Update", collection: "provider-requests", id: requestId, expectedVersion: current.version, data: { status } }],
+    reply: { outcome: "applied" },
+  };
+}
+`;
+
+async function providerRecoveryFixture(t, { holdFirstAcknowledgment = false } = {}) {
+  const directory = temporaryDatabaseDirectory();
+  const tenantId = "acme";
+  const requestId = "conversion-one";
+  const topic = "webhook.provider-submit";
+  const secret = "test-provider-result-secret";
+  const store = createMemoryWorkloadsStore([]);
+  const submissions = [];
+  const statusRequests = [];
+  const conversions = new Map();
+  let acceptedConversions = 0;
+  let heldResponse;
+  let mismatchNextStatus = false;
+  let opened;
+  let group;
+  let serving;
+
+  const provider = createServer((request, response) => {
+    if (request.method === "POST" && request.url === "/submit") {
+      request.setEncoding("utf8");
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        let envelope;
+        try {
+          envelope = JSON.parse(body);
+        } catch {
+          response.writeHead(400).end();
+          return;
+        }
+        const key = request.headers["idempotency-key"];
+        if (key !== requestId || envelope?.id !== key || envelope.topic !== topic || envelope.payload?.requestId !== key) {
+          response.writeHead(400).end();
+          return;
+        }
+        submissions.push({ envelope, key });
+        if (!conversions.has(key)) {
+          acceptedConversions += 1;
+          conversions.set(key, "pending");
+          if (holdFirstAcknowledgment) {
+            heldResponse = response;
+            return;
+          }
+        }
+        response.writeHead(202).end();
+      });
+      return;
+    }
+    const lookup = /^\/status\/(conversion-[a-z0-9-]{1,40})$/.exec(request.url);
+    if (request.method === "GET" && lookup) {
+      const id = lookup[1];
+      statusRequests.push(id);
+      const status = conversions.get(id);
+      if (status !== undefined) {
+        const answer = { requestId: mismatchNextStatus ? "conversion-other" : id, status };
+        mismatchNextStatus = false;
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(answer));
+        return;
+      }
+    }
+    response.writeHead(404).end();
+  });
+
+  const stop = async () => {
+    await serving?.stop();
+    serving = undefined;
+  };
+  t.after(async () => {
+    try {
+      await stop();
+    } finally {
+      try {
+        await opened?.close();
+      } finally {
+        heldResponse?.destroy();
+        if (provider.listening) {
+          await new Promise((resolve, reject) => {
+            provider.close((error) => error ? reject(error) : resolve());
+            provider.closeAllConnections();
+          });
+        }
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+  await new Promise((resolve, reject) => {
+    provider.once("error", reject);
+    provider.listen(0, "127.0.0.1", () => {
+      provider.off("error", reject);
+      resolve();
+    });
+  });
+  const origin = `http://127.0.0.1:${provider.address().port}`;
+  const openDatabase = async () => {
+    opened = await openNodeDatabase({ directory, shards: ["shard-0", "shard-1"], crossTenantRefresh: false });
+    group = workloadsEndpointGroup({ store, database: opened.api });
+  };
+  await openDatabase();
+  const tenant = () => opened.api.forTenant(tenantId);
+  await tenant().documents.createCollection({ name: "provider-requests" });
+  const create = async (body) => {
+    const answer = await route(group, "workloads.create")({ body: { tenant: tenantId, ...body } });
+    assert.equal(answer.status, 201, JSON.stringify(answer.body));
+    return answer.body;
+  };
+  await create({ type: "webhook", name: "provider-submit", url: `${origin}/submit` });
+  await create({ type: "webhook", name: "provider-result", secret, code: `${providerResultCode}
+export default async function handle(message, { documents }) {
+  const result = message.payload.body;
+  if (typeof result?.id !== "string" || !/^event-[a-z0-9-]{1,40}$/.test(result.id) ||
+      !validRequestId(result.requestId) || !terminal(result.status)) return reply("invalid-result");
+  return applyResult(documents, result.requestId, result.status);
+}` });
+  const checkJob = await create({ type: "job", name: "provider-check", code: `${providerResultCode}
+export default async function handle({ payload: { requestId } }, { documents }) {
+  if (!validRequestId(requestId)) return reply("invalid-result");
+  const current = await readRequest(documents, requestId);
+  if (!current) return reply("unknown-request");
+  if (current.data.status !== "pending") return reply("unchanged");
+
+  let result;
+  try {
+    const response = await fetch(${JSON.stringify(origin + "/status/")} + requestId, {
+      signal: AbortSignal.timeout(1000), redirect: "error",
+    });
+    if (response.status !== 200) {
+      await response.body?.cancel();
+      throw new Error("Unexpected provider HTTP status");
+    }
+    result = await response.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) return reply("invalid-result");
+    throw new Error("Provider status unavailable");
+  }
+  if (result?.requestId !== requestId || !(result.status === "pending" || terminal(result.status))) {
+    return reply("invalid-result");
+  }
+  return applyResult(documents, requestId, result.status);
+}` });
+
+  const message = (type, id, messageKey) => tenant().entities.message({ type, id, messageKey });
+  return {
+    requestId,
+    submissions,
+    statusRequests,
+    get acceptedConversions() { return acceptedConversions; },
+    mismatchStatusOnce: () => { mismatchNextStatus = true; },
+    finishConversion: (status) => {
+      assert.equal(conversions.get(requestId), "pending");
+      conversions.set(requestId, status);
+    },
+    start: () => {
+      assert.equal(serving, undefined);
+      serving = serveDurableWorkloads(opened.api, group.context);
+    },
+    stop,
+    reopen: async () => {
+      assert.equal(serving, undefined);
+      heldResponse?.destroy();
+      heldResponse = undefined;
+      await opened.close();
+      opened = undefined;
+      await openDatabase();
+    },
+    submit: () => tenant().documents.write({
+      operations: [{ _tag: "Insert", collection: "provider-requests", id: requestId, data: { status: "pending" } }],
+      emit: [{ id: requestId, topic, payload: { requestId } }],
+      idempotencyKey: requestId,
+    }),
+    owed: async () => (await tenant().outbox.read({ topic })).messages.map(({ id }) => id),
+    read: (id = requestId) => tenant().documents.findById({ collection: "provider-requests", id }),
+    message,
+    expectReply: async (type, id, key, outcome) => {
+      let result;
+      await until(async () => {
+        result = await message(type, id, key);
+        return result !== undefined && result.status !== "pending";
+      }, `waiting for ${type} ${id} message ${key}`);
+      assert.equal(result.status, "processed", result.lastError);
+      assert.deepEqual(result.reply, { outcome });
+    },
+    postResult: async (event, validSignature = true) => {
+      const body = JSON.stringify(event);
+      const signature = validSignature ? await Effect.runPromise(signBody(secret, body)) : "sha256=" + "0".repeat(64);
+      return route(group, "workloads.webhooks.receive")({
+        params: { projectId: "default", name: "provider-result" },
+        request: new Request("http://zelavis.local/provider-result", {
+          method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": signature }, body,
+        }),
+      });
+    },
+    check: async (attempt) => (await route(group, "workloads.run")({
+      params: { id: checkJob.id },
+      body: { input: { requestId }, primaryKey: `check-${requestId}-${attempt}` },
+    })).body,
+  };
+}
+
+test("a provider acknowledgment leaves a request pending until a verified result commits", async (t) => {
+  const fixture = await providerRecoveryFixture(t);
+  const { requestId } = fixture;
+  const receipt = await fixture.submit();
+  const pending = await fixture.read();
+  assert.equal(pending.data.status, "pending");
+  assert.deepEqual(await fixture.submit(), receipt);
+  assert.deepEqual(await fixture.owed(), [requestId]);
+
+  fixture.start();
+  await until(async () => (await fixture.owed()).length === 0, "provider accepted the outbox submission");
+  assert.deepEqual(await fixture.read(), pending);
+  await fixture.stop();
+  fixture.finishConversion("succeeded");
+
+  const unverified = { id: "event-unverified", requestId, status: "succeeded" };
+  assert.equal((await fixture.postResult(unverified, false)).status, 401);
+  assert.equal(await fixture.message("webhook", "provider-result", unverified.id), undefined);
+  const invalid = { id: "event-invalid", requestId, status: "done" };
+  const unknown = { id: "event-unknown", requestId: "conversion-unknown", status: "succeeded" };
+  const completed = { id: "event-complete", requestId, status: "succeeded" };
+  for (const event of [invalid, unknown, completed]) {
+    const answer = await fixture.postResult(event);
+    assert.equal(answer.status, 202);
+    assert.deepEqual(answer.body, { received: true, duplicate: false, messageKey: event.id });
+  }
+  const replay = await fixture.postResult(completed);
+  assert.equal(replay.status, 202);
+  assert.deepEqual(replay.body, { received: true, duplicate: true, messageKey: completed.id });
+  assert.equal((await fixture.message("webhook", "provider-result", completed.id)).status, "pending");
+  assert.deepEqual(await fixture.read(), pending);
+
+  fixture.start();
+  await fixture.expectReply("webhook", "provider-result", invalid.id, "invalid-result");
+  await fixture.expectReply("webhook", "provider-result", unknown.id, "unknown-request");
+  await fixture.expectReply("webhook", "provider-result", completed.id, "applied");
+  assert.equal(await fixture.read(unknown.requestId), undefined);
+  const result = await fixture.read();
+  assert.equal(result.data.status, "succeeded");
+  assert.equal(result.version, pending.version + 1);
+  assert.equal(fixture.acceptedConversions, 1);
+});
+
+test("a lost submission acknowledgment and a missed callback recover after reopen", async (t) => {
+  const fixture = await providerRecoveryFixture(t, { holdFirstAcknowledgment: true });
+  const { requestId } = fixture;
+  await fixture.submit();
+  const pending = await fixture.read();
+  fixture.start();
+  await until(() => fixture.acceptedConversions === 1, "provider accepted the submission with its response held");
+  await fixture.stop();
+  assert.deepEqual(await fixture.owed(), [requestId]);
+  await fixture.reopen();
+  assert.deepEqual(await fixture.owed(), [requestId]);
+  assert.deepEqual(await fixture.read(), pending);
+
+  fixture.start();
+  await until(async () => (await fixture.owed()).length === 0, "redelivery after reopen was acknowledged");
+  assert.deepEqual(fixture.submissions.map(({ key }) => key), [requestId, requestId]);
+  assert.deepEqual(fixture.submissions[0].envelope, fixture.submissions[1].envelope);
+  assert.equal(fixture.acceptedConversions, 1);
+  assert.deepEqual(await fixture.read(), pending);
+
+  fixture.mismatchStatusOnce();
+  const mismatched = await fixture.check(1);
+  await fixture.expectReply("job", "provider-check", mismatched.message.messageKey, "invalid-result");
+  assert.deepEqual(await fixture.read(), pending);
+  const waiting = await fixture.check(2);
+  await fixture.expectReply("job", "provider-check", waiting.message.messageKey, "pending");
+  assert.deepEqual(await fixture.read(), pending);
+
+  fixture.finishConversion("succeeded");
+  const recovered = await fixture.check(3);
+  const retry = await fixture.check(3);
+  assert.equal(recovered.duplicate, false);
+  assert.equal(retry.duplicate, true);
+  assert.equal(retry.message.messageKey, recovered.message.messageKey);
+  await fixture.expectReply("job", "provider-check", recovered.message.messageKey, "applied");
+  assert.deepEqual(fixture.statusRequests, [requestId, requestId, requestId]);
+  const result = await fixture.read();
+  assert.equal(result.data.status, "succeeded");
+  assert.equal(result.version, pending.version + 1);
+
+  for (const [status, outcome] of [["succeeded", "unchanged"], ["failed", "conflict"]]) {
+    const event = { id: `event-late-${status}`, requestId, status };
+    assert.equal((await fixture.postResult(event)).status, 202);
+    await fixture.expectReply("webhook", "provider-result", event.id, outcome);
+    assert.deepEqual(await fixture.read(), result);
+  }
+  assert.equal(fixture.submissions.length, 2);
+  assert.equal(fixture.acceptedConversions, 1);
 });

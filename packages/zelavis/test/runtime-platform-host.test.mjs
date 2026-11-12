@@ -151,6 +151,17 @@ for (const [failedActivation, lostReply] of [[false, false], [true, false], [fal
     const preview = `http://127.0.0.1:${app.preview.port}`;
     const first = await fetch(preview); const body = await first.text();
     assert.equal(first.status, 200, body);
+    await owner.projects.setRegistrationSettings("one", { enabled: true, expectedRevision: 0 });
+    const auth = `${preview}/zelavis/api/v1/auth`;
+    const signup = await fetch(`${auth}/sign-up/password`, { method: "POST",
+      headers: { origin: preview, "x-forwarded-proto": "https", "content-type": "application/json" },
+      body: JSON.stringify({ identifier: "public@example.com", password: "correct horse battery staple" }),
+    });
+    assert.equal(signup.status, 201, await signup.clone().text());
+    const appUser = (await signup.json()).account.id;
+    assert.match(signup.headers.get("set-cookie"), /^zelavis_app_[a-f0-9]{24}=/);
+    assert.doesNotMatch(signup.headers.get("set-cookie"), /Secure/);
+    const cookie = signup.headers.get("set-cookie").split(";", 1)[0];
     const records = await readdir(join(directory, "projects", ".agent-processes"));
     const pids = await Promise.all(records.map(name => readFile(join(directory, "projects", ".agent-processes", name), "utf8").then(JSON.parse)));
     const appPid = pids.find(record => record.workloadId === "one")?.pid;
@@ -172,6 +183,10 @@ for (const [failedActivation, lostReply] of [[false, false], [true, false], [fal
     assert.equal(after.runtime.status, "running", JSON.stringify(logs));
     assert.equal(after.runtime.url, app.runtime.url);
     assert.equal(after.preview.port, app.preview.port);
+    const appSession = await fetch(`${auth}/session`, { headers: { cookie } });
+    assert.equal(appSession.status, 200);
+    assert.equal((await appSession.json()).principal.id, appUser);
+    assert.equal((await fetch(`${auth}/accounts`, { headers: { cookie } })).status, 404);
     assert.equal((await owner.json("/runtime/access")).mode, "owner");
     process.kill(appPid, 0);
     const remaining = await readdir(join(directory, "projects", ".agent-processes"));

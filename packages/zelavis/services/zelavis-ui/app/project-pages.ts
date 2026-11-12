@@ -1,6 +1,7 @@
 import { Effect } from "effect";
+import { accountAccessEditor, canEditAccountAccess } from "./account-access-editor.ts";
 import { ApiError, array, label, object, request, type Config, type Project } from "./api.ts";
-import { button, empty, field, link, node } from "./dom.ts";
+import { button, empty, field, link, message, node } from "./dom.ts";
 import { badge, card, columns, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
 import { notRunning, projectContext } from "./project-context.ts";
 import { siteUrl } from "./projects-pages.ts";
@@ -13,6 +14,9 @@ import { tenantsScreen } from "./tenants-pages.ts";
 import { crossTenantIndexesScreen } from "./cross-tenant-indexes-page.ts";
 import { databaseImagesScreen } from "./database-images-page.ts";
 import { shardsScreen } from "./shards-page.ts";
+import { registrationSettingsCard } from "./registration-settings.ts";
+import { activeProjectDomainUrl, projectDomainsScreen, readProjectDomains } from "./project-domains-page.ts";
+import { canAccess, projectDomainAccess } from "./navigation-menu.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -20,7 +24,6 @@ import type { ScreenContext } from "./screens.ts";
 const managed = (project: Project) => { const value = object(object(project.recipe).managed); return Object.keys(value).length ? value : undefined; };
 
 const MANAGED_SECTIONS: Record<string, readonly [title: string, detail: string]> = {
-  domains: ["Domains", "Project hostnames and TLS bindings will be managed here."],
   files: ["Files", "A project file manager and deployment file view will live here."],
   "app-database": ["App database", "Managed app database access belongs here, separate from Zelavis-native collections."],
   setup: ["Setup", "Values the application's own installer asks for."],
@@ -44,10 +47,12 @@ export const handlesProjectPath = (context: ScreenContext) => {
 };
 
 export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context: ScreenContext) {
+  const section = context.path.split("/")[3] ?? "";
+  if (section === "domains" && context.projectId) return yield* projectDomainsScreen(context, context.projectId);
+  if (section === "auth" && context.projectId) return yield* projectAuthScreen(context, context.projectId);
   const entered = yield* projectContext(context);
   if (entered.missing) return entered.missing;
   const { project, scoped } = entered;
-  const section = context.path.split("/")[3] ?? "";
   const hosted = managed(project);
   const base = `/projects/${encodeURIComponent(project.id)}`;
   if (section === "") return yield* overviewScreen(context, project, scoped, hosted);
@@ -64,11 +69,10 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   if (section === "extensions") return extensionsScreen(base);
   if (section === "agents") return empty("No agents connected", "The dashboard shell is ready for the agent service boundary.");
   if (section === "frontend") return empty("No frontend selected", "This Project serves a placeholder to visitors. A frontend can be a static site or an application that brings its own server.");
-  if (section === "backend") return scoped ? backendScreen(base, scoped, hosted !== undefined) : notRunning();
+  if (section === "backend") return scoped ? backendScreen(context, base, scoped, hosted !== undefined) : notRunning();
   if (hosted && MANAGED_SECTIONS[section]) return yield* managedScreen(context, project, section, hosted);
   if (!scoped) return notRunning();
   context.projectNavigation(project, scoped);
-  if (section === "auth") return yield* authScreen(context, scoped);
   if (section === "users") return yield* usersScreen(context, scoped);
   if (section === "storage") return yield* storageScreen(context, scoped);
   if (section === "media") return yield* mediaScreen(context, scoped);
@@ -76,13 +80,13 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   return servicePage ?? empty("Page not found", "Choose a section from the sidebar to continue.");
 });
 
-const overviewScreen = Effect.fn("ui.projectOverview")(function*(_context: ScreenContext, project: Project, scoped: Config | undefined, hosted: Record<string, unknown> | undefined) {
+const overviewScreen = Effect.fn("ui.projectOverview")(function*(context: ScreenContext, project: Project, scoped: Config | undefined, hosted: Record<string, unknown> | undefined) {
   if (hosted) {
     return page(
-      node("div", { class: "actions" }, link("Domains", "/server/domains")),
+      canAccess(context.config.access, projectDomainAccess(project.id))
+        ? node("div", { class: "actions" }, link("Domains", `/projects/${encodeURIComponent(project.id)}/domains`)) : undefined,
       columns(3,
         statCard("App", label(object(project.recipe).title, label(object(project.recipe).name)), "Managed through hosting-style controls."),
-        statCard("Domains", "planned", "Server-level bindings will attach here."),
         statCard("Backups", "planned", "Project snapshots come from the host backup layer.")),
       rowsCard("Hosting controls",
         dataRow("Application admin", typeof hosted.adminPath === "string" ? `${label(hosted.adminTitle, "App Admin")} will open the app's own dashboard.` : "The app keeps its own runtime/admin surface.", badge("draft")),
@@ -112,13 +116,14 @@ const overviewScreen = Effect.fn("ui.projectOverview")(function*(_context: Scree
         dataRow("Auth providers", providers.length ? providers.join(", ") : "/auth/providers", providers.length ? "ready" : "offline"))));
 });
 
-function backendScreen(base: string, scoped: Config, hosted: boolean) {
+function backendScreen(context: ScreenContext, base: string, scoped: Config, hosted: boolean) {
   const sections = [
     ["Database", "database", "database", "Tables, document collections, queries, and schemas."],
     ["Auth", "auth", "identity", "Authentication providers, sessions, and credentials."],
     ["Storage", "storage", "storage", "Buckets, media assets, uploads, and file storage."],
     ["Workloads", "workloads", "workloads", "Functions, jobs, schedules, and webhooks."]
-  ].map(([title, path, capability, detail]) => ({ title, path, detail, active: usable(scoped, capability, hosted) })).filter(section => !hosted || section.active);
+  ].map(([title, path, capability, detail]) => ({ title, path, detail, active: usable(scoped, capability, hosted) }))
+    .filter(section => (!hosted || section.active) && (section.path !== "auth" || canAccess(context.config.access, { permissions: ["project.settings.manage"], scope: { type: "project", projectId: context.projectId } })));
   return page(
     columns(3, ...sections.map(section => statCard(section.title, section.active ? "ready" : "planned", section.detail))),
     card("Backend APIs", ...sections.map(section => node("div", { class: "k-row" },
@@ -140,7 +145,7 @@ const settingsScreen = Effect.fn("ui.projectSettings")(function*(context: Screen
     flashNotice("Saved"),
     provider,
     rowsCard("Project identity", dataRow("Project ID", project.id, badge("draft")), dataRow("Project type", "Zelavis-native app", badge("ready"))),
-    rowsCard("Project bindings", dataRow("Primary domain", "Managed from the global Domains area.", badge("planned")), dataRow("Database tenant", "Project-scoped data is isolated by tenant-aware storage.")),
+    rowsCard("Project bindings", dataRow("Database tenant", "Project-scoped data is isolated by tenant-aware storage.")),
     resourceNotice("Global settings moved", "Appearance, runtime services, root path, and server-wide preferences are available from the footer dropdown."));
 });
 
@@ -172,8 +177,41 @@ const setupScreen = Effect.fn("ui.projectSetup")(function*(context: ScreenContex
     ...(hasSecrets && !revealed ? [node("div", { class: "k-row" }, node("div", {}, button("Reveal secrets", () => context.setSearch({ reveal: "1" }), { class: "primary" }), node("p", { class: "muted" }, "Revealing is recorded in the audit trail and needs the project.setup.reveal permission.")))] : [])));
 });
 
-const authScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenContext, scoped: Config) {
+const projectAuthScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenContext, projectId: string) {
+  const manage = canAccess(context.config.access, {
+    permissions: ["project.settings.manage"], scope: { type: "project", projectId },
+  });
+  const [registration, entered] = yield* Effect.all([
+    manage ? registrationSettingsCard(context, projectId) : Effect.succeed(undefined),
+    projectContext(context, { optionalRuntime: manage }),
+  ], { concurrency: 2 });
+  if (entered.missing) return registration ? page(registration) : entered.missing;
+  if (!entered.scoped) {
+    return registration ? page(registration, entered.runtimeError ? message(entered.runtimeError.message, true) : undefined) : notRunning();
+  }
+  const providers = yield* Effect.result(authProviderCards(context, entered.scoped));
+  if (providers._tag === "Failure" && !registration) return yield* Effect.fail(providers.failure);
+  const publicAuth = usable(entered.scoped, "appPublicAuth", false);
+  const domains = publicAuth && canAccess(context.config.access, projectDomainAccess(projectId))
+    ? yield* readProjectDomains(context, projectId).pipe(Effect.catch(() => Effect.succeed({ domains: [] })))
+    : { domains: [] };
+  const verifiedSite = domains.domains.map(activeProjectDomainUrl).find(url => url !== undefined);
+  const site = publicAuth && (verifiedSite ?? (object(entered.project.preview).status === "ready"
+    ? siteUrl(entered.project, context.url) : undefined));
+  const authMount = entered.scoped.rootPath.replace(/\/$/u, "");
+  const login = site && /^(?:\/[\w~-]+)*$/u.test(authMount)
+    ? rowsCard("App sign-in",
+      node("a", { href: new URL(`${authMount}/login`, site).href, target: "_blank", rel: "noreferrer" }, "Open App login"),
+      ...(verifiedSite ? [node("a", { href: new URL(`${authMount}/sign-up`, verifiedSite).href, target: "_blank", rel: "noreferrer" }, "Open App signup")] : []))
+    : undefined;
+  return page(registration, login, ...(providers._tag === "Success" ? providers.success : [message(providers.failure.message, true)]));
+});
+
+const authProviderCards = Effect.fn("ui.projectAuthProviders")(function*(context: ScreenContext, scoped: Config) {
   const api = scoped.api.basePath;
+  const canConfigure = canAccess(context.config.access, {
+    permissions: ["project.settings.manage", "project.runtime.manage"], scope: { type: "project", projectId: context.projectId },
+  });
   const providers = array(yield* request(`${api}/auth/providers`)).map(String);
   const connections = array(object(yield* request(`${api}/auth/oauth/connections`)).providers).map(object);
   const configured = connections.filter(entry => entry.configured === true).length;
@@ -198,7 +236,7 @@ const authScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenContext,
     save(text("provider"), { ...(text("issuer") ? { issuer: text("issuer") } : {}), clientId: text("clientId"), ...(String(data.get("clientSecret") ?? "") ? { clientSecret: String(data.get("clientSecret")) } : {}), redirectUri: text("redirectUri"), enabled: true }, `${text("provider")} is configured and active.`);
   });
 
-  return page(
+  return [
     flashNotice("Saved"),
     columns(3,
       statCard("Password", providers.includes("password") ? "active" : "unavailable", "Email or username with the built-in password ceremony."),
@@ -207,15 +245,16 @@ const authScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenContext,
     rowsCard("Sign-in providers",
       dataRow("Email / password", "Built into Zelavis Auth; passwords are hashed and sessions are Project-scoped.", badge(providers.includes("password") ? "active" : "unavailable")),
       ...connections.map(connection => dataRow(label(connection.title ?? connection.provider), connection.configured === true ? `${label(connection.clientId)} · ${label(connection.redirectUri)}${connection.hasClientSecret === true ? " · secret set" : ""}` : "Not configured",
-        connection.configured === true
+        connection.configured === true && canConfigure
           ? button(connection.enabled === true ? "Disable" : "Enable", () => save(label(connection.provider, ""), { ...(connection.issuer ? { issuer: label(connection.issuer) } : {}), clientId: label(connection.clientId, ""), redirectUri: label(connection.redirectUri, ""), enabled: connection.enabled !== true }, `${label(connection.provider)} ${connection.enabled === true ? "disabled" : "enabled"}.`))
-          : badge("available")))),
-    card("Configure OAuth or OpenID Connect", form),
-    resourceNotice("Provider credentials belong to this Project", "Secrets are write-only and remain in the Project runtime. Platform login providers and other Projects use separate configuration."));
+          : badge(connection.configured === true ? connection.enabled === true ? "active" : "disabled" : "available")))),
+    ...(canConfigure ? [card("Configure OAuth or OpenID Connect", form)] : []),
+    resourceNotice("Provider credentials belong to this Project", "Secrets are write-only and remain in the Project runtime. Platform login providers and other Projects use separate configuration.")];
 });
 
 const usersScreen = Effect.fn("ui.projectUsers")(function*(context: ScreenContext, scoped: Config) {
   const accounts = array(yield* request(`${scoped.api.basePath}/auth/accounts`)).map(object);
+  const editor = yield* accountAccessEditor(context, accounts, context.projectId);
   const filter = context.url.searchParams.get("filter") ?? "All";
   const query = (context.url.searchParams.get("q") ?? "").trim().toLowerCase();
   const nameOf = (account: Record<string, unknown>) => label(account.displayName ?? account.username ?? account.email ?? account.id);
@@ -227,9 +266,14 @@ const usersScreen = Effect.fn("ui.projectUsers")(function*(context: ScreenContex
     const name = nameOf(account);
     const secondary = account.email && account.email !== name ? label(account.email) : account.username && account.username !== name ? `@${label(account.username)}` : label(account.id);
     const created = new Date(label(account.createdAt, ""));
-    return dataRow(name, `${secondary}${Number.isNaN(created.getTime()) ? "" : ` · ${created.toLocaleDateString()}`}`, badge(account.verified === true ? "verified" : "unverified"));
+    return dataRow(name, `${secondary}${Number.isNaN(created.getTime()) ? "" : ` · ${created.toLocaleDateString()}`}`,
+      node("div", { class: "actions" }, badge(account.verified === true ? "verified" : "unverified"),
+        canEditAccountAccess(context, account, context.projectId)
+          ? button("Edit access", () => context.setSearch({ accountAccess: label(account.id, "") }), { "aria-label": `Edit access for ${name}` })
+          : undefined));
   });
   return page(
+    editor ?? flashNotice("Account access"),
     node("div", { class: "toolbar" }, node("div", {}, node("h1", {}, "Users"), node("p", { class: "muted" }, `${visible.length} account${visible.length === 1 ? "" : "s"}`)),
       node("div", { class: "actions" }, ...["All", "Verified", "Unverified"].map(name => button(name, () => context.setSearch({ filter: name === "All" ? undefined : name }), { class: filter === name ? "primary" : "", "aria-pressed": String(filter === name) })))),
     form,

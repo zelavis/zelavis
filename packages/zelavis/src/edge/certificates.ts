@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { X509Certificate } from "node:crypto";
 import type { ZelavisRuntimeService, ZelavisServerRoute } from "../core/index.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
@@ -34,6 +34,7 @@ export interface ZelavisEdgeCertificateRecord {
   issuedAt: string;
   status: "valid" | "expired" | "revoked";
   updatedAt: string;
+  projectDomainId?: string;
 }
 
 export interface ZelavisEdgeCertificateSummary {
@@ -61,8 +62,9 @@ export interface AcmeChallengeStore {
     token: string,
     keyAuthorization: string,
     expiresAt: Date,
+    hostname?: string,
   ): Promise<void>;
-  getHttpChallenge(token: string): Promise<string | undefined>;
+  getHttpChallenge(token: string, hostname?: string): Promise<string | undefined>;
   deleteHttpChallenge(token: string): Promise<boolean>;
 }
 
@@ -72,6 +74,8 @@ export interface OrderCertificateOptions {
   contactEmail?: string;
   directoryUrl?: string;
   forceRenew?: boolean;
+  signal?: AbortSignal;
+  projectDomainId?: string;
 }
 
 export interface CheckRenewalsOptions {
@@ -90,6 +94,7 @@ export interface ZelavisCertificateController {
   getCertificate(ref: string): Promise<ZelavisEdgeCertificateSummary | undefined>;
   resolveCertificate(ref: string): Promise<ZelavisEdgeResolvedCertificate | undefined>;
   listCertificates(): Promise<readonly ZelavisEdgeCertificateSummary[]>;
+  retireProjectCertificate(ref: string, domainId: string): Promise<void>;
   orderCertificate(
     options: OrderCertificateOptions,
   ): Promise<ZelavisEdgeCertificateSummary>;
@@ -120,7 +125,7 @@ export interface CreateZelavisCertificateControllerOptions {
 export function createMemoryAcmeChallengeStore(): AcmeChallengeStore {
   const store = new Map<
     string,
-    { keyAuthorization: string; expiresAt: number }
+    { keyAuthorization: string; expiresAt: number; hostname?: string }
   >();
 
   return {
@@ -128,19 +133,21 @@ export function createMemoryAcmeChallengeStore(): AcmeChallengeStore {
       token: string,
       keyAuthorization: string,
       expiresAt: Date,
+      hostname?: string,
     ): Promise<void> {
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
       store.set(token, {
         keyAuthorization,
         expiresAt: expiresAt.getTime(),
+        hostname,
       });
     }));
   },
 
-    getHttpChallenge(token: string): Promise<string | undefined> {
+    getHttpChallenge(token: string, hostname?: string): Promise<string | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<string | undefined, IntegrationFailure> {
       const entry = store.get(token);
-      if (!entry) return undefined;
+      if (!entry || (hostname && entry.hostname && entry.hostname !== hostname)) return undefined;
       if (Date.now() > entry.expiresAt) {
         store.delete(token);
         return undefined;
@@ -163,23 +170,25 @@ export function createSystemStoreAcmeChallengeStore(
       token: string,
       keyAuthorization: string,
       expiresAt: Date,
+      hostname?: string,
     ): Promise<void> {
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
       (yield* integrationValue(systemStore.set(ACME_CHALLENGES_NAMESPACE, token, {
         keyAuthorization,
         expiresAt: expiresAt.toISOString(),
+        ...(hostname ? { hostname } : {}),
       })));
     }));
   },
 
-    getHttpChallenge(token: string): Promise<string | undefined> {
+    getHttpChallenge(token: string, hostname?: string): Promise<string | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<string | undefined, IntegrationFailure> {
       const record = (yield* integrationValue(systemStore.get(ACME_CHALLENGES_NAMESPACE, token)));
       if (!record || typeof record.value !== "object" || record.value === null) {
         return undefined;
       }
-      const val = record.value as { keyAuthorization?: string; expiresAt?: string };
-      if (!val.keyAuthorization || !val.expiresAt) {
+      const val = record.value as { keyAuthorization?: string; expiresAt?: string; hostname?: string };
+      if (!val.keyAuthorization || !val.expiresAt || (hostname && val.hostname && val.hostname !== hostname)) {
         return undefined;
       }
       if (Date.now() > Date.parse(val.expiresAt)) {
@@ -268,6 +277,7 @@ export function createZelavisCertificateController(
   function getOrCreateAcmeAccount(
     directoryUrl: string,
     contactEmail?: string,
+    signal?: AbortSignal,
   ): Promise<{ client: AcmeClient; accountUrl: string }> {
     return present(Effect.gen(function* (): Effect.fn.Return<{ client: AcmeClient; accountUrl: string }, IntegrationFailure> {
     const accountRecord = (yield* integrationValue(store.get(ACME_NAMESPACE, "default")));
@@ -303,7 +313,8 @@ export function createZelavisCertificateController(
       directoryUrl,
       accountKey: keyPair,
       accountUrl,
-      fetch: customFetch,
+      fetch: (input, init) => customFetch(input, { ...init, signal: signal && init?.signal
+        ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal ?? null }),
     });
 
     if (!accountUrl) {
@@ -369,6 +380,7 @@ export function createZelavisCertificateController(
       orderOptions: OrderCertificateOptions,
     ): Promise<ZelavisEdgeCertificateSummary> {
       return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeCertificateSummary, IntegrationFailure> {
+      yield* evaluate(() => orderOptions.signal?.throwIfAborted());
       const hostname = orderOptions.hostname.trim().toLowerCase();
       const sanHostnames = (orderOptions.sanHostnames ?? []).map((s) =>
         s.trim().toLowerCase(),
@@ -377,7 +389,8 @@ export function createZelavisCertificateController(
       const directoryUrl = orderOptions.directoryUrl ?? defaultDirectoryUrl;
 
       // 1. Check existing cert
-      const existing = yield* integrationValue(getStoredRecord(ref));
+      const observed = yield* integration(() => store.get(CERTIFICATES_NAMESPACE, ref));
+      const existing = observed?.value as unknown as ZelavisEdgeCertificateRecord | undefined;
       if (existing && !orderOptions.forceRenew) {
         const expiresTime = Date.parse(existing.expiresAt);
         const daysRemaining = (expiresTime - now().getTime()) / (1000 * 60 * 60 * 24);
@@ -386,34 +399,29 @@ export function createZelavisCertificateController(
         }
       }
 
-      // 2. Fenced lease acquisition
+      // One lease per hostname for both new issuance and renewal.
       const leaseKey = `lease:${hostname}`;
-      const leaseDurationMs = 300000; // 5 minutes
-      const leaseRecord = yield* integrationValue(store.get(ACME_LEASES_NAMESPACE, leaseKey));
+      const leaseRecord = yield* integration(() => store.get(ACME_LEASES_NAMESPACE, leaseKey));
       const currentTime = now().getTime();
-
-      if (leaseRecord && typeof leaseRecord.value === "object" && leaseRecord.value !== null) {
-        const lease = leaseRecord.value as { expiresAt: string; owner: string };
-        if (Date.parse(lease.expiresAt) > currentTime) {
-          // Lease active by another process; return existing if available
-          if (existing) return toSummary(existing);
-          throw new Error(
-            `ACME certificate order for "${hostname}" is currently in progress by another controller.`,
-          );
-        }
+      if (leaseRecord && typeof leaseRecord.value === "object" && leaseRecord.value !== null &&
+          "expiresAt" in leaseRecord.value && typeof leaseRecord.value.expiresAt === "string" &&
+          Date.parse(leaseRecord.value.expiresAt) > currentTime) {
+        throw new Error(`ACME certificate order for "${hostname}" is currently in progress.`);
       }
-
-      const leaseExpiresAt = new Date(currentTime + leaseDurationMs).toISOString();
-      yield* integrationValue(store.set(ACME_LEASES_NAMESPACE, leaseKey, {
-        owner: "controller",
-        expiresAt: leaseExpiresAt,
-      }));
+      const lease = { owner: crypto.randomUUID(), expiresAt: new Date(currentTime + 300_000).toISOString() };
+      const claim = leaseRecord
+        ? yield* integration(() => store.compareAndSet(ACME_LEASES_NAMESPACE, leaseKey, leaseRecord.updatedAt, lease, leaseRecord.value))
+        : (yield* integration(() => store.setIfAbsent(ACME_LEASES_NAMESPACE, leaseKey, lease))).record;
+      if (!claim || !claim.value || typeof claim.value !== "object" || !("owner" in claim.value) || claim.value.owner !== lease.owner) {
+        throw new Error(`ACME certificate order for "${hostname}" is currently in progress.`);
+      }
 
       return yield* Effect.gen(function* () {
         // 3. Obtain ACME Client
         const { client } = yield* integrationValue(getOrCreateAcmeAccount(
           directoryUrl,
           orderOptions.contactEmail,
+          orderOptions.signal,
         ));
 
         // 4. Create Order
@@ -428,6 +436,7 @@ export function createZelavisCertificateController(
           const authz = yield* integrationValue(client.getAuthorization(authzUrl));
           if (authz.status === "valid") continue;
 
+          if (!allIdentifiers.includes(authz.identifier.value)) throw new Error("ACME returned an unexpected hostname.");
           const httpChallenge = authz.challenges.find((c) => c.type === "http-01");
           if (!httpChallenge) {
             throw new Error(
@@ -442,6 +451,7 @@ export function createZelavisCertificateController(
             httpChallenge.token,
             keyAuthorization,
             challengeExpiresAt,
+            authz.identifier.value,
           ));
 
           yield* Effect.gen(function* () {
@@ -493,11 +503,29 @@ export function createZelavisCertificateController(
           issuedAt: dates.issuedAt,
           status: "valid",
           updatedAt: now().toISOString(),
+          ...((orderOptions.projectDomainId ?? existing?.projectDomainId) ? {
+            projectDomainId: (orderOptions.projectDomainId ?? existing?.projectDomainId)!,
+          } : {}),
         };
 
-        yield* integrationValue(store.set(CERTIFICATES_NAMESPACE, ref, newRecord as any));
+        yield* evaluate(() => orderOptions.signal?.throwIfAborted());
+        const currentLease = yield* integration(() => store.get(ACME_LEASES_NAMESPACE, leaseKey));
+        if (currentLease?.updatedAt !== claim.updatedAt || JSON.stringify(currentLease.value) !== JSON.stringify(claim.value)) {
+          throw new Error("The ACME certificate order lost its lease.");
+        }
+        const value = { ...newRecord, encryptedKey: { ...newRecord.encryptedKey } };
+        const saved = observed
+          ? yield* integration(() => {
+              orderOptions.signal?.throwIfAborted();
+              return store.compareAndSet(CERTIFICATES_NAMESPACE, ref, observed.updatedAt, value, observed.value);
+            })
+          : (yield* integration(() => {
+              orderOptions.signal?.throwIfAborted();
+              return store.setIfAbsent(CERTIFICATES_NAMESPACE, ref, value);
+            })).created;
+        if (!saved) throw new Error("The certificate changed during the ACME order.");
         return toSummary(newRecord);
-      }).pipe(Effect.ensuring(integration(() => store.delete(ACME_LEASES_NAMESPACE, leaseKey)).pipe(Effect.orDie)));
+      }).pipe(Effect.ensuring(integration(() => store.compareAndDelete(ACME_LEASES_NAMESPACE, leaseKey, claim.updatedAt, claim.value)).pipe(Effect.orDie)));
       }));
     },
 
@@ -529,6 +557,18 @@ export function createZelavisCertificateController(
     }));
   },
 
+    retireProjectCertificate(ref, domainId) {
+      return present(Effect.gen(function* () {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const record = yield* integration(() => store.get(CERTIFICATES_NAMESPACE, ref));
+          const certificate = record?.value as unknown as ZelavisEdgeCertificateRecord | undefined;
+          if (!record || certificate?.issuer !== "acme" || certificate.projectDomainId !== domainId) return;
+          if (yield* integration(() => store.compareAndDelete(CERTIFICATES_NAMESPACE, ref, record.updatedAt, record.value))) return;
+        }
+        throw new Error("The Project certificate changed during retirement.");
+      }));
+    },
+
     checkRenewals(
       checkOptions = {},
     ): Promise<RenewalsResult> {
@@ -556,6 +596,7 @@ export function createZelavisCertificateController(
             directoryUrl: checkOptions.directoryUrl,
             contactEmail: checkOptions.contactEmail,
             forceRenew: true,
+            signal: AbortSignal.timeout(90_000),
           })).pipe(
             Effect.tap(() => Effect.sync(() => { renewed.push(cert.ref); })),
             Effect.catch((failure) => Effect.sync(() => {
@@ -583,6 +624,15 @@ export function createZelavisCertificateController(
 // HTTP-01 Challenge Service
 // ---------------------------------------------------------------------------
 
+export function respondToAcmeChallenge(challengeStore: AcmeChallengeStore, token: string, hostname: string) {
+  return present(Effect.gen(function* () {
+    const value = yield* integration(() => challengeStore.getHttpChallenge(token, hostname));
+    return value
+      ? { status: 200, headers: { "content-type": "text/plain; charset=utf-8" }, body: value }
+      : { status: 404, body: "Not found" };
+  }));
+}
+
 export function createAcmeChallengeService(
   challengeStore: AcmeChallengeStore,
 ): ZelavisRuntimeService {
@@ -590,23 +640,11 @@ export function createAcmeChallengeService(
     id: "zelavis.edge.acme-challenge",
     method: "GET",
     path: "/.well-known/acme-challenge/:token",
-    handler: ({ params }) => present(Effect.gen(function* () {
+    handler: ({ params, request }) => {
       const token = params?.token;
-      if (typeof token !== "string" || !token) {
-        return { status: 404, body: "Not found" };
-      }
-
-      const keyAuthorization = (yield* integrationValue(challengeStore.getHttpChallenge(token)));
-      if (!keyAuthorization) {
-        return { status: 404, body: "Not found" };
-      }
-
-      return {
-        status: 200,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-        body: keyAuthorization,
-      };
-    })),
+      if (typeof token !== "string" || !token) return { status: 404, body: "Not found" };
+      return respondToAcmeChallenge(challengeStore, token, new URL(request.url).hostname.toLowerCase().replace(/\.$/, ""));
+    },
   };
 
   return {

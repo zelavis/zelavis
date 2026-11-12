@@ -223,6 +223,17 @@ test("a route authority binds the one request the Agent forwards, and is fenced 
   const altered = Buffer.from(Buffer.from(payload, "base64url").toString("utf8").replace("documents?x=1", "documents?x=2")).toString("base64url");
   assert.equal(await verify(`${altered}.${signature}`), undefined, "the path is signed");
 
+  const accountAccessDigest = "a".repeat(64);
+  const accessRoute = { method: "PUT", path: "/zelavis/api/v1/auth/accounts/person/access", gateway: { ...gateway, accountAccessDigest } };
+  const accessToken = await signProjectDispatchAuthority(privateKey, claims({ route: accessRoute }));
+  assert.equal((await verify(accessToken)).route.gateway.accountAccessDigest, accountAccessDigest);
+  const [accessPayload, accessSignature] = accessToken.split(".");
+  const alteredDigest = Buffer.from(Buffer.from(accessPayload, "base64url").toString("utf8").replace(accountAccessDigest, "b".repeat(64))).toString("base64url");
+  assert.equal(await verify(`${alteredDigest}.${accessSignature}`), undefined, "the account access proof is signed");
+  await assert.rejects(signProjectDispatchAuthority(privateKey, claims({
+    route: { ...accessRoute, gateway: { ...gateway, accountAccessDigest: "*" } },
+  })), /invalid or unbounded/);
+
   await assert.rejects(signProjectDispatchAuthority(privateKey, claims({ route: undefined })), /invalid or unbounded/);
   await assert.rejects(signProjectDispatchAuthority(privateKey, claims({ route: { method: "POST", path: "//elsewhere/x", gateway } })), /invalid or unbounded/);
   await assert.rejects(signProjectDispatchAuthority(privateKey, claims({ route: { method: "TRACE", path: "/x", gateway } })), /invalid or unbounded/);

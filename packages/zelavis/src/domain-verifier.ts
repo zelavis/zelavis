@@ -42,7 +42,10 @@ const DEFAULT_DNS_CHALLENGE_PREFIX = "_zelavis-challenge";
 const DEFAULT_HTTP_CHALLENGE_PATH = "/.well-known/zelavis-challenge";
 
 type NodeDnsPromisesModule = {
-  resolveTxt(host: string): Promise<string[][]>;
+  Resolver: new (options: { timeout: number; tries: number }) => {
+    resolveTxt(host: string): Promise<string[][]>;
+    cancel(): void;
+  };
 };
 
 /**
@@ -62,7 +65,7 @@ export interface DnsTxtResolver {
    * into multiple <=255-byte strings); we concatenate them inside the
    * verifier.
    */
-  resolveTxt(host: string): Promise<readonly (readonly string[])[]>;
+  resolveTxt(host: string, signal?: AbortSignal): Promise<readonly (readonly string[])[]>;
 }
 
 /**
@@ -73,7 +76,7 @@ export interface DnsTxtResolver {
  * (inject your own).
  */
 export function createNodeDnsTxtResolver(): DnsTxtResolver {
-  let cached: Promise<(host: string) => Promise<string[][]>> | undefined;
+  let cached: Promise<NodeDnsPromisesModule["Resolver"]> | undefined;
   const load = () => {
     if (!cached) {
       cached = present(evaluate(() => new Function(
@@ -81,7 +84,7 @@ export function createNodeDnsTxtResolver(): DnsTxtResolver {
         "return import(specifier)",
       ) as (specifier: string) => Promise<NodeDnsPromisesModule>).pipe(
         Effect.flatMap((importRuntimeModule) => integration(() => importRuntimeModule("node:dns/promises"))),
-        Effect.map((dns) => dns.resolveTxt),
+        Effect.map((dns) => dns.Resolver),
         Effect.mapError(() => new IntegrationFailure(new Error(
           "createNodeDnsTxtResolver: `node:dns/promises` is unavailable. " +
             "Provide a custom DnsTxtResolver implementation for this runtime.",
@@ -92,12 +95,18 @@ export function createNodeDnsTxtResolver(): DnsTxtResolver {
   };
 
   return {
-    resolveTxt(host) {
-    return present(Effect.gen(function* () {
-      const resolveTxt = (yield* integrationValue(load()));
-      return (yield* integrationValue(resolveTxt(host)));
-    }));
-  },
+    resolveTxt(host, signal) {
+      return present(Effect.gen(function* () {
+        const Resolver = yield* integration(() => load());
+        signal?.throwIfAborted();
+        const resolver = new Resolver({ timeout: 4500, tries: 1 });
+        const cancel = () => resolver.cancel();
+        signal?.addEventListener("abort", cancel, { once: true });
+        return yield* integration(() => resolver.resolveTxt(host)).pipe(
+          Effect.ensuring(Effect.sync(() => signal?.removeEventListener("abort", cancel))),
+        );
+      }));
+    },
   };
 }
 
@@ -125,11 +134,33 @@ function getDefaultResolver(): DnsTxtResolver {
   return defaultResolver;
 }
 
-function flattenTxtRecords(
-  records: readonly (readonly string[])[],
-): readonly string[] {
-  return records.map((fragments) => fragments.join(""));
+export class DnsTxtProofMissing extends Error {
+  readonly _tag = "DnsTxtProofMissing";
 }
+
+export function domainBindingDnsChallengeName(hostname: string): string {
+  return `${DEFAULT_DNS_CHALLENGE_PREFIX}.${hostname}`;
+}
+
+/** Return proof before writing any binding so the caller can recheck ownership. */
+export const checkDomainBindingDnsProof = Effect.fn("Domains.checkDnsProof")(function* (
+  host: string, token: string, options: VerifyDomainBindingViaDnsOptions = {},
+) {
+  const challengeHost = options.challengePrefix ? `${options.challengePrefix}.${host}` : domainBindingDnsChallengeName(host);
+  const resolver = options.resolver ?? getDefaultResolver();
+  const records = yield* integration(signal => resolver.resolveTxt(challengeHost, signal), { interruptible: true }).pipe(
+    Effect.mapError(failure => new IntegrationFailure(new Error(
+      `DNS-TXT lookup for "${challengeHost}" failed: ${failure.message}`, { cause: failure.cause },
+    ))),
+  );
+  if (!records?.length) return yield* Effect.fail(new DnsTxtProofMissing(`No TXT records returned for "${challengeHost}".`));
+  // A DNS message has at most 65,535 bytes. Also bound the injected resolver contract.
+  if (records.length <= 1024 && records.some(parts =>
+    parts.length <= 256 && parts.every(part => part.length <= token.length) && parts.join("") === token)) return;
+  return yield* Effect.fail(new DnsTxtProofMissing(
+    `TXT records at "${challengeHost}" did not include the expected token. Found ${records.length} record(s); none matched.`,
+  ));
+});
 
 /**
  * Verify a domain binding via DNS-TXT. Resolves the configured
@@ -152,39 +183,14 @@ export function verifyDomainBindingViaDns(
   host: string,
   options: VerifyDomainBindingViaDnsOptions = {},
 ): Promise<DomainBinding> {
-  return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure | Error> {
+  return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure | DnsTxtProofMissing> {
   const normalized = host.toLowerCase();
   const binding = yield* integrationValue(store.get(normalized));
   if (!binding) {
     return yield* new IntegrationFailure(new Error(`No domain binding exists for "${normalized}".`));
   }
 
-  const prefix = options.challengePrefix ?? DEFAULT_DNS_CHALLENGE_PREFIX;
-  const resolver = options.resolver ?? getDefaultResolver();
-  const challengeHost = `${prefix}.${normalized}`;
-
-  const records = yield* integration(() => resolver.resolveTxt(challengeHost)).pipe(
-    Effect.mapError((failure) => {
-      const error = unwrapFailure(failure);
-      const cause =
-        error instanceof Error ? error.message : String(error ?? "unknown");
-      return new IntegrationFailure(new Error(
-        `DNS-TXT lookup for "${challengeHost}" failed: ${cause}`,
-      ));
-    }),
-  );
-
-  if (!records || records.length === 0) {
-    return yield* new IntegrationFailure(new Error(`No TXT records returned for "${challengeHost}".`));
-  }
-
-  const flattened = flattenTxtRecords(records);
-  if (!flattened.includes(binding.verificationToken)) {
-    return yield* new IntegrationFailure(new Error(
-      `TXT records at "${challengeHost}" did not include the expected token. ` +
-        `Found ${flattened.length} record(s); none matched.`,
-    ));
-  }
+  yield* checkDomainBindingDnsProof(normalized, binding.verificationToken, options);
 
   const now = new Date().toISOString();
   return yield* integrationValue(store.put(

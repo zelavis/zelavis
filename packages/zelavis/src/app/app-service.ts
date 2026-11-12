@@ -7,6 +7,7 @@ import {
   createPasswordProvider,
   PASSWORD_PROVIDER,
   type IdentityMethodPlugin,
+  type RegistrationRecovery,
   type IdentityServiceOptions,
 } from "./identity/index.js";
 import type { DatabaseRuntimeApi } from "../db/index.js";
@@ -102,7 +103,9 @@ export interface ProjectIdentityInput {
   /** Installed credential providers discovered by capability. */
   readonly methods: readonly IdentityMethodPlugin[];
   readonly projectId?: string;
+  readonly rootPath: string;
   readonly options?: IdentityServiceOptions;
+  readonly registrationRecovery?: RegistrationRecovery;
 }
 
 /**
@@ -117,6 +120,10 @@ export function createProjectIdentityEndpointGroup(input: ProjectIdentityInput) 
     return present(Effect.gen(function* () {
   const { database } = input;
   const authOptions = input.options ?? {};
+  const configuredCookie = authOptions.definition?.sessionCookie;
+  const cookiesDisabled = configuredCookie === false || authOptions.authOptions?.sessionCookieName === false;
+  const standaloneCookie = input.projectId === undefined && configuredCookie ? configuredCookie : undefined;
+  const cookieName = input.projectId === undefined ? standaloneCookie?.name ?? authOptions.authOptions?.sessionCookieName : undefined;
   const settingsStore = createProjectAuthSettingsStore(database);
   const oauth = createOAuthProviderRuntime(authOptions.oauth ?? {});
   const password: IdentityMethodPlugin = {
@@ -131,10 +138,12 @@ export function createProjectIdentityEndpointGroup(input: ProjectIdentityInput) 
 
   return (yield* integrationValue(identityEndpointGroup({
     ...authOptions,
-    registration: authOptions.registration ?? true,
     authOptions: {
       ...(authOptions.authOptions ?? {}),
       projectId: input.projectId ?? authOptions.authOptions?.projectId,
+      sessionCookieName: cookiesDisabled ? false : cookieName,
+      registrationRecovery: input.registrationRecovery,
+      accountAccessWriter: authOptions.authOptions?.repositories?.accounts ?? database,
       repositories: {
         ...createDatabaseAuthRepositories(database),
         ...(authOptions.authOptions?.repositories ?? {}),
@@ -156,6 +165,9 @@ export function createProjectIdentityEndpointGroup(input: ProjectIdentityInput) 
     ],
     definition: {
       ...(authOptions.definition ?? {}),
+      authority: "project",
+      sessionCookie: cookiesDisabled ? false : { path: input.rootPath, ...standaloneCookie },
+      registrationRecovery: input.registrationRecovery,
       oauthConnections: oauth.connections,
     },
   })));

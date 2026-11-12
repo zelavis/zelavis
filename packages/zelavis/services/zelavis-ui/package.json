@@ -30,6 +30,10 @@
       "types": "./dist/frontend.d.ts",
       "import": "./dist/frontend.js"
     },
+    "./identity-frontend": {
+      "types": "./dist/identity-frontend.d.ts",
+      "import": "./dist/identity-frontend.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -52,9 +56,9 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:browser": "node scripts/build.mjs && node scripts/test-service-ui.mjs && node scripts/test-server-views.mjs && node scripts/test-route-parity.mjs && node scripts/test-embedded-server-views.mjs",
+    "test:browser": "pnpm run build && node scripts/test-service-ui.mjs && node scripts/test-server-views.mjs && node scripts/test-route-parity.mjs && node scripts/test-embedded-server-views.mjs && node scripts/test-embedded-server-views.mjs --nested-auth",
     "test:browser:dev": "node scripts/test-embedded-server-views.mjs --dev",
-    "build:plugin": "tsc -p tsconfig.plugin.json",
+    "build:plugin": "node scripts/build-identity-site.mjs && tsc -p tsconfig.plugin.json",
     "dev:server": "node scripts/dev-server.mjs"
   },
   "peerDependencies": {

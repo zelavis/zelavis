@@ -32,6 +32,12 @@ It prints the addresses and the first-owner token. Defaults are ports 3200/3201;
 
 Every route in [app/dashboard-routes.ts](app/dashboard-routes.ts) is a native page: a screen function in [app/screens.ts](app/screens.ts) or a module it calls (`host-pages`, `fabric-pages`, `projects-pages`, `project-pages`, `content-pages`, `storage-pages`, `workloads-pages`, `settings-pages`, `marketplace-pages`, `auth-pages`, `assistant-pages`). Pages are drawn from the DOM builders in [app/dom.ts](app/dom.ts) and [app/page-kit.ts](app/page-kit.ts), read what they need from the Platform's endpoints with Effect, and run actions through `context.run`.
 
+Platform Auth and Project Backend → Auth expose the runtime's registration setting.
+Login offers Create account while password signup is enabled. New customers enter
+an empty Projects view until assigned a view grant. Platform and Project Users
+offer conditional Edit access drawers. The shell reads caller authority from
+`/runtime/access` to filter menus and actions.
+
 A page with live state is a `fuzor-island` whose module owns its state and cleans up with the page: the terminal, the media gallery, the schema builder, the Assistant conversation, the rich text editor (Lexical, without its React bindings), the code editor (CodeMirror) and the update card. React remains only where a library needs it: the Glide Data Grid.
 
 Server Resources and both Marketplace scopes use Fuzor’s declarative URL-backed views (`data-fuzor-view-query`, `data-fuzor-view-value`, `data-fuzor-view-values`). The router discovers and updates these views automatically, including Back/Forward, without a page-specific updater. The dashboard uses `router.isViewNavigation` to retain any such mounted view when only its declared query keys change. Undeclared data filters still reload their screen; there is no route or parameter allow-list for individual pages.
@@ -62,7 +68,14 @@ The compiled HTML supplies the stable workspace frame and the SPA stream reveals
 
 ## Service pages and schema editing
 
-Service menu HTML pages mount through the runtime's generated asset endpoint. Trust comes only from runtime `scope`: system pages retain same-origin behavior, while extension pages have an opaque iframe origin. The Effect-scoped broker authenticates the source window and confines calls to that service's namespace, rebased through the exact Project proxy where applicable. Requests allow five JSON API methods, refuse traversal, external targets and redirects, and are bounded at eight in flight, 1 MB per body/response and 30 seconds. Leaving the page releases the listener and aborts pending work. A subsequent iframe document navigation closes its grant; refreshing the dashboard opens the selected entry again. Broker responses never forward cookies or authentication headers. Registered service paths survive direct reloads and are represented in the sidebar; workspace menu contributions also preserve their nested routes and search values.
+Service menu HTML pages mount through the runtime's generated asset endpoint.
+The iframe fills the workspace and its document owns the scroll. Pages can link
+the shared `service-page.css` to use the design tokens. The injected service-page
+runtime receives the dashboard's resolved light or dark choice from its parent
+and sets `data-theme` on the page's root. Custom styles can use the same attribute.
+A standalone page falls back to the browser's preferred scheme.
+
+Trust comes only from runtime `scope`: system pages retain same-origin behavior, while extension pages have an opaque iframe origin. The Effect-scoped broker authenticates the source window and confines calls to that service's namespace, rebased through the exact Project proxy where applicable. Requests allow five JSON API methods, refuse traversal, external targets and redirects, and are bounded at eight in flight, 1 MB per body/response and 30 seconds. Leaving the page releases the listener and aborts pending work. A subsequent iframe document navigation closes its grant; refreshing the dashboard opens the selected entry again. Broker responses never forward cookies or authentication headers. Registered service paths survive direct reloads and are represented in the sidebar; workspace menu contributions also preserve their nested routes and search values.
 
 Native Database **Collection schema** opens the schema workspace (`databasePanel=schema`, with optional `schemaVersion` in the URL). It builds fields, reorders/removes them, accepts all public field metadata through typed JSON, saves immutable new versions, and explicitly activates historical versions for future writes. Schema drafts use a separate bounded journal partition and retain incomplete JSON and their source version through refresh/reload. They share record draft retention/storage limits and sign-out cleanup. Mutation failures revalidate persisted state while retaining the draft.
 
@@ -94,3 +107,7 @@ The server-view browser test uses an isolated authenticated API fixture to exerc
 
 
 The dashboard frame is authored in `index.html`, with static header, sidebar, workspace and footer markup. Client startup adopts those elements, and loading/errors are confined to content slots. Native refresh therefore keeps the layout visible while scripts or startup data are pending; saved appearance is applied before first paint. Browser qualification holds scripts and data separately on desktop/mobile and checks frame identity and geometry before and after startup.
+
+**Project Domains** connects an exact hostname to a Project after DNS TXT
+proof. Customers see the screen and its controls according to their scoped
+grants. Server Domains reads the global Edge inventory.

@@ -14,11 +14,11 @@ type Requirement = { authenticated?: boolean; roles?: readonly string[]; permiss
 function scopesMatch(requirement: Requirement, grant: Record<string, unknown>, projectId?: string) {
   const required = requirement.scope;
   const granted = object(grant.scope);
-  if (!required) return true;
+  if (!required) return !grant.scope || granted.type === "system";
   if (!grant.scope) return required.type === "system";
   if (required.type !== granted.type) return false;
-  if (required.type === "project") { const id = required.projectId ?? (required.projectIdParam ? projectId : undefined); return id === undefined || granted.projectId === undefined || id === granted.projectId; }
-  if (required.type === "service") return required.serviceName === undefined || granted.serviceName === undefined || required.serviceName === granted.serviceName;
+  if (required.type === "project") { const id = required.projectId ?? (required.projectIdParam ? projectId : undefined); return id !== undefined && id === granted.projectId; }
+  if (required.type === "service") return required.serviceName !== undefined && required.serviceName === granted.serviceName;
   return true;
 }
 
@@ -26,16 +26,22 @@ function allows(access: unknown, requirement: Requirement, projectId?: string) {
   const principal = object(object(access).principal);
   const permissions = array(principal.permissions).map(String);
   const needsLogin = requirement.authenticated === true || Boolean(requirement.roles?.length) || Boolean(requirement.permissions?.length);
-  if (needsLogin && principal.type === "anonymous") return false;
+  if (needsLogin && (!principal.type || principal.type === "anonymous")) return false;
   if (requirement.roles?.length && !requirement.roles.some(role => array(principal.roles).includes(role))) return false;
   return (requirement.permissions ?? []).every(permission => permissions.includes("*") || permissions.includes(permission) || array(principal.grants).map(object).some(grant => (grant.permission === "*" || grant.permission === permission) && scopesMatch(requirement, grant, projectId)));
 }
 
 /** True when the principal satisfies any requirement of the item; no access declared means everyone. */
 export function canAccess(access: unknown, requirement: unknown, projectId?: string): boolean {
-  if (!requirement || !access) return true;
+  if (!requirement) return true;
   const requirements = (Array.isArray(requirement) ? requirement : [requirement]) as Requirement[];
   return requirements.some(entry => allows(access, entry, projectId));
+}
+
+export function projectDomainAccess(projectId: string, manage = false, navigation = false) {
+  const scope = { type: "project", projectId };
+  const grant = (permission: string) => ({ scope, permissions: navigation ? ["project.view", permission] : [permission] });
+  return manage ? [grant("project.domains.manage")] : [grant("project.domains.manage"), grant("project.domains.view")];
 }
 
 export function filterMenu(items: readonly MenuItem[], access: unknown, projectId?: string): MenuItem[] {
@@ -68,7 +74,12 @@ export function platformMenu(config: Config, namespaces: readonly string[]): Men
   const items = contributed.map(entry => entry.item.path === "/server" ? { ...entry.item, items: (entry.item.items ?? []).map(child => child.path === "/server/database" ? { ...child, items: namespaces.map(namespace => ({ title: namespace, path: "/server/database", search: { namespace } })) } : child) } : entry.item);
   const extensions = array(config.services).map(object).filter(service => service.scope !== "system").flatMap(service => menusOf(service).map(menu => fromMenu(menu, label(service.name, ""))));
   if (extensions.length) items.push({ title: "Extensions", path: "/services", items: extensions });
-  return filterMenu([{ title: "Projects", path: "/projects", access: { permissions: ["projects.list"], scope: { type: "system" } } }, ...items], config.access);
+  return filterMenu([
+    { title: "Projects", path: "/projects", access: { authenticated: true } },
+    ...items,
+    { title: "Assistant", path: "/assistant", access: { permissions: ["assistant.use"] } },
+    { title: "Settings", path: "/settings", access: { permissions: ["system.settings.manage"] } },
+  ], config.access);
 }
 
 /** Services the Platform composed whose Project-surface menus every Project offers; never their platform menus. */
@@ -111,8 +122,8 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const systemItems = input.tables.filter(entry => object(entry.search).databaseSystemView).map(entry => ({ title: label(entry.title).replace(/^System · /u, ""), path: at("/database"), search: Object.fromEntries(Object.entries(object(entry.search)).filter(([key, value]) => key !== "databaseTenant" && typeof value === "string")) as Record<string, string> }));
   const workloadList = (kind: string) => (input.workloads[kind] ?? []).map(entry => ({ title: entry.name, path: at(`/workloads/${kind}/${encodeURIComponent(entry.id)}`) }));
   const native: MenuItem[] = [
-    ...(available("identity") ? [{ title: "Auth", path: at("/auth") }] : []),
-    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, { title: "Tenants", path: at("/database/tenants") }, { title: "Cross-Tenant Indexes", path: at("/database/cross-tenant-indexes") }, { title: "Shards", path: at("/database/shards") }, { title: "Images", path: at("/database/images") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
+    ...(available("identity") ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
+    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" }, access: projectAccess("project.runtime.manage") }, { title: "Tenants", path: at("/database/tenants") }, { title: "Cross-Tenant Indexes", path: at("/database/cross-tenant-indexes") }, { title: "Shards", path: at("/database/shards") }, { title: "Images", path: at("/database/images") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
     ...(available("storage") ? [{ title: "Storage", path: at("/storage") }] : []),
     ...(available("workloads") ? [{ title: "Workloads", path: at("/workloads"), items: [
       { title: "Functions", path: at("/workloads/functions"), items: [{ title: "Add Function", path: at("/workloads/new") }, ...workloadList("functions")] },
@@ -128,13 +139,14 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
     ...(available("identity") ? [{ title: "Users", path: at("/users"), access: projectAccess("project.users.manage") }] : []),
     ...(available("database") ? [{ title: "Content", path: at("/content"), items: contentItems, access: projectAccess("project.content.read") }] : []),
     ...(available("storage") ? [{ title: "Media", path: at("/media"), access: projectAccess("project.media.manage") }] : []),
-    ...(native.length ? [{ title: "Backend", path: at("/backend"), items: native, access: projectAccess("project.backend.manage") }] : [])
+    ...(native.length ? [{ title: "Backend", path: at("/backend"), items: native, access: projectAccess("project.view") }] : [])
   ];
 
+  const domains = { title: "Domains", path: at("/domains"), access: projectDomainAccess(project.id, false, true) };
   if (managed) {
     const admin = label(object(object(project.recipe).managed).adminTitle, "App Admin");
     return filterMenu([
-      { title: "Overview", path: base }, { title: "Domains", path: at("/domains") }, { title: "Files", path: at("/files") }, { title: "App database", path: at("/app-database") }, { title: "Setup", path: at("/setup") },
+      { title: "Overview", path: base }, domains, { title: "Files", path: at("/files") }, { title: "App database", path: at("/app-database") }, { title: "Setup", path: at("/setup") },
       { title: "Backups", path: at("/backups") }, { title: "Logs", path: at("/logs") }, { title: "Updates", path: at("/updates") }, { title: admin, path: at("/admin") },
       ...nativeItems.filter(item => ["Users", "Content", "Media", "Backend"].includes(item.title)), ...services.flatMap(service => menusOf(service).filter(menu => surfaceOf(menu, service) !== "platform" && menu.path !== "/").map(menu => prefixed(fromMenu(menu, label(service.name, "")))))
     ], input.control.access, project.id);
@@ -142,9 +154,12 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const frontend = object(capabilities.site).available === true ? [{ title: "Frontend", path: at("/frontend"), access: projectAccess("project.website.manage") }] : [];
   return filterMenu([
     { title: "Overview", path: base, access: projectAccess("project.view") },
-    ...nativeItems.filter(item => item.title !== "Backend"), ...frontend, ...bySurface("root"),
+    domains,
+    ...nativeItems.filter(item => item.title !== "Backend"),
+    ...(available("identity") && !canAccess(input.control.access, projectAccess("project.view")) ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
+    ...frontend, ...bySurface("root"),
     { title: "Extensions", path: at("/extensions"), items: [{ title: "Agents", path: at("/agents") }, ...bySurface("extensions")], access: projectAccess("project.extensions.manage") },
-    ...(native.length || bySurface("core").length ? [{ title: "Backend", path: at("/backend"), items: [...native, ...bySurface("core")], access: projectAccess("project.backend.manage") }] : []),
+    ...(native.length || bySurface("core").length ? [{ title: "Backend", path: at("/backend"), items: [...native, ...bySurface("core")], access: projectAccess("project.view") }] : []),
     { title: "Settings", path: at("/settings"), items: [{ title: "Project Settings", path: at("/settings") }, ...bySurface("settings")], access: projectAccess("project.settings.manage") }
   ], input.control.access, project.id);
 }
@@ -174,6 +189,7 @@ export const loadProjectMenu = Effect.fn("ui.loadProjectMenu")(function*(control
 });
 
 export const loadPlatformMenu = Effect.fn("ui.loadPlatformMenu")(function*(config: Config) {
+  if (!canAccess(config.access, { permissions: ["server.database.inspect"], scope: { type: "system" } })) return platformMenu(config, []);
   const namespaces = yield* request(`${config.api.basePath}/runtime/system-store/namespaces`).pipe(Effect.map(result => array(object(result).namespaces).map(object).map(entry => label(entry.namespace, ""))), Effect.catch(() => Effect.succeed([] as string[])));
   return platformMenu(config, namespaces);
 });

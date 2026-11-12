@@ -2240,6 +2240,10 @@ Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboar
   `rootPath` as it serves (assets, the server entry's requests and responses). Dashboard code takes the
   mount from `app/mount.ts` and never writes `/zelavis` or `/api/v1` literally. The dashboard calls
   `v1` of the Platform it is mounted on.
+- **Caller authority comes from authenticated `runtime/access`.** Public
+  `runtime/config` supplies runtime configuration. Browser and server-view
+  navigation use the same caller's grants and clear cached navigation when the
+  caller changes.
 - **Nothing is installed beside the shipped dashboard.** The server entry is bundled so it imports only
   `effect` (which the Platform provides) and Node; the build refuses output that imports anything else.
   The dashboard's server code calls the Platform in-process through the frontend context's `fetch`, never

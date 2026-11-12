@@ -152,7 +152,12 @@ export function withUniqueAccounts(
         const keys = accountKeys(account);
         yield* claimAllProgram(backend, keys, account.id, exists);
         return yield* integration(() => inner.create(account)).pipe(
-          Effect.onError(() => releaseAllProgram(backend, keys, account.id).pipe(Effect.orDie)),
+          Effect.onError(() => Effect.gen(function* () {
+            // A repository may have written the entity before losing its
+            // reply. Preserve claims while that entity can still be read.
+            const written = yield* integration(() => inner.findById(account.id));
+            yield* releaseAllProgram(backend, difference(keys, written ? accountKeys(written) : []), account.id);
+          }).pipe(Effect.orDie)),
         );
       }));
     },
@@ -214,7 +219,12 @@ export function withUniqueCredentials(
         const keys = credentialKeys(credential);
         yield* claimAllProgram(backend, keys, credential.id, exists);
         return yield* integration(() => inner.create(credential)).pipe(
-          Effect.onError(() => releaseAllProgram(backend, keys, credential.id).pipe(Effect.orDie)),
+          Effect.onError(() => Effect.gen(function* () {
+            // A repository may have written the entity before losing its
+            // reply. Preserve claims while that entity can still be read.
+            const written = yield* integration(() => inner.findById(credential.id));
+            yield* releaseAllProgram(backend, difference(keys, written ? credentialKeys(written) : []), credential.id);
+          }).pipe(Effect.orDie)),
         );
       }));
     },

@@ -100,3 +100,64 @@ time. Each has a row in [Delivery guarantees](../../architecture/delivery-guaran
 The `secret` is write-only: reads answer `secretSet`. `job`, `schedule` and `webhook` are the entity types of those
 workloads, so an `entity` workload cannot take those names. Schemes other than those two HMACs are not verified by
 Zelavis, and a webhook without a `secret` accepts any caller, so give every inbound webhook a secret.
+
+## Recovering an asynchronous provider result
+
+A document conversion service can accept a request and finish it later. Keep the conversion's status in an App
+document so it can still be checked if the completion callback never arrives. Use the same Tenant for the document,
+the outbound `provider-submit` webhook, the inbound `provider-result` webhook, and the `provider-check` job.
+
+Create the `provider-requests` collection, then save the `pending` record and enqueue the submission in one
+[document write](../database/#outbox). Generate a request ID unique to the provider account and reuse it when
+retrying the same submission. Here `tenantDb` is the App's database handle for that Tenant.
+
+```js
+const requestId = 'conversion-42';
+await tenantDb.documents.write({
+  operations: [{ _tag: 'Insert', collection: 'provider-requests', id: requestId, data: { status: 'pending' } }],
+  emit: [{ id: requestId, topic: 'webhook.provider-submit', payload: { requestId } }],
+  idempotencyKey: requestId,
+});
+```
+
+Configure `provider-submit` for a receiver that accepts the Workloads envelope and deduplicates submissions by
+`Idempotency-Key`. Zelavis sends the outbox ID in that header and removes the entry on a `2xx`. The conversion
+stays `pending` until its outcome is known. If the provider accepted the request and its response was lost, the
+outbox may send it again with the same key. Safe replay depends on the receiver honoring that key. If the provider
+lacks that contract, use a provider-specific sender that resolves an uncertain submission through the provider's
+status mechanism or operator review before resubmitting.
+
+Configure `provider-result` with a shared secret when the provider signs callbacks using a supported HMAC scheme. In this example,
+the callback body contains an event `id`, the `requestId`, and a terminal status of `succeeded` or `failed`.
+The event ID deduplicates the callback, and the request ID selects the existing document. A callback `202` means
+Zelavis saved the event in its mailbox. The handler validates the body and returns a step that records the result
+when the message is processed.
+
+When the callback is missing, an authorized caller can enqueue `provider-check` with the same request ID. The job
+checks that the App record is pending, then reads the provider's status at its configured endpoint with a deadline.
+Use the same primary key to retry enqueuing the same check. Use a new primary key when deliberately checking again.
+
+```js
+const primaryKey = `check-${requestId}-1`;
+await client.workloads(projectId).run(providerCheckId, {
+  input: { requestId },
+  primaryKey,
+});
+
+const check = await client.data(projectId).entities.message({
+  type: 'job', id: 'provider-check', messageKey: primaryKey, tenantId,
+});
+```
+
+`providerCheckId` is the job definition's ID. The message lookup uses its name, `provider-check`, and requires data
+read access to the Tenant. See the [Workloads table](#workloads) and [entity message lookup](../database/#durable-entities)
+for the HTTP and CLI forms. A `processed` check can report that the provider is still pending. Read the App document
+for the conversion's current status.
+
+Both handlers apply terminal results the same way. Validate that the provider's response identifies the expected
+request, then read that document and return an `Update` in the handler's `writes` with `expectedVersion` from the
+read. The update and the processed mark commit together. If a callback and a check race, the version check refuses
+the stale write and the retry reads the current record. Leave a terminal record unchanged on a repeated result and
+surface contradictory terminal results for inspection. Unknown requests, malformed responses, and unavailable status
+checks leave the stored outcome alone. Adapt the authentication, correlation and status checks to the provider's
+documented contract.

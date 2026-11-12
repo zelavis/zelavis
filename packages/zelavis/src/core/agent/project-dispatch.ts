@@ -54,6 +54,7 @@ export interface ProjectRouteClaims {
     readonly subjectType: string;
     readonly tenantId: string;
     readonly permissions: readonly string[];
+    readonly accountAccessDigest?: string;
   };
 }
 
@@ -67,7 +68,9 @@ const validRoute = (value: unknown): value is ProjectRouteClaims => {
     typeof gateway === "object" && gateway !== null &&
     validId(gateway.projectId) && validId(gateway.scopeId) && validId(gateway.runtimeNodeId) && validId(gateway.subject) && validId(gateway.subjectType) && validId(gateway.tenantId) &&
     typeof gateway.generation === "number" && Number.isSafeInteger(gateway.generation) &&
-    Array.isArray(gateway.permissions) && gateway.permissions.length <= 64 && gateway.permissions.every((permission) => validId(permission));
+    Array.isArray(gateway.permissions) && gateway.permissions.length <= 64 && gateway.permissions.every((permission) => validId(permission)) &&
+    (gateway.accountAccessDigest === undefined ||
+      (typeof gateway.accountAccessDigest === "string" && /^[a-f0-9]{64}$/u.test(gateway.accountAccessDigest)));
 };
 
 const LEASE_KEY = /^ZELAVIS_LEASE_[A-Z_]+$/;

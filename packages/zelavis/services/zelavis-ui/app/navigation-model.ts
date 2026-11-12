@@ -64,8 +64,10 @@ export function resolveTrail(panels: readonly Panel[], fallback: readonly string
 export function workspacePanels(base: readonly Panel[], values: unknown, projectId?: string): Panel[] {
   if (!Array.isArray(values)) return [...base];
   const root = { ...base[0], items: [...base[0].items] };
+  if (!projectId) root.items = root.items.filter(item => item.nested || item.branch === "projects" || item.label === "Projects");
   const projects = base.find(panel => panel.id === "projects")!;
-  const result: Panel[] = [root, projects, ...base.filter(panel => !["platform", "projects", "project"].includes(panel.id)).map(panel => ({ ...panel, items: [...panel.items] }))];
+  const replaced = projectId ? ["platform", "projects", "project"] : ["platform", "projects"];
+  const result: Panel[] = [root, projects, ...base.filter(panel => !replaced.includes(panel.id)).map(panel => ({ ...panel, items: [...panel.items] }))];
   const parent = projectId ? { ...base.find(panel => panel.id === "project")!, items: [] as Panel["items"] } : root;
   if (projectId) result.push(parent);
   const append = (panel: Panel, entries: unknown[], prefix: string) => {
@@ -100,6 +102,7 @@ export function createMenuStore() {
   return {
     set(projectId: string | undefined, items: unknown) { menus.set(key(projectId), items); },
     get(projectId?: string): unknown { return menus.get(key(projectId)); },
+    clear() { menus.clear(); },
   };
 }
 

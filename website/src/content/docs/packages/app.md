@@ -45,8 +45,20 @@ parent Platform upgrade preserves that lock. The current Node driver does not
 yet materialize older versions independently; immutable Project artifacts are
 the next step for true side-by-side version execution.
 
-The recipe includes Project-owned Auth by default: password registration,
-session lifecycle, OAuth/OpenID Connect provider configuration, and durable
+The recipe includes Project-owned Auth with password sign-in, optional public
+registration, session lifecycle, OAuth/OpenID Connect configuration, and durable
 accounts and credentials in the Project database. These identities are the
 App's users; Platform owners and service accounts remain a separate authority
-boundary. See [Auth](./auth.md).
+boundary. Registration starts closed and the Project's saved setting applies
+immediately. Closing it preserves existing sign-in. The Platform can manage
+the setting on a running Project with `zelavis projects registration-settings PROJECT`
+and `zelavis projects set-registration-settings PROJECT --data JSON`.
+Visitors sign in at `/zelavis/login` on the App's verified site hostname or
+Edge preview. When the App owner enables password registration, the login
+page links to `/zelavis/sign-up`. Both forms return to the site's root on
+success and work alongside the Project's selected frontend. Use HTTPS for
+public password traffic. Connect the hostname through **Project → Domains** and
+wait for it to become active. For an App at `https://app.example.com`, the
+public signup URL is `https://app.example.com/zelavis/sign-up`.
+See [Project hostname setup](../architecture/edge.md#connect-a-project-hostname)
+and [Auth](./auth.md).

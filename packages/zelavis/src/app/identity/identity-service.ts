@@ -1,26 +1,53 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import { importAccounts, type AccountImportInput } from "./account-import.js";
-import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
+import { present, evaluate, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import type { PasswordProviderOptions } from "./providers/password.js";
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
   type ZelavisEndpointGroup,
   type ZelavisServerRoute,
+  type ZelavisRouteResponse,
   type ZelavisRequestAuthenticator,
   type ZelavisPrincipalGrant,
+  type ZelavisPrincipal,
 } from "../../core/index.js";
 import type { IdentityApi, IdentityMethodPlugin } from "./core/types.js";
+import type { RegistrationRecovery } from "./services/registration-service.js";
 import type { IdentityBootstrapCapability } from "./core/types.js";
 import { createIdentity, type CreateIdentityOptions } from "./core/create-identity.js";
 import { createSessionCookie } from "./core/session-authenticator.js";
 import {
   IdentityDomainError,
+  AccountAccessError,
   AuthInvalidCredentialsError,
   IdentityNotFoundError,
   AuthRateLimitError,
   IdentityValidationError,
+  RegistrationError,
+  RegistrationRateLimitError,
 } from "./core/errors.js";
+import type { Account } from "./domain/entities.js";
+import {
+  ACCOUNT_ACCESS_BODY_BYTES,
+  accountAccessInputJsonSchema,
+  accountAccessResultJsonSchema,
+} from "./domain/account-access.js";
+import {
+  accountAccessForbidden,
+  accountNotFound,
+  assertCanDelegateAccountAccess,
+  hasReservedAccountMetadata,
+  isServiceAccount,
+  type AccountAdministrationContext,
+} from "./services/account-service.js";
+import {
+  decodeSetRegistrationSettingsInput,
+  REGISTRATION_SETTINGS_BODY_BYTES,
+  registrationSettingsInputJsonSchema,
+  registrationSettingsJsonSchema,
+  registrationStatusJsonSchema,
+} from "./domain/registration.js";
 import { isValidTenantId } from "../../db/naming.js";
 
 const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
@@ -47,7 +74,54 @@ const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   },
 ];
 
-function authErrorResponse(error: unknown, fallback = 500) {
+const registrationErrors = {
+  RegistrationClosed: { status: 403, code: "registration_closed" },
+  RegistrationSettingsConflict: { status: 409, code: "registration_settings_conflict" },
+  RegistrationConflict: { status: 409, code: "registration_conflict" },
+  RegistrationBusy: { status: 429, code: "registration_busy", retryAfter: 1 },
+  RegistrationUnavailable: { status: 503, code: "registration_unavailable" },
+  EnrollmentRequired: { status: 403, code: "enrollment_required" },
+} as const;
+
+const noStore = { "cache-control": "no-store" };
+
+const accountAccessErrors = {
+  InvalidAccountAccess: { status: 400, code: "invalid_account_access" },
+  AccountAccessForbidden: { status: 403, code: "account_access_forbidden" },
+  AccountNotFound: { status: 404, code: "account_not_found" },
+  AccountAccessConflict: { status: 409, code: "account_access_conflict" },
+  AccountAccessBusy: { status: 429, code: "account_access_busy" },
+  AccountAccessAuditFailed: { status: 503, code: "account_access_audit_failed" },
+} as const;
+
+function authErrorResponse(error: unknown, fallback = 500, registration = false): ZelavisRouteResponse {
+  if (error instanceof AccountAccessError) {
+    const { status, code } = accountAccessErrors[error._tag];
+    return {
+      status,
+      headers: error._tag === "AccountAccessBusy" ? { ...noStore, "retry-after": "1" } : noStore,
+      body: {
+        error: error.message, code,
+        ...(error.accessRevision === undefined ? {} : { accessRevision: error.accessRevision }),
+      },
+    };
+  }
+  if (error instanceof RegistrationError || error instanceof RegistrationRateLimitError) {
+    const mapped = error instanceof RegistrationRateLimitError
+      ? { status: 429, code: "registration_rate_limited", retryAfter: error.retryAfterSeconds }
+      : registrationErrors[error._tag];
+    return {
+      status: mapped.status,
+      headers: { ...noStore, ...("retryAfter" in mapped ? { "retry-after": String(mapped.retryAfter) } : {}) },
+      body: { error: error.message, code: mapped.code },
+    };
+  }
+  if (registration && error instanceof IdentityNotFoundError) {
+    return { status: 404, headers: noStore, body: { error: error.message, code: "provider_not_found" } };
+  }
+  if (registration && error instanceof IdentityValidationError) {
+    return { status: 400, headers: noStore, body: { error: error.message, code: "invalid_registration" } };
+  }
   return createMappedJsonErrorResponse(error, authErrorRules, fallback);
 }
 
@@ -61,6 +135,33 @@ function publicCredential<T extends { secretHash?: string }>(credential: T) {
   return safe;
 }
 
+function administrativeAccount(account: Account) {
+  const { registrationPending: _pending, sessionEpoch: _epoch, ...safe } = account;
+  return { ...safe, accessRevision: account.accessRevision ?? 0 };
+}
+
+const optionalString = Schema.optional(Schema.String);
+const optionalMetadata = Schema.optional(Schema.Record(Schema.String, Schema.Unknown));
+const decodeAdministrativeAccount = Schema.decodeUnknownSync(Schema.Struct({
+  id: Schema.String,
+  email: optionalString,
+  username: optionalString,
+  displayName: optionalString,
+  verified: Schema.optional(Schema.Boolean),
+  metadata: optionalMetadata,
+  roles: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(3))),
+  permissions: Schema.optional(Schema.Unknown),
+  grants: Schema.optional(Schema.Unknown),
+}), { onExcessProperty: "error" });
+const decodeAdministrativeCredential = Schema.decodeUnknownSync(Schema.Struct({
+  id: Schema.String,
+  accountId: Schema.String,
+  provider: Schema.String,
+  identifier: Schema.String,
+  secretHash: optionalString,
+  metadata: optionalMetadata,
+}), { onExcessProperty: "error" });
+
 export type IdentityEndpointGroup = Readonly<ZelavisEndpointGroup<IdentityApi>>;
 
 export interface IdentitySessionCookieOptions {
@@ -72,8 +173,10 @@ export interface IdentitySessionCookieOptions {
 
 export interface DefineAuthServiceOptions {
   authority?: "project" | "platform";
-  /** Allow anonymous account enrollment. Intended for Project auth, never Platform owner creation. */
+  validateGrantScopes?: Extract<AccountAdministrationContext, { authority: "platform" }>["validateGrantScopes"];
+  /** Initial public registration setting for a runtime with no saved policy. */
   registration?: boolean;
+  registrationRecovery?: RegistrationRecovery;
   bootstrap?: IdentityBootstrapCapability;
   /**
    * Reads and writes the credentials an operator configured for OAuth
@@ -213,15 +316,39 @@ export function defineAuthEndpointGroup(
   auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
 ): IdentityEndpointGroup {
+  if (options.authority !== undefined || options.registration !== undefined) {
+    const bootstrap = options.bootstrap;
+    auth.registration.bindRuntime(options.registrationRecovery ?? options, {
+      ...(options.authority === undefined ? {} : {
+        authority: options.authority,
+        enrollmentReady: () => bootstrap?.isComplete() ?? present(Effect.succeed(options.authority === "project")),
+      }),
+      ...(options.registration === undefined ? {} : { initiallyEnabled: options.registration }),
+    });
+  }
   const managePermission = options.authority === "platform"
     ? "system.users.manage"
     : "project.users.manage";
+  const administrationContext = (principal: ZelavisPrincipal | undefined): AccountAdministrationContext =>
+    options.authority === "platform" ? { principal, authority: "platform", validateGrantScopes: options.validateGrantScopes }
+      : { principal, authority: "project", projectId: auth.context.projectId };
   const manageAccess = {
     permissions: [managePermission],
-    ...(options.authority !== "platform" && auth.context.projectId
+    ...(options.authority === "platform" ? { scope: { type: "system" as const } } : auth.context.projectId
       ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
       : {}),
   };
+  const managedAccount = (service: IdentityApi, accountId: string, actor: ZelavisPrincipal, serviceOnly = false) =>
+    Effect.gen(function* () {
+      const account = yield* integration(() => service.accounts.findById(accountId));
+      if (!account || (serviceOnly && account.metadata?.principalType !== "service")) {
+        return yield* Effect.fail(accountNotFound());
+      }
+      yield* evaluate(() => assertCanDelegateAccountAccess(actor, administrationContext(actor), serviceOnly
+        ? { ...account, roles: account.roles?.filter((role) => role !== "service") }
+        : account));
+      return account;
+    });
   const settingsAccess = {
     permissions: [options.authority === "platform"
       ? "system.settings.manage"
@@ -230,9 +357,10 @@ export function defineAuthEndpointGroup(
       ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
       : {}),
   };
-  const cookieOptions = options.sessionCookie === false
+  const cookieName = auth.context.sessionCookieName;
+  const cookieOptions = options.sessionCookie === false || cookieName === false || !options.sessionCookie
     ? undefined
-    : options.sessionCookie;
+    : { ...options.sessionCookie, name: cookieName ?? options.sessionCookie.name };
   const bootstrapToken = validateBootstrapToken(options.bootstrapToken);
   const routes: readonly ZelavisServerRoute<IdentityApi>[] = [
         {
@@ -244,16 +372,17 @@ export function defineAuthEndpointGroup(
             operationId: "listAccounts",
             summary: "List accounts",
             tags: ["auth"],
+            queryParams: { accountId: { type: "string", description: "Restrict the list to this exact account." } },
             responses: {
               200: { description: "List of accounts" },
             },
           },
-          handler: ({ service }) => present(Effect.gen(function* () {
-    return {
-            status: 200,
-            body: (yield* integrationValue(service.accounts.list())),
-          };
-  })),
+          handler: ({ service, query }) => present(Effect.gen(function* () {
+            const accountId = query.get("accountId");
+            const account = accountId === null ? null : yield* integration(() => service.accounts.findById(accountId));
+            const accounts = accountId === null ? yield* integration(() => service.accounts.list()) : account ? [account] : [];
+            return { status: 200, headers: noStore, body: accounts.map(administrativeAccount) };
+          })),
         },
         {
           id: "auth.accounts.create",
@@ -273,14 +402,55 @@ export function defineAuthEndpointGroup(
               400: { description: "Validation error" },
             },
           },
-          handler: ({ service, body })  => present(Effect.gen(function* () {
-              return {
-                status: 201,
-                body: yield* integration(() => service.accounts.create(
-                  body as Parameters<IdentityApi["accounts"]["create"]>[0],
-                )),
-              };
-            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            const input = yield* evaluate(() => decodeAdministrativeAccount(body));
+            if (!input.email?.trim() && !input.username?.trim()) {
+              return yield* Effect.fail(new IdentityValidationError("Account creation requires at least an email or username."));
+            }
+            const context = administrationContext(principal);
+            const permissions = yield* evaluate(() => serviceAccountPermissions(input.permissions));
+            const grants = yield* evaluate(() => serviceAccountGrants(input.grants));
+            const humanRoles = context.authority === "platform" ? ["customer", "operator", "reseller"] : ["user"];
+            if (input.roles?.some((role) => !humanRoles.includes(role)) || permissions.includes("*") ||
+                grants.some(({ permission }) => permission === "*") ||
+                (input.metadata && hasReservedAccountMetadata(input.metadata))) {
+              return yield* Effect.fail(accountAccessForbidden());
+            }
+            const account = { ...input, permissions, grants };
+            return yield* service.accounts.administer(context, (actor) => Effect.gen(function* () {
+              yield* evaluate(() => assertCanDelegateAccountAccess(actor, context, account));
+              const created = yield* integration(() => service.accounts.create(account));
+              return { status: 201, headers: noStore, body: administrativeAccount(created) };
+            }));
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "auth.accounts.access.set",
+          method: "PUT",
+          path: "/accounts/:accountId/access",
+          access: manageAccess,
+          maxRequestBodyBytes: ACCOUNT_ACCESS_BODY_BYTES,
+          invalidJsonBodyCode: "invalid_account_access",
+          spec: {
+            operationId: "setAccountAccess",
+            summary: "Replace a human account's role and authority",
+            tags: ["auth"],
+            pathParams: { accountId: { type: "string", required: true } },
+            requestBody: { required: true, schema: accountAccessInputJsonSchema },
+            responses: {
+              200: { description: "Current account access and revision", schema: accountAccessResultJsonSchema },
+              400: { description: "Invalid account access" },
+              403: { description: "Delegation or account modification forbidden" },
+              404: { description: "Account not found" },
+              409: { description: "Account access revision changed" },
+              429: { description: "Account administration busy" },
+              503: { description: "Access changed but its security event could not be recorded" },
+            },
+          },
+          handler: ({ service, principal, params, body }) => present(Effect.gen(function* () {
+            const updated = yield* integration(() => service.accounts.setAccess(params.accountId, body, administrationContext(principal)));
+            return { status: 200, headers: noStore, body: updated };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           id: "auth.accounts.import",
@@ -295,9 +465,9 @@ export function defineAuthEndpointGroup(
             requestBody: { required: true, schema: { type: "object", required: ["accounts"], properties: { accounts: { type: "array" }, dryRun: { type: "boolean" } } } },
             responses: { 200: { description: "{ dryRun, accounts, created, skipped, needsReset, problems }" }, 400: { description: "Validation error" } },
           },
-          handler: ({ service, body }) => present(Effect.gen(function* () {
+          handler: ({ service, body, principal }) => present(service.accounts.administer(administrationContext(principal), () => Effect.gen(function* () {
             return { status: 200, body: yield* integration(() => importAccounts(service, body as AccountImportInput)) };
-          }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+          })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.credentials.create",
@@ -317,14 +487,18 @@ export function defineAuthEndpointGroup(
               400: { description: "Validation error" },
             },
           },
-          handler: ({ service, body })  => present(Effect.gen(function* () {
-              return {
-                status: 201,
-                body: publicCredential(yield* integration(() => service.credentials.create(
-                  body as Parameters<IdentityApi["credentials"]["create"]>[0],
-                ))),
-              };
-            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+          handler: ({ service, body, principal }) => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+            const input = yield* evaluate(() => decodeAdministrativeCredential(body));
+            const account = yield* managedAccount(service, input.accountId, actor);
+            if (isServiceAccount(account) || account.metadata?.principalType === "system" ||
+                (account.roles?.includes("owner") && account.id !== actor.id)) {
+              return yield* Effect.fail(accountAccessForbidden());
+            }
+            return {
+              status: 201,
+              body: publicCredential(yield* integration(() => service.credentials.create(input))),
+            };
+          })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.providers.list",
@@ -343,80 +517,108 @@ export function defineAuthEndpointGroup(
             body: service.authentication.listProviders(),
           }),
         },
-        ...(options.authority !== "platform" && options.registration
-          ? [
-              {
-                id: "auth.registration.create",
-                method: "POST" as const,
-                path: "/sign-up/:provider",
-                spec: {
-                  operationId: "signUp",
-                  summary: "Create an app account with a credential provider",
-                  tags: ["auth"],
-                  responses: {
-                    201: { description: "Account created and signed in" },
-                    400: { description: "Registration failed" },
-                  },
-                },
-                handler: ({ service, params, body, request }: { service: IdentityApi; params: Record<string, string>; body: unknown; request: Request })  => present(Effect.gen(function* () {
-                  let accountId: string | undefined;
-                  return yield* Effect.gen(function* () {
-                    const input = (body ?? {}) as Record<string, unknown>;
-                    const prepared = yield* integration(() => service.authentication.prepareCredential(
-                      params.provider,
-                      input as Parameters<IdentityApi["authentication"]["prepareCredential"]>[1],
-                    ));
-                    const newAccountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
-                    accountId = newAccountId;
-                    const account = yield* integration(() => service.accounts.create({
-                      id: newAccountId,
-                      ...prepared.accountIdentity,
-                      ...(typeof input.displayName === "string" && input.displayName.trim()
-                        ? { displayName: input.displayName.trim() }
-                        : {}),
-                    }));
-                    const credential = yield* integration(() => service.credentials.create({
-                      id: `credential_${crypto.randomUUID().replaceAll("-", "")}`,
-                      accountId: account.id,
-                      provider: params.provider,
-                      identifier: prepared.identifier,
-                      secretHash: prepared.secretHash,
-                      metadata: prepared.metadata,
-                    }));
-                    const session = yield* integration(() => service.sessions.create({
-                      accountId: account.id,
-                      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
-                      metadata: { provider: params.provider, authentication: "registration" },
-                    }));
-                    const sessionCookie = cookieOptions
-                      ? browserSessionCookieHeader(
-                          session.token,
-                          session.session.expiresAt,
-                          request,
-                          cookieOptions,
-                        )
-                      : undefined;
-                    return {
-                      status: 201,
-                      headers: sessionCookie ? { "set-cookie": sessionCookie } : undefined,
-                      body: {
-                        account,
-                        credential: publicCredential(credential),
-                        session: { token: session.token, session: publicSession(session.session) },
-                      },
-                    };
-                  }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
-  const error = unwrapFailure(Cause.squash(cause));
-                    const created = accountId;
-                    if (created) {
-                      yield* integration(() => service.repositories.accounts.delete(created)).pipe(Effect.orElseSucceed(() => false));
-                    }
-                    return authErrorResponse(error, 400);
-                  })));
-})),
-              },
-            ]
-          : []),
+        {
+          id: "auth.registration.status",
+          method: "GET",
+          path: "/registration",
+          spec: {
+            operationId: "registrationStatus",
+            summary: "Read public registration availability",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Effective registration availability and enrollment providers", schema: registrationStatusJsonSchema },
+              503: { description: "Registration unavailable" },
+            },
+          },
+          handler: ({ service }) => present(Effect.gen(function* () {
+            const body = yield* integration(() => service.registration.status());
+            return { status: 200, headers: noStore, body };
+          }).pipe(Effect.catch((error) => Effect.succeed(authErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "auth.registration.settings.get",
+          method: "GET",
+          path: "/registration/settings",
+          access: options.authority === "platform"
+            ? { ...settingsAccess, scope: { type: "system" } }
+            : settingsAccess,
+          spec: {
+            operationId: "registrationSettings",
+            summary: "Read the runtime's registration settings",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Saved registration setting and revision", schema: registrationSettingsJsonSchema },
+              503: { description: "Registration settings unavailable" },
+            },
+          },
+          handler: ({ service }) => present(Effect.gen(function* () {
+            const body = yield* integration(() => service.registration.settings());
+            return { status: 200, headers: noStore, body };
+          }).pipe(Effect.catch((error) => Effect.succeed(authErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "auth.registration.settings.set",
+          method: "PUT",
+          path: "/registration/settings",
+          access: options.authority === "platform"
+            ? { ...settingsAccess, scope: { type: "system" } }
+            : settingsAccess,
+          maxRequestBodyBytes: REGISTRATION_SETTINGS_BODY_BYTES,
+          invalidJsonBodyCode: "invalid_registration",
+          spec: {
+            operationId: "setRegistrationSettings",
+            summary: "Update the runtime's registration settings",
+            tags: ["auth"],
+            requestBody: { required: true, schema: registrationSettingsInputJsonSchema },
+            responses: {
+              200: { description: "Updated registration setting and revision", schema: registrationSettingsJsonSchema },
+              400: { description: "Invalid registration settings" },
+              409: { description: "Settings revision has changed" },
+              413: { description: "Request exceeds 1024 bytes" },
+              503: { description: "Registration settings unavailable" },
+            },
+          },
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = yield* evaluate(() => decodeSetRegistrationSettingsInput(body)).pipe(
+              Effect.mapError(() => new IdentityValidationError("Invalid registration settings.")),
+            );
+            const updated = yield* integration(() => service.registration.setSettings(input));
+            return { status: 200, headers: noStore, body: updated };
+          }).pipe(Effect.catch((error) => Effect.succeed(authErrorResponse(unwrapFailure(error), 500, true))))),
+        },
+        {
+          id: "auth.registration.create",
+          method: "POST",
+          path: "/sign-up/:provider",
+          maxRequestBodyBytes: 8192,
+          invalidJsonBodyCode: "invalid_registration",
+          spec: {
+            operationId: "signUp",
+            summary: "Create an account with a credential provider",
+            tags: ["auth"],
+            responses: {
+              201: { description: "Account created and signed in" },
+              400: { description: "Invalid enrollment input" },
+              403: { description: "Registration is closed" },
+              404: { description: "Enrollment provider unavailable" },
+              409: { description: "Registration conflict" },
+              413: { description: "Registration request exceeds 8192 bytes" },
+              429: { description: "Registration is busy or rate limited" },
+              503: { description: "Registration unavailable" },
+            },
+          },
+          handler: ({ service, params, body, request }) => present(Effect.gen(function* () {
+            const { account, credential, session } = yield* integration(() => service.registration.signUp(params.provider, body));
+            const sessionCookie = cookieOptions
+              ? browserSessionCookieHeader(session.token, session.session.expiresAt, request, cookieOptions)
+              : undefined;
+            return {
+              status: 201,
+              headers: { ...noStore, ...(sessionCookie ? { "set-cookie": sessionCookie } : {}) },
+              body: { account, credential: publicCredential(credential), session: { token: session.token, session: publicSession(session.session) } },
+            };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 500, true))))),
+        },
         {
           id: "auth.recovery.providers.list",
           spec: {
@@ -507,6 +709,10 @@ export function defineAuthEndpointGroup(
             responses: {
               200: { description: "Signed in" },
               400: { description: "The callback does not match a pending flow" },
+              403: { description: "First-time registration is closed" },
+              409: { description: "Registration conflict" },
+              429: { description: "Registration is busy or rate limited" },
+              503: { description: "Registration unavailable" },
             },
           },
           method: "GET",
@@ -536,9 +742,7 @@ export function defineAuthEndpointGroup(
                   : undefined;
               return {
                 status: 200,
-                headers: sessionCookie
-                  ? ({ "set-cookie": sessionCookie } as Record<string, string>)
-                  : undefined,
+                headers: { ...noStore, ...(sessionCookie ? { "set-cookie": sessionCookie } : {}) },
                 body: {
                   ...result,
                   credential: publicCredential(result.credential),
@@ -789,14 +993,15 @@ export function defineAuthEndpointGroup(
               404: { description: "Session not found" },
             },
           },
-          handler: ({ service, params }) => present(Effect.gen(function* () {
+          handler: ({ service, params, principal }) => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+            yield* managedAccount(service, params.accountId, actor);
             const session = (yield* integrationValue(service.sessions.findById(params.sessionId)));
             if (!session || session.accountId !== params.accountId) {
               return { status: 404, body: { error: "Session not found" } };
             }
             (yield* integrationValue(service.sessions.revoke(session.id)));
             return { status: 204 };
-          })),
+          })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           id: "auth.sessions.revokeManagedAccountSessions",
@@ -809,7 +1014,8 @@ export function defineAuthEndpointGroup(
             tags: ["auth"],
             responses: { 200: { description: "Sessions revoked" } },
           },
-          handler: ({ service, params }) => present(Effect.gen(function* () {
+          handler: ({ service, params, principal }) => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+            yield* managedAccount(service, params.accountId, actor);
     return {
             status: 200,
             body: {
@@ -818,7 +1024,7 @@ export function defineAuthEndpointGroup(
               ).map(publicSession),
             },
           };
-  })),
+  })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           id: "auth.session.rotateCurrent",
@@ -917,7 +1123,7 @@ export function defineAuthEndpointGroup(
                   body: {
                     serviceAccounts: ((yield* integrationValue(service.accounts.list()))).filter(
                       (account) => account.metadata?.principalType === "service",
-                    ),
+                    ).map(administrativeAccount),
                   },
                 };
   })),
@@ -936,7 +1142,7 @@ export function defineAuthEndpointGroup(
                     400: { description: "Invalid service account" },
                   },
                 },
-                handler: ({ service, body }: { service: IdentityApi; body: unknown })  => present(Effect.gen(function* () {
+                handler: ({ service, body, principal }: { service: IdentityApi; body: unknown; principal?: ZelavisPrincipal })  => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
                     const input = (body ?? {}) as Record<string, unknown>;
                     const name = typeof input.name === "string" ? input.name.trim() : "";
                     if (!name || name.length > 100) {
@@ -948,14 +1154,17 @@ export function defineAuthEndpointGroup(
                     }
                     const tenantId = readTenantIdInput(input.tenantId);
                     const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
+                    const permissions = serviceAccountPermissions(input.permissions);
+                    const grants = serviceAccountGrants(input.grants);
+                    yield* evaluate(() => assertCanDelegateAccountAccess(actor, administrationContext(actor), { permissions, grants }));
                     const account = yield* integration(() => service.accounts.create({
                       id,
                       username: id,
                       displayName: name,
                       verified: true,
                       roles: ["service"],
-                      permissions: serviceAccountPermissions(input.permissions),
-                      grants: serviceAccountGrants(input.grants),
+                      permissions,
+                      grants,
                       // Without a Tenant an account is its own, which is a
                       // generated id no operator would recognise and no second
                       // client can ever join. Naming it is what lets an App's
@@ -974,12 +1183,12 @@ export function defineAuthEndpointGroup(
                     return {
                       status: 201,
                       body: {
-                        serviceAccount: account,
+                        serviceAccount: administrativeAccount(account),
                         token: issued.token,
                         session: publicSession(issued.session),
                       },
                     };
-                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+                  })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.setTenant",
@@ -996,11 +1205,8 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
-                    const account = yield* integration(() => service.accounts.findById(params.accountId));
-                    if (!account || account.metadata?.principalType !== "service") {
-                      return { status: 404, body: { error: "Service account not found" } };
-                    }
+                handler: ({ service, params, body, principal }: { service: IdentityApi; params: Record<string, string>; body: unknown; principal?: ZelavisPrincipal })  => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+                    const account = yield* managedAccount(service, params.accountId, actor, true);
                     const input = (body ?? {}) as Record<string, unknown>;
                     const tenantId = readTenantIdInput(input.tenantId);
                     if (!tenantId) {
@@ -1013,8 +1219,8 @@ export function defineAuthEndpointGroup(
                       ...(account.metadata ?? {}),
                       tenantId,
                     }));
-                    return { status: 200, body: { serviceAccount: updated } };
-                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+                    return { status: 200, body: { serviceAccount: administrativeAccount(updated) } };
+                  })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.rotateToken",
@@ -1030,11 +1236,8 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
-                    const account = yield* integration(() => service.accounts.findById(params.accountId));
-                    if (!account || account.metadata?.principalType !== "service") {
-                      return { status: 404, body: { error: "Service account not found" } };
-                    }
+                handler: ({ service, params, body, principal }: { service: IdentityApi; params: Record<string, string>; body: unknown; principal?: ZelavisPrincipal })  => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+                    const account = yield* managedAccount(service, params.accountId, actor, true);
                     const input = (body ?? {}) as Record<string, unknown>;
                     const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
                     if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
@@ -1050,7 +1253,7 @@ export function defineAuthEndpointGroup(
                       status: 200,
                       body: { token: issued.token, session: publicSession(issued.session) },
                     };
-                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+                  })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.revoke",
@@ -1066,15 +1269,12 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: ({ service, params }: { service: IdentityApi; params: Record<string, string> }) => present(Effect.gen(function* () {
-                  const account = (yield* integrationValue(service.accounts.findById(params.accountId)));
-                  if (!account || account.metadata?.principalType !== "service") {
-                    return { status: 404, body: { error: "Service account not found" } };
-                  }
+                handler: ({ service, params, principal }: { service: IdentityApi; params: Record<string, string>; principal?: ZelavisPrincipal }) => present(service.accounts.administer(administrationContext(principal), (actor) => Effect.gen(function* () {
+                  const account = yield* managedAccount(service, params.accountId, actor, true);
                   (yield* integrationValue(service.sessions.revokeAll(account.id)));
                   (yield* integrationValue(service.repositories.accounts.delete(account.id)));
                   return { status: 204 };
-                })),
+                })).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause))))))),
               },
             ]
           : []),
@@ -1305,7 +1505,7 @@ export interface IdentityServiceOptions {
   auth?: IdentityApi;
   authOptions?: CreateIdentityOptions;
   methods?: readonly IdentityMethodPlugin[];
-  /** Allow anonymous Project-user registration. */
+  /** Seed public registration when this runtime has no saved policy. */
   registration?: boolean;
   definition?: DefineAuthServiceOptions;
 }

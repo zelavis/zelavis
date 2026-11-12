@@ -5,12 +5,12 @@ import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
 
 /** Native ingress transport preserves the visitor Host when dialing a private target. */
-export function fetchNodeSite(url: URL, init: RequestInit): Promise<Response> {
+export function fetchNodeSite(url: URL, init: RequestInit, tls?: { servername: string; rejectUnauthorized?: boolean }): Promise<Response> {
   return present(Effect.callback<Response, Error>((resume) => {
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => { headers[name] = value; });
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
-      method: init.method, headers, signal: init.signal ?? undefined,
+      method: init.method, headers, signal: init.signal ?? undefined, ...tls,
     }, (incoming) => {
       const responseHeaders = new Headers();
       for (let i = 0; i < incoming.rawHeaders.length; i += 2) {

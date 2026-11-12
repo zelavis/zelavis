@@ -39,7 +39,13 @@ function readCookie(request: Request, name: string): string | undefined {
   return undefined;
 }
 
-function toPrincipal(
+const sessionProofs = new WeakMap<ZelavisPrincipal, { readonly epoch: number }>();
+
+export function accountSessionProof(principal: ZelavisPrincipal) {
+  return sessionProofs.get(principal);
+}
+
+export function accountSessionPrincipal(
   account: Account,
   sessionId: string,
   transport: "bearer" | "cookie",
@@ -118,7 +124,7 @@ export function createSessionAuthenticator(
         });
       }
       const account = (yield* integrationValue(options.accounts.findById(session.accountId)));
-      if (!account) {
+      if (!account || account.registrationPending || (account.sessionEpoch ?? 0) !== (session.epoch ?? 0)) {
         if (anonymousOnFailure) return undefined;
         throw new ZelavisAuthenticationError("Session account no longer exists.", {
           challenge: { scheme: "Bearer" },
@@ -128,17 +134,19 @@ export function createSessionAuthenticator(
         const origin = context.request.headers.get("origin");
         const site = context.request.headers.get("sec-fetch-site");
         if (origin ? origin !== new URL(context.request.url).origin : site && site !== "same-origin") {
-          throw new ZelavisAuthenticationError("Cookie-authenticated changes require the Platform's own origin.", {
+          throw new ZelavisAuthenticationError("Cookie-authenticated changes require the runtime's own origin.", {
             challenge: { scheme: "Bearer" },
           });
         }
       }
-      return (yield* integrationValue(toPrincipal(
+      const principal = accountSessionPrincipal(
         account,
         session.id,
         bearer ? "bearer" : "cookie",
         options.projectId,
-      )));
+      );
+      sessionProofs.set(principal, { epoch: session.epoch ?? 0 });
+      return principal;
     }));
   },
   };

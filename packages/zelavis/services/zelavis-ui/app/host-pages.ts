@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { accountAccessEditor, canEditAccountAccess } from "./account-access-editor.ts";
 import { array, label, object, request } from "./api.ts";
 import { button, empty, field, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, facts, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
@@ -31,10 +32,10 @@ export const serverHomeScreen = Effect.fn("ui.serverHomeScreen")(function*(_cont
       statCard("Resources", "monitoring", "Host CPU, memory, storage, and processes."),
       statCard("Security", "checklist", "Host security posture and guidance."),
       statCard("Fabric", "single-node", "The control plane is mounted and ready to grow into a cluster."),
-      statCard("Domains", "planned", "Bind hostnames to projects and system services."),
+      statCard("Domains", "Edge", "Inspect Platform and verified Project hostnames."),
       statCard("Access", "draft", "Manage system principals, grants, and permission scopes.")),
     rowsCard("Host management", ...sections.map(([title, path, detail]) => dataRow(title, detail, link("Open", path)))),
-    resourceNotice("Server layer placeholder", "These screens establish the cPanel/Plesk-style host boundary. Live domain, backup, and log providers can plug in here later without becoming project features."));
+    resourceNotice("Server settings", "These controls apply to the Platform installation and its host."));
 });
 
 /**
@@ -88,20 +89,15 @@ export const runtimesScreen = Effect.fn("ui.runtimesScreen")(function*(context: 
     resourceNotice("Detection is read-only", "This phase does not install Docker, access its control socket, migrate Projects, or claim that the current native process driver provides a hardened Linux jail. Those require the privileged Agent and native-isolation implementation described in the architecture plan."));
 });
 
-const DOMAIN_ACTIONS = {
-  add: ["Add Domain", "Connect an existing domain to Zelavis and verify ownership."],
-  buy: ["Buy Domain", "Search and register a new domain through a future registrar provider adapter."],
-  transfer: ["Transfer Domain", "Move an existing domain registration into a future Zelavis-managed registrar flow."]
-} as const;
-
 export const domainsScreen = Effect.fn("ui.domainsScreen")(function*(context: ScreenContext) {
-  const requested = context.url.searchParams.get("domainAction");
-  const action = requested === "add" || requested === "buy" || requested === "transfer" ? DOMAIN_ACTIONS[requested] : undefined;
-  return page(
-    rowsCard("Domain inventory", dataRow(action?.[0] ?? "Server-wide domains", action?.[1] ?? "Hostnames will bind to projects, apps, and system services from this global layer.", badge(action ? "draft" : "planned"))),
-    ...(action ? [rowsCard(action[0], dataRow("Workflow", "The dashboard route and sidebar state are ready; provider-backed domain actions come next.", badge("draft")))] : []),
-    rowsCard("Domain bindings", dataRow("localhost", "Development host reserved for a local project.", badge("draft"))),
-    resourceNotice("Provider boundary", "DNS, TLS, and verification providers belong here as host-level provider adapters. Projects should consume bindings, not own the provider."));
+  const result = object(yield* request(`${context.config.api.basePath}/runtime/edge/routes`));
+  const rows = array(result.hostnames).map(object).map(row => {
+    const project = typeof row.projectId === "string" ? row.projectId : undefined;
+    const proof = object(row.projectDomain);
+    return dataRow(label(row.host), [project ? `Project ${project}` : "Platform", label(row.tlsMode), label(proof.routing, "")].filter(Boolean).join(" · "),
+      project ? link("Project domains", `/projects/${encodeURIComponent(project)}/domains`) : undefined);
+  });
+  return page(rowsCard("Domain inventory", ...(rows.length ? rows : [dataRow("No hostnames configured", "Verified Project hostnames appear here.")])));
 });
 
 export const systemStoreScreen = Effect.fn("ui.systemStoreScreen")(function*(context: ScreenContext) {
@@ -225,7 +221,7 @@ export const accessScreen = Effect.fn("ui.accessScreen")(function*(context: Scre
         ? grants.map(grant => dataRow(label(grant.permission), scopeText(grant.scope), badge("active")))
         : [dataRow("Wildcard owner", wildcard ? "All permissions" : "No grants", badge(wildcard ? "ready" : "planned"))])),
       rowsCard("User levels", ...LEVELS.map(([title, detail]) => dataRow(title, detail, badge(title === access.label ? "active" : "planned"))))),
-    resourceNotice("One access model", "This screen reflects the principal authenticated by the Platform. User creation, role editing, customer accounts, reseller boundaries, and Hosting Provider billing links remain endpoint-backed workflows to add next."));
+    resourceNotice("One access model", "Platform users have roles and explicit scoped grants. Edit human account access in Users. Reseller organizations and Hosting Provider billing remain planned."));
 });
 
 const VOCABULARY = [
@@ -250,6 +246,7 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
   const accounts = array(yield* request(`${api}/accounts`)).map(object);
   const serviceAccounts = array(object(yield* request(`${api}/service-accounts`)).serviceAccounts).map(object);
   const people = accounts.filter(account => object(account.metadata).principalType !== "service");
+  const editor = yield* accountAccessEditor(context, accounts);
   const owners = people.filter(account => array(account.roles).includes("owner")).length;
   const status = node("p", { class: "muted", role: "status" });
   const token = node("div", { class: "k-notice", hidden: "" });
@@ -277,13 +274,18 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
   });
 
   return page(
+    editor ?? flashNotice("Account access"),
     columns(3,
       statCard("People", String(people.length), `${owners} owner account${owners === 1 ? "" : "s"}.`),
       statCard("Service accounts", String(serviceAccounts.length), "Scoped machine identities for SDKs, CI, and agents."),
       statCard("Authority", "core", "Users and clients share the same grants and endpoint enforcement.")),
     rowsCard("Platform users", ...people.map(account => dataRow(
       label(account.displayName ?? account.email ?? account.username ?? account.id), label(account.email ?? account.username ?? account.id),
-      badge(label(array(account.roles)[0], account.verified === true ? "verified" : "unverified"))))),
+      node("div", { class: "actions" },
+        badge(label(array(account.roles)[0], account.verified === true ? "verified" : "unverified")),
+        canEditAccountAccess(context, account)
+          ? button("Edit access", () => context.setSearch({ accountAccess: label(account.id, "") }), { "aria-label": `Edit access for ${label(account.displayName ?? account.email ?? account.username ?? account.id)}` })
+          : undefined)))),
     card("API keys", form, token, status),
     rowsCard("Keys", ...serviceAccounts.map(account => dataRow(
       label(account.displayName ?? account.id), `${label(account.id)} · ${array(account.permissions).length} permissions · ${array(account.grants).length} scoped grants`,

@@ -1,11 +1,13 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { Effect } from "effect";
 import { integration, integrationValue, present } from "../core/runtime/effect-boundary.js";
+import { decodeSetRegistrationSettingsInput } from "../app/identity/domain/registration.js";
+import { decodeSetAccountAccessInput } from "../app/identity/domain/account-access.js";
 import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|retained-data|remove-retained-data|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|registration-settings|set-registration-settings|set-account-access|domains|add-domain|verify-domain|remove-domain|get|create|rename|start|stop|restart|upgrade|switch-version|retained-data|remove-retained-data|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--tls external|managed] [--revision N] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -70,6 +72,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let resolve: string | undefined;
   let asOfTime: string | undefined;
   let untilConsistent = false;
+  let tls: string | undefined;
+  let revision: number | undefined;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -88,11 +92,16 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox", "--storage", "--keep", "--as-of", "--as-of-time", "--resolve", "--data", "--recovery-key", "--schedule", "--durability"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox", "--storage", "--keep", "--as-of", "--as-of-time", "--resolve", "--data", "--recovery-key", "--schedule", "--durability", "--tls", "--revision"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
     if (!value) throw new Error(`${flag} requires a value.`);
+    if (flag === "--tls") tls = value;
+    if (flag === "--revision") {
+      revision = /^\d{1,16}$/.test(value) ? Number(value) : NaN;
+      if (!Number.isSafeInteger(revision)) throw new Error("--revision requires a nonnegative safe integer.");
+    }
     if (flag === "--url") url = value;
     if (flag === "--token") token = value;
     if (flag === "--id") id = value;
@@ -134,8 +143,12 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     return;
   }
   const extra = ["verify-backup", "restore-backup", "drill-backup"].includes(action) ? 2
-    : ["rename", "create-image", "delete-image", "verify-image", "delete-backup-schedule", "run-backup", "remove-retained-data"].includes(action) ? 1 : 0;
+    : ["rename", "set-account-access", "create-image", "delete-image", "verify-image", "delete-backup-schedule", "run-backup", "remove-retained-data", "add-domain", "verify-domain", "remove-domain"].includes(action) ? 1 : 0;
   if (rest.length > extra) throw new Error(`Unexpected argument "${rest[extra]}". ${usage}`);
+  if (tls !== undefined && action !== "add-domain") throw new Error("--tls is only supported by projects add-domain.");
+  if (revision !== undefined && action !== "verify-domain" && action !== "remove-domain") {
+    throw new Error("--revision is only supported by projects verify-domain and remove-domain.");
+  }
   if (storage !== undefined && action !== "create-image") throw new Error("--storage is only supported by projects create-image.");
   if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
   if (restart && action !== "upgrade") throw new Error("--restart is only supported by projects upgrade.");
@@ -154,7 +167,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (after !== undefined && untilConsistent) throw new Error("--until-consistent starts an export; it takes no --after.");
   if (confirm !== undefined && !["delete-tenant", "delete-image", "delete-backup-schedule"].includes(action)) throw new Error("--confirm is only supported by projects delete-tenant, delete-image and delete-backup-schedule.");
   if (durability !== undefined && action !== "storage") throw new Error("--durability is only supported by projects storage.");
-  if (data !== undefined && action !== "create-backup-schedule") throw new Error("--data is only supported by projects create-backup-schedule.");
+  if (data !== undefined && !["create-backup-schedule", "set-registration-settings", "set-account-access"].includes(action)) throw new Error("--data is only supported by projects create-backup-schedule, set-registration-settings and set-account-access.");
   if (recoveryKey !== undefined && action !== "restore-backup") throw new Error("--recovery-key is only supported by projects restore-backup.");
   if (scheduleFilter !== undefined && action !== "backup-runs") throw new Error("--schedule is only supported by projects backup-runs.");
   if (keep !== undefined && action !== "prune-images") throw new Error("--keep is only supported by projects prune-images.");
@@ -190,6 +203,58 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
       : "");
 
   switch (action) {
+    case "set-account-access": {
+      const projectId = requireTarget("id");
+      const [accountId] = rest;
+      if (!accountId || data === undefined) throw new Error("projects set-account-access requires an account id and --data JSON.");
+      const input = decodeSetAccountAccessInput(JSON.parse(data));
+      const result = yield* integration(() => client.projects.setAccountAccess(projectId, accountId, input));
+      print(result, () => `Account ${result.accountId} access revision ${result.accessRevision}.`);
+      return;
+    }
+    case "domains": {
+      const result = yield* integration(() => client.projects.domains(requireTarget("id")));
+      print(result, () => result.domains.map(domain => `${domain.hostname} ${domain.state} (revision ${domain.revision})`).join("\n") || "No domains.");
+      return;
+    }
+    case "add-domain": {
+      const [hostname] = rest;
+      if (!hostname || (tls !== "external" && tls !== "managed")) throw new Error("projects add-domain requires HOSTNAME and --tls external|managed.");
+      const tlsMode = tls;
+      const result = yield* integration(() => client.projects.addDomain(requireTarget("id"), { hostname, tlsMode }));
+      print(result, () => result.challenge
+        ? `Add TXT ${result.challenge.name} = ${result.challenge.value} (revision ${result.revision}).`
+        : `${result.hostname} ${result.state} (revision ${result.revision}).`);
+      return;
+    }
+    case "verify-domain":
+    case "remove-domain": {
+      const [hostname] = rest;
+      if (!hostname || revision === undefined) throw new Error(`projects ${action} requires HOSTNAME and --revision NUMBER.`);
+      const expectedRevision = revision;
+      const projectId = requireTarget("id");
+      if (action === "verify-domain") {
+        const result = yield* integration(() => client.projects.verifyDomain(projectId, hostname, { expectedRevision }));
+        print(result, () => result.publicUrl ?? `${result.hostname} ${result.state} (revision ${result.revision}).`);
+      } else {
+        const result = yield* integration(() => client.projects.removeDomain(projectId, hostname, expectedRevision));
+        print(result, () => result.pending ? "Domain withdrawal is pending." : result.removed ? "Domain removed." : "Domain already absent.");
+      }
+      return;
+    }
+    case "registration-settings":
+    case "set-registration-settings": {
+      const projectId = requireTarget("id");
+      const settings = action === "registration-settings"
+        ? yield* integration(() => client.projects.registrationSettings(projectId))
+        : yield* Effect.gen(function* () {
+          if (data === undefined) throw new Error("projects set-registration-settings requires --data JSON.");
+          const input = decodeSetRegistrationSettingsInput(JSON.parse(data));
+          return yield* integration(() => client.projects.setRegistrationSettings(projectId, input));
+        });
+      print(settings, () => `Registration ${settings.enabled ? "enabled" : "disabled"} (revision ${settings.revision}).`);
+      return;
+    }
     case "list": {
       const result = yield* integration(() => client.projects.list());
       print(result, () => result.projects.map(line).join("\n") || "No Projects.");

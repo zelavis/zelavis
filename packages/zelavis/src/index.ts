@@ -18,6 +18,7 @@ import {
   createOAuthProviderRuntime,
   createPasswordProvider,
   PASSWORD_PROVIDER,
+  RegistrationRecovery,
   type IdentityMethodContext,
   type IdentityMethodPlugin,
   type IdentityApi,
@@ -142,7 +143,11 @@ import {
   removeProjectAssistantProvider,
 } from "./assistant-provider.js";
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
-import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
+import { applyRenewedEdgeCertificates } from "./edge/production.js";
+import { createProjectDomainController, type ProjectDomainIngress, type ProjectDomainController } from "./edge/project-domains.js";
+import { projectDomainRoutes } from "./platform/project-domain-routes.js";
+import { guardControlPlaneHost, guardProjectDomainHost } from "./platform/public-domain-forwarder.js";
+import { hasCanonicalSitePath } from "./platform/project-public-auth.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
 import { compareVersions, isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
 import { DIAGNOSTICS_PLATFORM_LOG_ENTRIES, DIAGNOSTICS_PROJECT_LOG_LINES, type ZelavisDiagnosticsControl, type ZelavisProjectDiagnostics } from "./diagnostics.js";
@@ -274,6 +279,7 @@ import {
 } from "./domain-binding.js";
 import {
   createProjectManager,
+  isCanonicalProjectId,
   ZelavisProjectConflictError,
   ZelavisProjectIsolationError,
   ZelavisProjectNotFoundError,
@@ -633,6 +639,8 @@ export interface ZelavisServerOptions {
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. Defaults to System Store backing. */
   edgeRoutes?: ZelavisEdgeRouteStore;
+  /** Host-owned DNS and ingress configuration for Project domain management. */
+  projectDomainIngress?: ProjectDomainIngress;
   /** Platform-owned public per-Project preview ingress, supplied by the host. */
   edgePreviews?: ZelavisEdgePreviews;
   publicSiteFetch?: (url: URL, init: RequestInit) => Promise<Response>;
@@ -646,6 +654,7 @@ export interface ZelavisServerOptions {
 }
 
 interface ZelavisRuntimeCompositionOptions extends ZelavisServerOptions {
+  registrationRecovery?: RegistrationRecovery;
   serviceRegistry?: ZelavisServiceRegistryOptions;
 }
 
@@ -796,6 +805,8 @@ export interface ZelavisPlatformResources {
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. */
   edgeRoutes?: ZelavisEdgeRouteStore;
+  /** Host-owned DNS and ingress configuration for Project domain management. */
+  projectDomainIngress?: ProjectDomainIngress;
   /** Edge certificate authority and ACME controller. */
   edgeCertificates?: ZelavisCertificateController;
   kv?: ZelavisKeyValueStore;
@@ -1612,6 +1623,8 @@ function resolveAuthCoreService(
   methodServiceNames: ReadonlyMap<IdentityMethodPlugin, string> = new Map(),
   rootPath = "/zelavis",
   bootstrapToken?: string,
+  registrationRecovery?: RegistrationRecovery,
+  validateGrantScopes?: NonNullable<IdentityServiceOptions["definition"]>["validateGrantScopes"],
 ): Promise<ZelavisEndpointGroup<IdentityApi> | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<IdentityApi> | undefined, IntegrationFailure> {
   const authOption = option ?? true;
@@ -1640,6 +1653,10 @@ function resolveAuthCoreService(
   ];
   const auth = configured.auth ?? (yield* integrationValue(createIdentity({
     ...(configured.authOptions ?? {}),
+    sessionCookieName: configured.definition?.sessionCookie === false ? false
+      : configured.definition?.sessionCookie?.name ?? configured.authOptions?.sessionCookieName,
+    registrationRecovery,
+    accountAccessWriter: configured.authOptions?.repositories?.accounts ?? systemStore,
     repositories: {
       ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
       ...(configured.authOptions?.repositories ?? {}),
@@ -1668,6 +1685,8 @@ function resolveAuthCoreService(
     definition: {
       ...(configured.definition ?? {}),
       authority: "platform",
+      validateGrantScopes,
+      registrationRecovery,
       bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
       oauthConnections: oauth.connections,
       bootstrapToken,
@@ -3589,6 +3608,7 @@ function resolvePlatformFrontend(
   option: ZelavisFrontendInput | undefined,
   context: {
     rootPath: string;
+    apiBasePath: string;
     createRuntimeConfig: () => Promise<unknown>;
     fetch: (request: Request) => Promise<Response>;
   },
@@ -3601,6 +3621,7 @@ function resolvePlatformFrontend(
 
   return (yield* integrationValue(options.factory({
     rootPath: context.rootPath,
+    apiBasePath: context.apiBasePath,
     ...(options.title ? { title: options.title } : {}),
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
     ...(() => {
@@ -4521,6 +4542,7 @@ function resolvePlatformEndpointGroup(
   cloudCapacity?: CloudCapacityController,
   projectInstallHost?: () => Promise<ZelavisProjectInstallHost>,
   appShards?: { readonly authority: AppShardPlacementAuthority; readonly allocations: AppShardAllocationStore; readonly activation: AppShardActivation },
+  projectDomains?: ProjectDomainController,
 ): Promise<ZelavisEndpointGroup<any>> {
   return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
@@ -5150,15 +5172,20 @@ function resolvePlatformEndpointGroup(
               const input = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
               const hostname = typeof input.hostname === "string" ? input.hostname : undefined;
               if (hostname) {
+                const current = yield* integration(() => edgeCertificates.getCertificate(`certificate:${hostname.trim().toLowerCase()}`));
                 const certificate = yield* integration(() => edgeCertificates.orderCertificate({
                   hostname,
+                  sanHostnames: current?.sanHostnames,
                   forceRenew: true,
+                  signal: AbortSignal.timeout(90_000),
                 }));
+                yield* applyRenewedEdgeCertificates({ routes: edgeRoutes, manager: edge, renewed: [certificate.ref] });
                 return { status: 200, body: { renewed: [certificate.ref], certificate } };
               }
               const result = yield* integration(() => edgeCertificates.checkRenewals({
                 renewIfWithinDays: typeof input.renewIfWithinDays === "number" ? input.renewIfWithinDays : undefined,
               }));
+              yield* applyRenewedEdgeCertificates({ routes: edgeRoutes, manager: edge, renewed: result.renewed });
               return { status: 200, body: result };
             }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
  const error = unwrapFailure(Cause.squash(cause));
@@ -6027,31 +6054,44 @@ function resolvePlatformEndpointGroup(
             };
           }).pipe(Effect.withSpan("resolvePlatformEndpointGroup/routes/handler/callback"))); },
         },
+        ...(projectDomains ? projectDomainRoutes(projectDomains) : []),
         {
           id: "runtime.projects.list",
           spec: {
             operationId: "listProjects",
-            summary: "List Projects on this installation",
+            summary: "List Projects visible to the caller",
             tags: ["projects"],
             responses: {
               200: { description: "Projects" },
+              400: { description: "Too many distinct scoped Project grants" },
             },
           },
           method: "GET",
           path: "/projects",
-          access: { permissions: ["projects.list"] },
-          handler: () =>
-            present(Effect.gen(function* () {
-    return projects
-              ? {
-                  status: 200,
-                  body: {
-                    runtime: projects.runtime,
-                    projects: (yield* integrationValue(projects.list())),
-                  },
-                }
-              : unavailableProjectsResponse();
-  })),
+          access: { authenticated: true },
+          handler: ({ principal }) => present(Effect.gen(function* () {
+            if (!projects) return unavailableProjectsResponse();
+            if (principalHasPermission(principal, "projects.list") || principal?.permissions?.includes("project.view")) {
+              const all = yield* integration(() => projects.list());
+              return { status: 200, body: { runtime: projects.runtime, projects: all } };
+            }
+            const projectIds = new Set<string>();
+            for (const { permission, scope } of principal?.grants ?? []) {
+              if ((permission !== "project.view" && permission !== "*") ||
+                  scope?.type !== "project" || !scope.projectId || scope.projectIdParam !== undefined ||
+                  !isCanonicalProjectId(scope.projectId)) continue;
+              projectIds.add(scope.projectId);
+              if (projectIds.size > 100) {
+                return { status: 400, body: { error: "Project inventory supports at most 100 scoped Project IDs.", code: "project_grant_limit_exceeded" } };
+              }
+            }
+            const visible = yield* Effect.forEach([...projectIds].sort(), (id) =>
+              integration(() => projects.view(id)), { concurrency: 4 });
+            return {
+              status: 200,
+              body: { runtime: projects.runtime, projects: visible.filter((project) => project && !project.deletion) },
+            };
+          }).pipe(Effect.catch((error) => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {
           id: "runtime.projects.versions.catalog",
@@ -6693,6 +6733,7 @@ export function zelavis(
         const platformFrontend = yield* integration(() =>
           resolvePlatformFrontend(options.frontend, {
             rootPath,
+            apiBasePath: joinPathParts(rootPath, apiPrefix, apiVersion),
             fetch: (request) => mountedFetch
               ? mountedFetch(request)
               : Promise.reject(new Error("The Platform was called before composition finished.")),
@@ -6895,6 +6936,8 @@ export function zelavis(
                 return yield* integration(() =>
                   createProjectIdentityEndpointGroup({
                     database: resolvedDatabaseApi,
+                    rootPath,
+                    registrationRecovery: compositionOptions.registrationRecovery,
                     registry: serviceRegistry,
                     methods: collectAuthMethodPlugins(serviceRegistry),
                     projectId:
@@ -6919,6 +6962,20 @@ export function zelavis(
                 rootPath,
                 options.bootstrap?.token ??
                   readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
+                compositionOptions.registrationRecovery,
+                (scopes) => present(Effect.gen(function* () {
+                  const ids = new Set(scopes.flatMap((scope) => scope.type === "project" ? [scope.projectId] : []));
+                  const names = new Set(scopes.flatMap((scope) => scope.type === "service" ? [scope.serviceName] : []));
+                  if (ids.size > 0) {
+                    if (!projects) return false;
+                    const available = yield* Effect.forEach(ids, (id) => integration(() => projects.view(id)), { concurrency: 4 });
+                    if (available.some((project) => !project || project.deletion)) return false;
+                  }
+                  if (names.size === 0) return true;
+                  const registry = yield* integration(readServiceRegistry);
+                  const installed = new Set(registry.filter(({ status }) => status === "installed").map(({ service }) => service.name));
+                  return [...names].every((name) => installed.has(name));
+                })),
               ),
             );
         // A Project's face is the static frontend installed in its own services
@@ -7072,10 +7129,10 @@ export function zelavis(
           typeof configuredAuth === "object"
             ? configuredAuth.definition?.sessionCookie
             : undefined;
-        const protectedCookieNames =
-          configuredSessionCookie && configuredSessionCookie.name
-            ? [configuredSessionCookie.name]
-            : [];
+        const protectedCookieNames = [
+          identityEndpointGroup?.context.context.sessionCookieName,
+          configuredSessionCookie ? configuredSessionCookie.name : undefined,
+        ].filter((name): name is string => typeof name === "string" && name.length > 0);
 
         const websiteService =
           !siteEnabled || projectSiteFrontend
@@ -7087,6 +7144,7 @@ export function zelavis(
                 ],
                 ...(options.role === "project" ? {} : { redirectTo: rootPath }),
                 publicDomains: {
+                  rootPath,
                   protectedCookieNames,
                   fetchSite: options.publicSiteFetch,
                   ...(options.domainBindings
@@ -7185,7 +7243,13 @@ export function zelavis(
                     }
                   : {}),
               });
-        const projects =
+        const projectDomains: ProjectDomainController | undefined = !projectRole && systemStore && edgeRoutes && projectRuntime
+          ? createProjectDomainController({
+              store: systemStore, routes: edgeRoutes, projects: () => projects,
+              ingress: options.projectDomainIngress, manager: options.edge, certificates: edgeCertificates,
+            })
+          : undefined;
+        const projects: ZelavisProjectManager | undefined =
           systemStore && projectRuntime
             ? yield* integration(() =>
                 createProjectManager({
@@ -7448,10 +7512,10 @@ export function zelavis(
                             id: "edge-routes",
                             cleanup: (
                               project: Readonly<ZelavisProjectRecord>,
-                            ) =>
-                              edgeRoutes
-                                .deleteProjectRoutes(project.id)
-                                .then(() => undefined),
+                            ) => present(Effect.gen(function* () {
+                              if (projectDomains) yield* projectDomains.cleanup(project.id);
+                              yield* integration(() => edgeRoutes.deleteProjectRoutes(project.id));
+                            })),
                           },
                         ]
                       : []),
@@ -7493,9 +7557,10 @@ export function zelavis(
               synthesizeFrontendAppService(platformFrontend),
             )
           : undefined;
-        const sanitizedDashboardService = frontendPackageService
+        const frontendService = frontendPackageService
           ? stripFrontendServiceFields(frontendPackageService)
           : undefined;
+        const appAuthFrontend = projectRole && platformFrontend?.appPublicAuth ? frontendService : undefined;
 
         const platformLog = createPlatformLog();
         // A request that failed behind a generic answer is recorded here with the reference the caller saw,
@@ -7569,6 +7634,9 @@ export function zelavis(
               fabric: { available: Boolean(fabricCoreService) },
               database: { available: Boolean(databaseSubsystem) },
               identity: { available: Boolean(identityEndpointGroup) },
+              ...(appAuthFrontend && identityEndpointGroup
+                ? { appPublicAuth: { available: true } }
+                : {}),
               storage: { available: Boolean(storageEndpointGroup) },
               workloads: { available: Boolean(workloadsCoreService) },
               site: { available: siteMounted },
@@ -7618,6 +7686,7 @@ export function zelavis(
                     {
                       projects: projects!,
                       project,
+                      rootPath,
                       protectedCookieNames,
                       fetchSite: options.publicSiteFetch,
                     },
@@ -7648,10 +7717,11 @@ export function zelavis(
             options.cloudCapacity,
             options.projectInstallHost,
             { authority: appShardAuthority, allocations: appShardAllocations, activation: appShardActivation },
+            projectDomains,
           ),
         );
         const productServices = [
-          sanitizedDashboardService,
+          appAuthFrontend ? undefined : frontendService,
           ...serviceRuntimeServices,
         ].filter((service): service is ZelavisRuntimeService<any> =>
           Boolean(service),
@@ -7660,6 +7730,7 @@ export function zelavis(
           websiteService,
           missingFrontendComponent,
           dashboardAppService,
+          appAuthFrontend,
         ].filter((service): service is ZelavisRuntimeService<any> =>
           Boolean(service),
         );
@@ -7787,9 +7858,10 @@ export function zelavis(
         // A hostname bound to a Project is that Project's, not the Platform's. The
         // dashboard route otherwise matches before the public forwarder runs, so
         // `/zelavis` would serve a Platform login page on every customer domain.
-        const publicDomainOptions = options.domainBindings
-          ? { domainBindings: options.domainBindings, projects: () => projects }
-          : undefined;
+        const publicDomainOptions = {
+          domainBindings: options.domainBindings, projects: () => projects, rootPath, protectedCookieNames,
+          fetchSite: options.publicSiteFetch, acmeChallengeMounted: Boolean(acmeChallengeService),
+        };
 
         // Captured before the assignment below: `Object.assign` mutates `runtime`, so
         // reading `runtime.fetch` inside the wrapper would call the wrapper.
@@ -7797,6 +7869,17 @@ export function zelavis(
         const dispatch: typeof runtime.dispatch = (request, context) =>
           present(
             Effect.gen(function* () {
+              if (projectDomains && edgeRoutes) {
+                const response = yield* integration(() => guardProjectDomainHost(
+                  edgeRoutes, publicDomainOptions, request, hasCanonicalSitePath(request, context), edgeCertificates?.challengeStore,
+                ));
+                if (response) return { matched: true, response };
+              }
+              if (publicDomainOptions.domainBindings) {
+                const response = yield* integration(() =>
+                  guardControlPlaneHost(publicDomainOptions, request, rootPath, hasCanonicalSitePath(request, context)));
+                if (response) return { matched: true, response };
+              }
               const result = yield* integration(() =>
                 composedDispatch(request, context),
               );
@@ -7806,18 +7889,7 @@ export function zelavis(
             }),
           );
         const guardedFetch: typeof runtime.fetch = (request, context) =>
-          present(
-            Effect.gen(function* () {
-              if (publicDomainOptions) {
-                const refused = yield* integration(() =>
-                  guardControlPlaneHost(publicDomainOptions, request, rootPath),
-                );
-                if (refused) return refused;
-              }
-              return (yield* integration(() => dispatch(request, context)))
-                .response;
-            }),
-          );
+          present(Effect.map(integration(() => dispatch(request, context)), result => result.response));
 
         ready = true;
         return Object.assign(runtime, {
@@ -8073,6 +8145,7 @@ function mergeZelavisServerOptions(
     remoteEnvironment: override.remoteEnvironment ?? base.remoteEnvironment,
     edge: override.edge ?? base.edge,
     edgeRoutes: override.edgeRoutes ?? base.edgeRoutes,
+    projectDomainIngress: override.projectDomainIngress ?? base.projectDomainIngress,
     serviceRegistry:
       serviceCatalog.length > 0 ||
       discoveredServices.length > 0 ||
@@ -8226,6 +8299,7 @@ function applyPlatformResourceDefaults(
     remoteEnvironment: options.remoteEnvironment ?? resources.remoteEnvironment,
     edge: options.edge ?? resources.edge,
     edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,
+    projectDomainIngress: options.projectDomainIngress ?? resources.projectDomainIngress,
     edgePreviews: options.edgePreviews ?? resources.edgePreviews,
     publicSiteFetch: options.publicSiteFetch ?? resources.publicSiteFetch,
     edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,
@@ -8235,6 +8309,9 @@ function applyPlatformResourceDefaults(
 export class Zelavis {
   private readonly options: ZelavisOptions;
   private readonly serviceRegistryStore = createMemoryServiceRegistryStore([]);
+  private systemStore?: ZelavisSystemStore;
+  // In-process service activation keeps the same writer, including its live enrollment slots.
+  private readonly registrationRecovery = new RegistrationRecovery();
   private runtimePromise?: Promise<ZelavisRuntime>;
   private readonly activeRuntimes = new Set<ZelavisRuntime>();
   private closed = false;
@@ -8363,6 +8440,8 @@ export class Zelavis {
         serverOptions.domainBindings ?? platformResources.domainBindings;
       const runtimeOptions: ZelavisRuntimeCompositionOptions = {
           ...serverOptions,
+          systemStore: serverOptions.systemStore ?? (self.systemStore ??= createMemorySystemStore()),
+          registrationRecovery: self.registrationRecovery,
           serviceRegistry,
           servicePackageInstaller: platformResources.servicePackages,
           marketplace: platformResources.marketplace,

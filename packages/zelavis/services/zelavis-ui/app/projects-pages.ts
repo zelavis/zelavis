@@ -6,6 +6,7 @@ import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
 import { formatBytes } from "./storage-pages.ts";
 import { runtimeStatusText, standbyFact } from "./project-standby.ts";
+import { canAccess } from "./navigation-menu.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
 
@@ -66,7 +67,7 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   const query = (params.get("q") ?? "").trim().toLowerCase();
   const showCreate = params.get("new") === "1";
   const recipes = recipesOf(context.config);
-  const canCreate = array(object(object(context.config.access).principal).permissions).includes("*") || context.config.access === undefined;
+  const canCreate = canAccess(context.config.access, { permissions: ["projects.create"] });
   const flash = flashNotice("Project updated");
   const say = setFlash;
   const act = (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) =>
@@ -128,7 +129,8 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
 
   const visible = list.filter(project => !query || [label(project.name, ""), label(project.id, ""), label(object(project.runtime).url, "")].some(value => value.toLowerCase().includes(query)));
   const versionProject = params.get("versionProject") ?? "";
-  const versionTarget = versionProject ? visible.find(project => label(project.id, "") === versionProject) : undefined;
+  const versionTarget = versionProject && canAccess(context.config.access, { permissions: ["project.runtime.manage"], scope: { type: "project", projectId: versionProject } })
+    ? visible.find(project => label(project.id, "") === versionProject) : undefined;
   const versionData = versionTarget
     ? object(yield* request(`${api}/runtime/projects/${encodeURIComponent(versionProject)}/versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))))
     : undefined;
@@ -141,7 +143,9 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   }, { concurrency: 4 }));
   const cards = visible.map(project => projectCard(context, project, recipes, act, label(project.id, "") === versionProject ? versionData : undefined, retained.get(label(project.id, "")) ?? []));
   if (cards.length) sections.push(node("div", { class: "k-grid cols-3" }, ...cards));
-  else if (list.length === 0) sections.push(empty("No projects yet", "Create a Zelavis App project to start its independent local runtime."));
+  else if (list.length === 0) sections.push(canCreate
+    ? empty("No projects yet", "Create a Zelavis App project to start its independent local runtime.")
+    : empty("No projects assigned", "Your account can access Projects after an administrator assigns a Project grant."));
   else sections.push(resourceNotice("No matching projects", "Try a different project search."));
   return page(...sections);
 });
@@ -162,6 +166,8 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   const site = siteUrl(project, context.url);
   const preview = object(project.preview);
   const blocked = !!deletion || !!update;
+  const allowed = (permission: string) => canAccess(context.config.access, { permissions: [permission], scope: { type: "project", projectId: id } });
+  const managesRuntime = allowed("project.runtime.manage");
 
   const body: Node[] = [
     node("div", { class: "toolbar" }, node("div", {}, node("h2", {}, name), node("code", {}, id)), badge(runtimeStatusText(status))),
@@ -172,7 +178,7 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
       ...(standbyFact(project) ? [standbyFact(project)!] : []),
       ["Updated", dateText(project.updatedAt)]])
   ];
-  if (site) body.push(node("a", { href: site, target: "_blank", rel: "noreferrer" }, "Open site"));
+  if (site && allowed("project.view")) body.push(node("a", { href: site, target: "_blank", rel: "noreferrer" }, "Open site"));
   if (deletion) body.push(node("div", { class: "notice error", "aria-label": "Project deletion" },
     node("strong", {}, deletion.status === "failed" ? "Deletion failed" : "Deletion in progress"),
     node("p", {}, "This Project is pending deletion. Starting and recipe upgrades are unavailable. Retry deletion to finish removing its remaining resources."),
@@ -181,28 +187,30 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   if (typeof runtime.error === "string") body.push(message(runtime.error, true));
   if (typeof preview.error === "string") body.push(message(preview.error, true));
 
-  if (update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout) body.push(upgradeNotice(project, recipes, act, path));
+  if (managesRuntime && (update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout)) body.push(upgradeNotice(project, recipes, act, path));
 
   if (versions) body.push(versionPanel(context, project, path, act, versions));
-  if (retained.length > 0) body.push(retainedPanel(project, retained, act, path, blocked));
+  if (retained.length > 0) body.push(retainedPanel(project, retained, act, path, blocked, managesRuntime));
 
   const actions: HTMLElement[] = [];
-  if (recipe.name === "@zelavis/app" && capabilities.independentRuntimeVersion) {
+  if (managesRuntime && recipe.name === "@zelavis/app" && capabilities.independentRuntimeVersion) {
     actions.push(button("Manage version", () => context.setSearch({ versionProject: id, engineVersion: undefined, new: undefined }), blocked ? { disabled: "" } : {}));
   }
-  actions.push(running ? link("Open", `/projects/${encodeURIComponent(id)}`, { class: "primary" }) : button("Open", () => {}, { disabled: "", title: "Start the Project to open it" }));
-  actions.push(button(running ? "Stop" : "Start", () => act(request(`${path}/${running ? "stop" : "start"}`, "POST", {}), () => `${name} ${running ? "stopped" : "started"}.`), blocked && !running || deletion || update && !running ? { disabled: "" } : {}));
-  actions.push(button("Restart", () => act(request(`${path}/restart`, "POST", {}), () => `${name} restarted.`), blocked || status === "provisioning" ? { disabled: "" } : {}));
-  actions.push(button(deletion ? "Retry deletion" : "Delete", () => {
+  if (allowed("project.view")) actions.push(running ? link("Open", `/projects/${encodeURIComponent(id)}`, { class: "primary" }) : button("Open", () => {}, { disabled: "", title: "Start the Project to open it" }));
+  if (managesRuntime) {
+    actions.push(button(running ? "Stop" : "Start", () => act(request(`${path}/${running ? "stop" : "start"}`, "POST", {}), () => `${name} ${running ? "stopped" : "started"}.`), blocked && !running || deletion || update && !running ? { disabled: "" } : {}));
+    actions.push(button("Restart", () => act(request(`${path}/restart`, "POST", {}), () => `${name} restarted.`), blocked || status === "provisioning" ? { disabled: "" } : {}));
+  }
+  if (allowed("project.delete")) actions.push(button(deletion ? "Retry deletion" : "Delete", () => {
     if (window.confirm(deletion ? `Retry deletion of ${name}? This permanently removes the remaining project runtime, database, files, and metadata.` : `Delete ${name}? This permanently removes the project runtime, database, files, and metadata.`)) act(request(path, "DELETE"), () => `${name} was deleted.`);
   }, { class: "danger" }));
-  actions.push(link("Ask Assistant", `/assistant?project=${encodeURIComponent(id)}`, { "aria-label": `Ask Assistant about ${name}` }));
+  if (allowed("project.view") && canAccess(context.config.access, { permissions: ["assistant.use"] })) actions.push(link("Ask Assistant", `/assistant?project=${encodeURIComponent(id)}`, { "aria-label": `Ask Assistant about ${name}` }));
   body.push(node("div", { class: "actions" }, ...actions));
   return node("article", { class: "k-card" }, ...body);
 }
 
 /** Data an upgrade's migration kept beside the Project's live data, with its size; removing one cannot be undone, so its exact name is typed to confirm. */
-function retainedPanel(project: Record<string, unknown>, entries: readonly Record<string, unknown>[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string, blocked: boolean) {
+function retainedPanel(project: Record<string, unknown>, entries: readonly Record<string, unknown>[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string, blocked: boolean, canRemove: boolean) {
   const total = entries.reduce((sum, entry) => sum + Number(entry.bytes || 0), 0);
   const rows = entries.map(entry => {
     const name = label(entry.name, "");
@@ -212,7 +220,7 @@ function retainedPanel(project: Record<string, unknown>, entries: readonly Recor
       if (typed !== name) return;
       act(request(`${path}/retained-data/${encodeURIComponent(name)}`, "DELETE"), () => `Removed ${name}.`);
     }, { class: "danger", ...(blocked ? { disabled: "" } : {}), "aria-label": `Remove ${name}` });
-    return node("li", {}, node("code", {}, name), node("span", { class: "muted" }, ` · ${what} · ${formatBytes(Number(entry.bytes || 0))} `), remove);
+    return node("li", {}, node("code", {}, name), node("span", { class: "muted" }, ` · ${what} · ${formatBytes(Number(entry.bytes || 0))} `), canRemove ? remove : undefined);
   });
   return node("div", { class: "notice", "aria-label": "Retained data" },
     node("strong", {}, `Retained data (${formatBytes(total)})`),

@@ -1,12 +1,71 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { panelsFor, resolveTrail, workspacePanels, trailForLocation, activeItemIndex, createMenuStore } from "../app/navigation-model.ts";
-import { platformMenu, projectMenu } from "../app/navigation-menu.ts";
+import { canAccess, platformMenu, projectMenu } from "../app/navigation-menu.ts";
+const ownerAccess = { principal: { type: "user", id: "owner", roles: ["owner"], permissions: ["*"] } };
 const project = { id: "customer café", name: "Customer", recipe: {} };
+
+test("authenticated customers can reach Projects with empty or exact scoped grants", () => {
+  const access = { principal: { type: "user", id: "customer", roles: ["customer"], permissions: [], grants: [] } };
+  const config = { access, services: [{ name: "server", scope: "system", menu: { title: "Server", path: "/server", surface: "platform", access: { permissions: ["server.manage"], scope: { type: "system" } } } }] };
+  assert.deepEqual(platformMenu(config, []).map(item => item.title), ["Projects"]);
+  assert.equal(canAccess(access, { authenticated: true }), true);
+  assert.equal(canAccess(undefined, { authenticated: true }), false);
+  const requirement = { permissions: ["project.view"], scope: { type: "project", projectId: "one" } };
+  access.principal.grants.push({ permission: "project.view", scope: { type: "project", projectId: "one" } });
+  assert.equal(canAccess(access, requirement), true);
+  assert.equal(canAccess(access, { permissions: ["project.view"] }), false);
+  assert.equal(canAccess(access, { permissions: ["project.view"], scope: { type: "project", projectId: "other" } }), false);
+  assert.equal(canAccess(access, { permissions: ["project.view"], scope: { type: "project" } }), false);
+  access.principal.grants = [{ permission: "*", scope: { type: "project" } }];
+  assert.equal(canAccess(access, requirement), false);
+  access.principal.grants = [{ permission: "server.manage", scope: { type: "system" } }];
+  assert.equal(canAccess(access, { permissions: ["server.manage"] }), true);
+});
+
+test("a Project viewer gets inspection navigation and exact settings delegates get Auth", () => {
+  const runtime = { capabilities: { identity: { available: true }, database: { available: true } }, services: [] };
+  const grant = permission => ({ permission, scope: { type: "project", projectId: project.id } });
+  const principal = { type: "user", id: "customer", permissions: [], grants: [grant("project.view")] };
+  const input = { control: { access: { principal }, services: [] }, project, runtime, content: [], tables: [], workloads: {} };
+  let menu = projectMenu(input);
+  assert.ok(menu.some(item => item.title === "Overview"));
+  assert.ok(menu.find(item => item.title === "Backend").items.some(item => item.title === "Database"));
+  assert.equal(menu.find(item => item.title === "Backend").items.some(item => item.title === "Auth"), false);
+  assert.equal(menu.some(item => item.title === "Users"), false);
+  principal.grants = [grant("project.settings.manage")];
+  menu = projectMenu(input);
+  assert.ok(menu.some(item => item.title === "Auth"));
+  assert.equal(menu.some(item => item.title === "Backend"), false);
+});
+
+test("native and managed Project domain menus use exact view and domain grants", () => {
+  const grant = (permission, projectId = project.id) => ({ permission, scope: { type: "project", projectId } });
+  const principal = { type: "user", id: "customer", permissions: [], grants: [] };
+  const control = { access: { principal }, services: [] };
+  for (const recipe of [{}, { managed: { adminTitle: "App Admin" } }]) {
+    const input = { control, project: { ...project, recipe }, runtime: { services: [] }, content: [], tables: [], workloads: {} };
+    const visible = () => projectMenu(input).some(item => item.title === "Domains");
+    principal.grants = [grant("project.domains.manage")];
+    assert.equal(visible(), false);
+    principal.grants = [grant("project.view"), grant("project.domains.manage", "other")];
+    assert.equal(visible(), false);
+    principal.grants.push(grant("project.domains.view"));
+    assert.equal(visible(), true);
+  }
+});
+
+test("permission-filtered navigation removes provisional server links and preserves the Project", () => {
+  const base = panelsFor("one", { id: "one", name: "One" }, undefined, undefined, [{ id: "one", name: "One" }], true);
+  const platform = workspacePanels(base, [{ title: "Projects", path: "/projects" }]);
+  const scoped = workspacePanels(platform, [{ title: "Overview", path: "/projects/one" }], "one");
+  assert.deepEqual(scoped[0].items.map(item => item.label), ["Projects", "One"]);
+  assert.equal(scoped.find(panel => panel.id === "project").label, "One");
+});
 test("Platform extensions appear only in their own slide regardless of claimed surface", () => {
   const services = ["extension", undefined].map((scope, index) => ({ name: `@example/ext${index}`, scope, menus: [{ title: `Extension ${index}`, path: `/ext${index}`, surface: "platform" }] }));
-  const menu = platformMenu({ services }, []);
-  assert.deepEqual(menu.map(item => item.title), ["Projects", "Extensions"]);
+  const menu = platformMenu({ services, access: ownerAccess }, []);
+  assert.deepEqual(menu.map(item => item.title), ["Projects", "Extensions", "Assistant", "Settings"]);
   assert.deepEqual(menu[1].items.map(item => item.path), ["/ext0", "/ext1"]);
 });
 test("reconstructs Project domain ancestry and validates explicit URL trails", () => {
@@ -75,7 +134,7 @@ test("a table URL opens the Database slide and a system view URL the System Tabl
     { title: "System · Schemas", search: { databaseTenant: "zelavis-app", databaseSystemView: "schemas" } },
   ];
   const runtime = { capabilities: { database: { available: true } }, services: [] };
-  const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
+  const menu = projectMenu({ control: { services: [], access: ownerAccess }, project, runtime, content: [], tables, workloads: {} });
   const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
   assert.deepEqual(database.items.map(item => item.title), ["Create Table", "Tenants", "Cross-Tenant Indexes", "Shards", "Images", "orders", "Plugin Tables", "System Tables"]);
   assert.deepEqual(database.items[0], { title: "Create Table", path: `/projects/${encodeURIComponent(project.id)}/database`, search: { databaseDialog: "create-table" } });
@@ -101,7 +160,7 @@ test("only the slide a page belongs to is active, not every item sharing its pat
     { title: "System · Events", search: { databaseTenant: "zelavis-app", databaseSystemView: "events" } },
   ];
   const runtime = { capabilities: { database: { available: true } }, services: [] };
-  const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
+  const menu = projectMenu({ control: { services: [], access: ownerAccess }, project, runtime, content: [], tables, workloads: {} });
   const panels = workspacePanels(panelsFor(project.id, project, runtime, { items: tables }), menu, project.id);
   const base = `/projects/${encodeURIComponent(project.id)}/database`;
   const holder = panels.find(panel => panel.items.some(item => item.label === "Plugin Tables"));
@@ -178,7 +237,7 @@ test("a Project's menu survives the Platform's menu being reported after it", ()
 
 test("a Project is offered the menus of trusted Platform services, never an extension's", () => {
   const service = (name, scope, surface, title) => ({ name, scope, menu: { title, path: `/${name.split("/")[1]}`, surface, page: { id: "main", title, file: "page.html", src: "/x" } } });
-  const control = { services: [
+  const control = { access: ownerAccess, services: [
     service("@zelavis/core-thing", "system", "core", "Core Thing"),
     service("@example/ext-thing", "extension", "core", "Extension Thing"),
     // The Platform's own `platform` surface menus never cross into a Project, whoever ships them.

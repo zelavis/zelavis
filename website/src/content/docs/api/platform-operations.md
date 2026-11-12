@@ -49,16 +49,89 @@ Accounts, sessions and security events need the auth manage permission; the sign
 | What | HTTP (`auth/…`) | SDK (`client.auth.…`) | CLI (`zelavis auth …`) |
 |---|---|---|---|
 | Providers | `GET providers`, `GET oauth/providers`, `GET recovery/providers` | `providers()`, `oauthProviders()`, `recoveryProviders()` | `providers`, `oauth-providers`, `recovery-providers` |
+| Registration availability | `GET registration` | `registrationStatus()` | `registration-status --json` |
+| Runtime registration settings | `GET registration/settings`, `PUT registration/settings` | `admin.registrationSettings()`, `admin.setRegistrationSettings(input)` | `registration-settings --json`, `set-registration-settings --data JSON --json` |
 | Sign up, sign in | `POST sign-up/:provider`, `POST authenticate/:provider` | `signUp(provider, body)`, `signIn(provider, body)` | `sign-up PROVIDER --data`, `sign-in PROVIDER --data` |
 | Start an OAuth sign-in or link | `POST oauth/:provider/start`, `POST oauth/:provider/link/start` | `signInWithOAuth(p)`, `linkIdentity(p)` | `oauth-start P`, `link-start P` |
 | The current session | `GET session`, `POST session/rotate`, `DELETE session` | `getSession()`, `refreshSession()`, `signOut()` | `session`, `refresh`, `sign-out` |
 | The account's own sessions | `GET sessions`, `DELETE sessions/:sessionId` | `sessions()`, `revokeSession(id)` | `sessions`, `revoke-session ID` |
 | Credential recovery | `POST recovery/:provider`, `POST recovery/:provider/complete` | `beginRecovery(p, body)`, `completeRecovery(p, body)` | `recover P --data`, `complete-recovery P --data` |
-| Accounts | `GET accounts`, `POST accounts` (`{ id, email \| username, … }`), `POST credentials` | `admin.accounts()`, `admin.createAccount(body)`, `admin.createCredentials(body)` | `accounts`, `create-account --data`, `create-credentials --data` |
+| Accounts | `GET accounts[?accountId=]`, `POST accounts` (`{ id, email \| username, … }`), `POST credentials` | `admin.accounts(accountId?)`, `admin.createAccount(body)`, `admin.createCredentials(body)` | `accounts [ACCOUNT]`, `create-account --data`, `create-credentials --data` |
+| Human account access | `PUT accounts/:accountId/access` | `admin.setAccountAccess(accountId, input)` | `set-account-access ACCOUNT --data JSON --json` |
 | An account's sessions | `GET accounts/:id/sessions`, `DELETE accounts/:id/sessions[/:sessionId]` | `admin.accountSessions(id)`, `admin.revokeAccountSessions(id)`, `admin.revokeAccountSession(id, sessionId)` | `account-sessions ID`, `revoke-account-sessions ID`, `revoke-account-session ID SESSION` |
 | Security events | `GET security/events` | `admin.securityEvents()` | `security-events` |
 | OAuth connections | `GET oauth/connections`, `PUT\|DELETE oauth/connections/:provider` | `admin.oauthConnections()`, `admin.configureOAuth(p, body)`, `admin.removeOAuth(p)` | `oauth-connections`, `configure-oauth P --data`, `remove-oauth P` |
 | First owner | `GET bootstrap`, `POST bootstrap` (needs the bootstrap token) | `bootstrapStatus()`, `bootstrap(body)` | `bootstrap-status`, `bootstrap --data`; the interactive `zelavis bootstrap` and `zelavis setup` remain |
+
+Registration settings return `{ enabled, revision }`. A write takes
+`{ enabled, expectedRevision }` and returns 409 for a stale revision.
+Platform settings require `system.settings.manage`. For a running App, use
+`GET` or `PUT /runtime/projects/:projectId/auth/registration/settings`,
+`client.projects.registrationSettings(projectId)` or
+`client.projects.setRegistrationSettings(projectId, input)`, and
+`zelavis projects registration-settings PROJECT --json` or
+`zelavis projects set-registration-settings PROJECT --data JSON --json`.
+These routes require `project.settings.manage` scoped to that Project.
+
+Account access replacement takes
+`{ expectedRevision, role, permissions, grants }` and returns
+`{ accountId, accessRevision, role, permissions, grants }`.
+Administrative account reads include `accessRevision`, initially zero.
+Platform edits require `system.users.manage` in system scope and use the
+`customer`, `operator` or `reseller` label. Each existing and proposed capability
+must be delegable by the caller. Access changes invalidate old sessions.
+An identical replacement preserves the revision and sessions.
+Stale input returns `account_access_conflict` (409). Failed audit persistence
+after a committed edit returns `account_access_audit_failed` (503) and its
+`accessRevision`.
+
+For App accounts, use
+`PUT /runtime/projects/:projectId/auth/accounts/:accountId/access`,
+`client.projects.setAccountAccess(projectId, accountId, input)`, or
+`zelavis projects set-account-access PROJECT ACCOUNT --data JSON --json`.
+This requires exact `project.users.manage`, role `user`, empty `permissions`
+and grants for that same App.
+
+`GET /runtime/projects`, `client.projects.list()` and
+`zelavis projects list --json` require authentication. Global `projects.list`
+and top-level `project.view` preserve full inventory. Other callers see only
+Projects named by exact `project.view` or scoped wildcard grants, up to 100
+distinct IDs. A customer with no such grants receives an empty list.
+Project view includes backend inspection, database reads and storage reads.
+
+Public signup starts closed and returns `registration_closed` (403) until
+enabled and, on the Platform, until first-owner bootstrap finishes. Returning
+users can still sign in. A successful signup returns HTTP 201 with a session
+and either the Platform `customer` role or the App `user` role, with no implicit grants.
+
+## Project domains
+
+Paths below are relative to the configured API base. Reads accept
+`project.domains.view` or `project.domains.manage` on the exact Project.
+Mutations require `project.domains.manage` on that Project.
+
+| HTTP | SDK | CLI |
+| --- | --- | --- |
+| `GET /runtime/projects/:projectId/domains` | `client.projects.domains(projectId)` | `zelavis projects domains PROJECT --json` |
+| `POST /runtime/projects/:projectId/domains` | `client.projects.addDomain(projectId, { hostname, tlsMode })` | `zelavis projects add-domain PROJECT HOSTNAME --tls external\|managed --json` |
+| `POST /runtime/projects/:projectId/domains/:hostname/verify` | `client.projects.verifyDomain(projectId, hostname, { expectedRevision })` | `zelavis projects verify-domain PROJECT HOSTNAME --revision N --json` |
+| `DELETE /runtime/projects/:projectId/domains/:hostname?revision=N` | `client.projects.removeDomain(projectId, hostname, revision)` | `zelavis projects remove-domain PROJECT HOSTNAME --revision N --json` |
+
+Add accepts a hostname and TLS mode. It returns the DNS TXT challenge with
+`201`, or the existing domain with `200` on an idempotent retry. List returns
+`{ domains }`. Use the current domain revision when verifying or removing.
+Verify returns `200` with `publicUrl` when active, or `202` when proof has
+succeeded and activation is pending. Remove returns `{ removed, pending }`,
+with `202` while withdrawal is still pending.
+
+Refresh the inventory after a revision conflict or failed proof. Domain errors
+carry `{ error, code }`. A conflicting hostname returns
+`hostname_unavailable` without identifying its owner. Missing or unavailable
+TXT proof returns `dns_not_verified`. Check the `Retry-After` header after a
+`429` with `domain_verification_busy`. A verified hostname can return
+`domain_ingress_unavailable` until the operator configures the selected TLS
+mode. See [Project hostname setup](../architecture/edge.md#connect-a-project-hostname).
+
 
 ## Runtime, services and extensions
 
@@ -89,3 +162,8 @@ The Edge's status, switching, routes and publishing were already in all three fo
 | Check a hostname before onboarding it | `GET onboard/preflight?hostname=` | `preflightHostname(host)` | `preflight HOST` |
 | Onboard a hostname | `POST onboard` with `{ mode, hostname?, localTargetUrl? }` | `onboardHostname(body)` | `onboard --mode M [--hostname H] [--local-target-url U]` |
 | Certificates | `GET certificates`, `POST certificates/renew` with `{ hostname?, renewIfWithinDays? }` | `certificates()`, `renewCertificates(body?)` | `certificates`, `renew [--hostname H] [--renew-if-within-days N]` |
+
+Renewal reapplies the active Edge publication when it uses a renewed
+certificate. If a newer route publication is pending, renewal stores the
+certificate and returns a conflict. Apply the intended publication to serve the
+replacement certificate.

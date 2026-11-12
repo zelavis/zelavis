@@ -1,5 +1,7 @@
 import { Effect } from "effect";
 import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { IdentityConflictError } from "../app/identity/core/errors.js";
+import { decodeRegistrationControl } from "../app/identity/domain/registration.js";
 import { parseJson, isJsonObject } from "../core/json-validation.js";
 import type {
   Account,
@@ -9,6 +11,8 @@ import type {
   IdentityAuthorizationFlow,
   IdentityAuthorizationFlowRepository,
   IdentityRepositories,
+  AuthenticationSecurityEvent,
+  AccountAccessSecurityEvent,
   AuthSecurityEvent,
   AuthSecurityEventRepository,
   Credential,
@@ -57,7 +61,7 @@ function reviveAttempt(value: ZelavisSystemStoreValue): AuthAttemptState {
 }
 
 function reviveSecurityEvent(value: ZelavisSystemStoreValue): AuthSecurityEvent {
-  const event = value as unknown as Omit<AuthSecurityEvent, "occurredAt"> & {
+  const event = value as unknown as (Omit<AuthenticationSecurityEvent, "occurredAt"> | Omit<AccountAccessSecurityEvent, "occurredAt">) & {
     occurredAt: string;
   };
   return { ...event, occurredAt: new Date(event.occurredAt) };
@@ -116,29 +120,31 @@ function createStoreClaims(store: ZelavisSystemStore): ClaimBackend {
 }
 
 export function createPlatformAuthRepositories(store: ZelavisSystemStore): IdentityRepositories {
-  const mutateEntity = <T extends Account | Session>(
-    kind: string,
-    id: string,
+  const mutateRecord = <T>(
+    key: string,
+    decode: (value: ZelavisSystemStoreValue) => T,
     mutation: Mutation<T>,
+    encode: (value: T) => ZelavisSystemStoreValue = storeValue,
   ): Promise<T | null> => present(Effect.gen(function* (): Effect.fn.Return<T | null, IntegrationFailure> {
-    const key = `${kind}:${id}`;
     for (let retry = 0; retry < 100; retry += 1) {
       const record = (yield* integrationValue(store.get(NAMESPACE, key)));
-      const next = mutation(record ? revive<T>(record.value) : null);
+      const current = record ? decode(record.value) : null;
+      const next = mutation(current);
+      if (next === current) return current;
       if (!record) {
         if (!next) return null;
-        if (((yield* integrationValue(store.setIfAbsent(NAMESPACE, key, storeValue(next))))).created) return next;
+        if (((yield* integrationValue(store.setIfAbsent(NAMESPACE, key, encode(next))))).created) return next;
         continue;
       }
       if (!next) {
         if ((yield* integrationValue(store.compareAndDelete(NAMESPACE, key, record.updatedAt)))) return null;
         continue;
       }
-      if ((yield* integrationValue(store.compareAndSet(NAMESPACE, key, record.updatedAt, storeValue(next))))) {
+      if ((yield* integrationValue(store.compareAndSet(NAMESPACE, key, record.updatedAt, encode(next))))) {
         return next;
       }
     }
-    throw new Error(`${kind} update did not converge after 100 retries.`);
+    throw new Error("Identity record mutation did not converge after 100 retries.");
   }));
 
   const get = <T extends Account | Credential | Session>(kind: string, id: string) => present(Effect.gen(function* () {
@@ -156,9 +162,18 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
     return entity;
   }));
 
+  const create = <T extends Account | Credential>(kind: string, entity: T) =>
+    present(Effect.gen(function* () {
+      const result = yield* integration(() => store.setIfAbsent(NAMESPACE, `${kind}:${entity.id}`, storeValue(entity)));
+      if (!result.created) {
+        return yield* Effect.fail(new IdentityConflictError("id", "An identity record with that id already exists."));
+      }
+      return entity;
+    }));
+
   const baseAccounts: AccountRepository = {
-    create: (account) => set("account", account),
-    mutate: (id, mutation) => mutateEntity<Account>("account", id, mutation),
+    create: (account) => create("account", account),
+    mutate: (id, mutation) => mutateRecord(`account:${id}`, revive<Account>, mutation),
     delete(id) {
     return present(integration(() => store.delete(NAMESPACE, `account:${id}`)));
   },
@@ -173,7 +188,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
     update: (account) => set("account", account),
   };
   const baseCredentials: CredentialRepository = {
-    create: (credential) => set("credential", credential),
+    create: (credential) => create("credential", credential),
     delete(id) {
     return present(integration(() => store.delete(NAMESPACE, `credential:${id}`)));
   },
@@ -194,7 +209,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
   };
   const sessions: SessionRepository = {
     create: (session) => set("session", session),
-    mutate: (id, mutation) => mutateEntity<Session>("session", id, mutation),
+    mutate: (id, mutation) => mutateRecord(`session:${id}`, revive<Session>, mutation),
     delete(id) {
     return present(integration(() => store.delete(NAMESPACE, `session:${id}`)));
   },
@@ -289,7 +304,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
   const securityEvents: AuthSecurityEventRepository = {
     append(event) {
     return present(Effect.gen(function* () {
-      (yield* integrationValue(store.set(NAMESPACE, `security-event:${event.occurredAt.toISOString()}:${event.id}`, storeValue(event as unknown as Session))));
+      (yield* integrationValue(store.set(NAMESPACE, `security-event:${event.occurredAt.toISOString()}:${event.id}`, storeValue(event))));
       return event;
     }));
   },
@@ -302,6 +317,12 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
   },
   };
   return {
+    registration: {
+      read: () => present(integration(() => store.get(NAMESPACE, "registration")).pipe(
+        Effect.flatMap((record) => integration(() => record ? decodeRegistrationControl(record.value) : null)),
+      )),
+      mutate: (mutation) => mutateRecord("registration", decodeRegistrationControl, mutation, decodeRegistrationControl),
+    },
     accounts,
     credentials,
     sessions,

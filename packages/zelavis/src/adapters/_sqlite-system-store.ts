@@ -99,6 +99,7 @@ export function createLocalSqliteSystemStore(
   const compareAndDeleteStatement = database.prepare(`
     DELETE FROM zelavis_system_records
     WHERE namespace = ? AND record_key = ? AND updated_at = ?
+      AND (? = 0 OR value_json = ?)
   `);
 
   function toRecord(row: unknown): ZelavisSystemStoreRecord {
@@ -166,11 +167,13 @@ export function createLocalSqliteSystemStore(
       ).changes > 0;
       return changed ? { namespace, key, value, updatedAt } : undefined;
     },
-    compareAndDelete(namespace, key, expectedUpdatedAt) {
+    compareAndDelete(namespace, key, expectedUpdatedAt, expectedValue) {
       return compareAndDeleteStatement.run(
         namespace,
         key,
         expectedUpdatedAt,
+        expectedValue === undefined ? 0 : 1,
+        expectedValue === undefined ? null : JSON.stringify(expectedValue),
       ).changes > 0;
     },
     delete(namespace, key) {

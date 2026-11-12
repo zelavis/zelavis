@@ -6,9 +6,13 @@ export interface Account {
   username?: string;
   displayName?: string;
   verified: boolean;
+  /** Internal marker. The account remains invisible until enrollment commits. */
+  registrationPending?: true;
   roles?: readonly string[];
   permissions?: readonly string[];
   grants?: readonly ZelavisPrincipalGrant[];
+  /** Absent until the first conditional edit, which starts at revision zero. */
+  accessRevision?: number;
   metadata?: Record<string, unknown>;
   /**
    * Bumped atomically to invalidate every session issued before it. A session
@@ -71,7 +75,7 @@ export interface IdentityAuthorizationFlow {
   expiresAt: Date;
 }
 
-export interface AuthSecurityEvent {
+export interface AuthenticationSecurityEvent {
   id: string;
   type: "authentication.succeeded" | "authentication.failed" | "authentication.blocked";
   outcome: "success" | "failure" | "blocked";
@@ -82,3 +86,14 @@ export interface AuthSecurityEvent {
   metadata?: Record<string, unknown>;
   occurredAt: Date;
 }
+
+export interface AccountAccessSecurityEvent {
+  id: string;
+  type: "account.access.changed";
+  actorId: string;
+  accountId: string;
+  accessRevision: number;
+  occurredAt: Date;
+}
+
+export type AuthSecurityEvent = AuthenticationSecurityEvent | AccountAccessSecurityEvent;

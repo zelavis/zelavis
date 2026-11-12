@@ -233,43 +233,9 @@ export const serverNavigationMenu = {
       "panelLabel": "Domains",
       "access": {
         "permissions": [
-          "server.domains.view"
-        ],
-        "scope": {
-          "type": "system"
-        }
-      },
-      "items": [
-        {
-          "title": "Overview",
-          "path": "/server/domains",
-          "pageLabel": "Domains"
-        },
-        {
-          "title": "Add Domain",
-          "path": "/server/domains",
-          "search": {
-            "domainAction": "add"
-          },
-          "pageLabel": "Add Domain"
-        },
-        {
-          "title": "Buy",
-          "path": "/server/domains",
-          "search": {
-            "domainAction": "buy"
-          },
-          "pageLabel": "Buy Domain"
-        },
-        {
-          "title": "Transfer",
-          "path": "/server/domains",
-          "search": {
-            "domainAction": "transfer"
-          },
-          "pageLabel": "Transfer Domain"
-        }
-      ]
+          "server.edge.view"
+        ]
+      }
     },
     {
       "title": "Access",

@@ -928,6 +928,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     // Platform dashboard owns the menus that render them.
     assert.equal(projectConfig.capabilities.database.available, true);
     assert.equal(projectConfig.capabilities.identity.available, true);
+    assert.equal(projectConfig.capabilities.appPublicAuth.available, true);
     assert.equal(projectConfig.capabilities.workloads.available, true);
     assert.ok(
       !projectConfig.services.some((service) =>

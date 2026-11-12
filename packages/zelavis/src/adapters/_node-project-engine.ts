@@ -5,10 +5,15 @@ import { defineAdapter, Zelavis } from "../index.js";
 import { toDefaultErrorResponse } from "../core/runtime/request-dispatcher.js";
 import { describeFailure, evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { nodeAdapter } from "./node.js";
+import { resolveBundledServiceDirectory } from "./_local-runtime.js";
+import { provideHostPackagesTo } from "./_service-resolution.js";
+import { resolveBundledIdentityFrontend } from "../cli/bundled-frontend.js";
 import { loadRecipeArtifact } from "./_recipe-artifact.js";
 import { stageRecipeBackup } from "./_recipe-project-runtime.js";
 import { InvalidBackup } from "../db/errors.js";
 import { createGatewayNonceTracker, verifyGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../platform/gateway-authority.js";
+import { hasCanonicalSitePath, isPrivateProjectAuthPath, PROJECT_AUTH_ROOT, publicRequestFromPrivateAuth } from "../platform/project-public-auth.js";
+import { bindProjectAccountAccessProof } from "../app/identity/domain/account-access.js";
 import { httpLeaseStore } from "../db/writer-lease-http.js";
 import type { NodeDatabaseLease } from "../db/node-host.js";
 import { remoteDatabaseLeader } from "../db/leader.js";
@@ -97,6 +102,13 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
   });
   const artifact = yield* integration(() => loadRecipeArtifact(typeof configuration.recipeDataDirectory === "string" ? resolve(configuration.recipeDataDirectory) : dataDirectory, { name: recipe.name, version: recipe.version, digest: recipe.artifact.digest }));
   const lockedRecipe = { ...artifact, specifier: recipe.specifier, status: "installed" as const, source: "official" as const };
+  const frontend = configuration.integrationOnly === true || recipe.name !== "@zelavis/app"
+    ? undefined
+    : yield* integration(() => resolveBundledIdentityFrontend({ bundledDirectory: name => {
+      const directory = resolveBundledServiceDirectory(name);
+      if (directory) provideHostPackagesTo(directory);
+      return directory;
+    } }));
   return {
     open: Effect.fn("ProjectEngine.open")(function* () {
       const gatewaySecret = process.env.ZELAVIS_PROJECT_GATEWAY_SECRET?.trim();
@@ -130,15 +142,25 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
               if (!token) return undefined;
               const claims = yield* integration(() => verifyGatewayAuthority(gatewaySecret, token, { audienceProjectId: projectId, consumeNonce: gatewayNonces }));
               if (!claims) return undefined;
-              return { id: claims.subject, type: claims.subjectType as "user" | "system" | "service", permissions: claims.permissions,
+              const principal = { id: claims.subject, type: claims.subjectType as "user" | "system" | "service", permissions: claims.permissions,
                 grants: claims.permissions.map(permission => ({ permission, scope: { type: "project" as const, projectId } })),
                 metadata: { projectId, tenantId: claims.tenantId, placementGeneration: String(claims.generation), runtimeNodeId: claims.runtimeNodeId,
                   platformScopeId: claims.scopeId, authority: "project-gateway" } };
+              bindProjectAccountAccessProof(principal, claims.accountAccessDigest);
+              return principal;
             })),
             serviceRegistry: { ...resolved?.serviceRegistry, catalog: [...resolved?.serviceRegistry?.catalog ?? [], lockedRecipe] },
           };
         })),
-      }), onError: ({ error, correlationId }) => toDefaultErrorResponse(error, correlationId) });
+      }), rootPath: PROJECT_AUTH_ROOT, frontend, onError: ({ error, correlationId }) => toDefaultErrorResponse(error, correlationId) });
+      const ingress = (runtime: Pick<ZelavisServerRuntime, "fetch">): Pick<ZelavisServerRuntime, "fetch"> => ({
+        fetch(request, context) {
+          if (!isPrivateProjectAuthPath(new URL(request.url).pathname)) return runtime.fetch(request, context);
+          const publicRequest = frontend && !request.headers.has(ZELAVIS_GATEWAY_AUTHORITY_HEADER) && hasCanonicalSitePath(request, context)
+            ? publicRequestFromPrivateAuth(request) : undefined;
+          return publicRequest ? runtime.fetch(publicRequest) : Promise.resolve(new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } }));
+        },
+      });
       if (lease?.role === "standby") {
         // Nothing but the database opens before this standby holds the lease: Identity, Workloads and entities write to
         // the database at start, which would make a copy diverge. So the composition runs in the background (it waits
@@ -157,13 +179,13 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
         ), composing);
         const standing = () => Response.json({ error: failure === undefined ? "This Project is standing by for its writer." : failure }, { status: 503, headers: { "cache-control": "no-store" } });
         return {
-          runtime: { fetch: (...args: Parameters<ZelavisServerRuntime["fetch"]>) => composed === undefined ? Promise.resolve(standing()) : composed.fetch(...args) },
+          runtime: ingress({ fetch: (...args) => composed === undefined ? Promise.resolve(standing()) : composed.fetch(...args) }),
           qualify: Effect.void,
           close: () => Effect.andThen(Effect.sync(() => standingBy.abort()), Effect.andThen(Scope.close(composing, Exit.void), integration(() => zv.close()))),
         };
       }
       const runtime = yield* integration(() => zv.runtime()).pipe(Effect.onError(() => integration(() => zv.close()).pipe(Effect.ignore)));
-      return { runtime, qualify: Effect.void, close: () => integration(() => zv.close()) };
+      return { runtime: ingress(runtime), qualify: Effect.void, close: () => integration(() => zv.close()) };
     }),
   };
 });

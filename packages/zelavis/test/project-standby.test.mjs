@@ -95,7 +95,9 @@ test("a Project's standby follows its writer, answers 503 until promoted, then s
     assert.equal((await fetch(`${base}/leased/stop`, { method: "POST", headers: bearer })).status >= 400, true, "it cannot stop the Project");
     const elsewhere = await fetch(`${base}/other/followers/partitions`, { method: "POST", headers: { ...bearer, "content-type": "application/json" }, body: "{}" });
     assert.equal([401, 403, 404].includes(elsewhere.status), true, `it cannot follow another Project (${elsewhere.status})`);
-    assert.equal((await fetch(`${base}`, { headers: bearer })).status >= 400, true, "it holds no Platform-wide authority");
+    const inventory = await fetch(`${base}`, { headers: bearer });
+    assert.equal(inventory.status, 200);
+    assert.deepEqual((await inventory.json()).projects, [], "it holds no Project view authority");
 
     const standing = await driverB.startStandby(project);
     assert.equal(standing.status, "standby");

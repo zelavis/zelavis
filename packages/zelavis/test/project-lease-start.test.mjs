@@ -1,6 +1,7 @@
 // A Project's start is guarded by its whole-database writer lease: it is taken before the database is handed out, and a
 // node that cannot take it opens nothing. The lease is the fence for any start, whoever decided it.
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
 import test from "node:test";
 import { Effect } from "effect";
 import { acquireWriter, memoryLeaseStore, startWriter, renewWriter } from "../dist/db/writer-lease.js";
@@ -48,17 +49,29 @@ test("the lease is configured from the environment, all or nothing", () => {
 
 test("a database opens only once it holds the lease, refuses to open while another writer is live, and releases the lease when it closes", { timeout: 60_000 }, async (t) => {
   const leases = memoryLeaseStore();
-  const directory = temporaryDatabaseDirectory(t);
-  const lease = (owner, standby, extra = {}) => ({ role: "writer", leases, scope: "project-1", owner, standby, ttlMillis: 400, endpoint: `http://${owner}`, ...extra });
+  const directory = temporaryDatabaseDirectory();
+  // SQLite startup can take over a second under the parallel suite. The test controls when ownership changes.
+  const ttlMillis = 9_000;
+  const lease = (owner, standby, extra = {}) => ({ role: "writer", leases, scope: "project-1", owner, standby, ttlMillis, endpoint: `http://${owner}`, ...extra });
+  let opened;
+  t.after(async () => {
+    try {
+      await opened?.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   // Another node is the live writer: this one opens nothing.
-  await Effect.runPromise(acquireWriter(leases, { partition: "project-1", owner: "other", ttlMillis: 5000, standby: "A" }));
-  await assert.rejects(openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") }), (error) => error?.cause?._tag === "LeaseStillHeld" || error?._tag === "LeaseStillHeld" || /LeaseStillHeld|still held|held/i.test(String(error?.message ?? error)));
+  await Effect.runPromise(acquireWriter(leases, { partition: "project-1", owner: "other", ttlMillis, standby: "A" }));
+  await assert.rejects(async () => {
+    opened = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") });
+  }, (error) => error?.cause?._tag === "LeaseStillHeld" || error?._tag === "LeaseStillHeld" || /LeaseStillHeld|still held|held/i.test(String(error?.message ?? error)));
 
   // The other writer is gone (released): A is its named standby, takes over, and the database is handed out.
   const other = (await Effect.runPromise(leases.read("project-1"))).lease;
   await Effect.runPromise(leases.replace(await Effect.runPromise(leases.read("project-1")), { ...other, expiresAt: 0 }));
-  const opened = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") });
+  opened = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") });
   const held = (await Effect.runPromise(leases.read("project-1"))).lease;
   assert.deepEqual([held.owner, held.epoch, held.standby], ["A", 2, "B"]);
   await opened.api.forTenant("acme").documents.createCollection({ name: "posts" });
@@ -66,20 +79,24 @@ test("a database opens only once it holds the lease, refuses to open while anoth
 
   // Closing releases the lease, so the standby can take over at once.
   await opened.close();
+  opened = undefined;
   assert.equal((await Effect.runPromise(leases.read("project-1"))).lease.expiresAt, 0);
-  const again = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") });
+  opened = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B") });
   assert.equal((await Effect.runPromise(leases.read("project-1"))).lease.epoch, 3, "reopened as its own next epoch");
-  assert.equal((await again.api.forTenant("acme").documents.findById({ collection: "posts", id: "p1" })).id, "p1", "the data is there");
+  assert.equal((await opened.api.forTenant("acme").documents.findById({ collection: "posts", id: "p1" })).id, "p1", "the data is there");
 
   // Superseded while serving: the writer is told, and its writes are refused.
   let lost = 0;
-  await again.close();
-  const guarded = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B", { onSuperseded: () => { lost += 1; } }) });
-  const mine = await Effect.runPromise(leases.read("project-1"));
-  await Effect.runPromise(leases.replace(mine, { ...mine.lease, owner: "B", epoch: mine.lease.epoch + 1 }));
+  await opened.close();
+  opened = undefined;
+  opened = await openNodeDatabase({ directory, crossTenantRefresh: false, lease: lease("A", "B", { onSuperseded: () => { lost += 1; } }) });
+  const superseded = await Effect.runPromise(Effect.flatMap(leases.read("project-1"), (mine) =>
+    leases.replace(mine, { ...mine.lease, owner: "B", epoch: mine.lease.epoch + 1 })));
+  assert.equal(superseded, true);
   await until(() => lost === 1, "the writer finds out it was superseded");
-  await until(async () => (await guarded.api.forTenant("acme").documents.insert({ collection: "posts", id: `late-${Math.random()}`, data: {} }).then(() => false, () => true)), "and its writes are refused");
-  await guarded.close();
+  await assert.rejects(opened.api.forTenant("acme").documents.insert({ collection: "posts", id: "late", data: {} }), {
+    _tag: "WriterFenced", reason: "superseded",
+  });
 });
 
 test("a database opened as a standby follows its writer and is handed out only once it holds the lease", { timeout: 60_000 }, async () => {

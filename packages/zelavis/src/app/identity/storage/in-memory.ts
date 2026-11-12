@@ -1,5 +1,7 @@
+import { IdentityConflictError } from "../core/errors.js";
 import { Effect } from "effect";
 import { present, integration, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
+import { decodeRegistrationControl, type RegistrationControl } from "../domain/registration.js";
 import type {
   AccountRepository,
   AuthAttemptRepository,
@@ -64,6 +66,7 @@ class InMemoryAccountRepository implements AccountRepository {
   create(account: Account): Promise<Account> {
     const self = this;
     return present(Effect.gen(function* (): Effect.fn.Return<Account, IntegrationFailure> {
+    if (self.items.has(account.id)) throw new IdentityConflictError("id", "An account with that id already exists.");
     self.items.set(account.id, account);
     return account;
   }));
@@ -160,6 +163,7 @@ class InMemoryCredentialRepository implements CredentialRepository {
   create(credential: Credential): Promise<Credential> {
     const self = this;
     return present(Effect.gen(function* (): Effect.fn.Return<Credential, IntegrationFailure> {
+    if (self.items.has(credential.id)) throw new IdentityConflictError("id", "A credential with that id already exists.");
     self.items.set(credential.id, credential);
     return credential;
   }));
@@ -257,7 +261,16 @@ class InMemoryAuthAuthorizationFlowRepository
 export function createInMemoryAuthRepositories(
   overrides: Partial<IdentityRepositories> = {},
 ): IdentityRepositories {
+  let registration: RegistrationControl | null = null;
   return {
+    registration: overrides.registration ?? {
+      read: () => present(integration(() => registration && decodeRegistrationControl(registration))),
+      mutate: (mutation) => present(integration(() => {
+        const next = mutation(registration && decodeRegistrationControl(registration));
+        registration = next && decodeRegistrationControl(next);
+        return registration && decodeRegistrationControl(registration);
+      })),
+    },
     accounts: overrides.accounts ??
       withUniqueAccounts(new InMemoryAccountRepository(), new InMemoryClaims()),
     sessions: overrides.sessions ?? new InMemorySessionRepository(),

@@ -236,6 +236,7 @@ The following state starts fresh or is omitted:
 - A compacted partition is restored from its final state. The earlier events and the time-series points that depend
   on them cannot be recreated. Projection checkpoints, materialized time-series state, aggregate checkpoint cursors,
   and cross-Tenant index entries and cursors are omitted. The app registers time-series definitions again at runtime.
+  Final-state imports preserve document references and graph links regardless of where their targets appear in the export.
 - Layout-2 idempotency receipts are omitted. Layout-4 receipts keep durable retries from applying a write again.
 
 The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44). The next engine writes layout 5, which binds

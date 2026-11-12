@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mountOf, placeholderTransform, requestIntoBuild, responseOutOfBuild } from "../src/mount-rewrite.ts";
+import { resolveReturnTo } from "../app/mount.ts";
+import { isPublicAuthPath } from "../src/auth-routes.ts";
 
 test("a mount is a root path without its trailing slash, and only well-formed ones are accepted", () => {
   assert.equal(mountOf("/zelavis"), "/zelavis");
@@ -18,6 +20,23 @@ test("requests enter the build under the placeholder and nothing outside the mou
   assert.equal(requestIntoBuild(new Request("http://h/administrator"), "/admin"), undefined, "a longer name is not the mount");
   assert.equal(requestIntoBuild(new Request("http://h/other"), "/admin"), undefined);
   assert.equal(new URL(requestIntoBuild(new Request("http://h/projects/p"), "").url).pathname, "/__zelavis__/projects/p");
+});
+
+test("signup is recognized after a nondefault mount is rewritten", () => {
+  const mount = "/ops/panel";
+  const request = requestIntoBuild(new Request(`https://host${mount}/sign-up/`), mount);
+  assert.equal(new URL(request.url).pathname, "/__zelavis__/sign-up/");
+  assert.ok(isPublicAuthPath(new URL(request.url).pathname.slice("/__zelavis__".length)));
+  assert.equal(isPublicAuthPath("/projects/lab/sign-up"), false);
+});
+
+test("login return destinations stay on the dashboard mount", () => {
+  const origin = "https://host";
+  assert.equal(resolveReturnTo("/projects/lab?q=term#result", origin), "/projects/lab?q=term#result");
+  assert.equal(resolveReturnTo("/zelavis/projects/lab", origin), "/projects/lab");
+  for (const value of ["//example.test", "/\\example.test", "https://example.test", "/../elsewhere", "/zelavis/%2e%2e/elsewhere", "/zelavis//example.test"]) {
+    assert.equal(resolveReturnTo(value, origin), "/", value);
+  }
 });
 
 test("the page a data or action request names is named under the placeholder", () => {
