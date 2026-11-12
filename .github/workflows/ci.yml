@@ -61,7 +61,8 @@ jobs:
           cmp distribution/installers/install.sh website/dist/install.sh
 
   ui:
-    name: Dashboard browser checks
+    # The `main` ruleset requires a check of this exact name; renaming the job leaves the requirement unmet forever.
+    name: Dashboard e2e
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

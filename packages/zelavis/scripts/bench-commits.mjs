@@ -9,7 +9,8 @@
 // request arriving at the worst moment would have waited.
 //
 // Each Tenant is its own partition, so its commits are serialized by its own
-// writer permit; several Tenants write to one shard at once. The numbers are one machine's: read the ratios between rows. On macOS `power`
+// writer permit and only Tenants sharing the shard can share a flush. The
+// numbers are one machine's: read the ratios between rows. On macOS `power`
 // pays for F_FULLFSYNC, a real flush of the drive's cache, on every flush.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

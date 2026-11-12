@@ -467,6 +467,9 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.getByRole("dialog").getByText("across all 2 parts", { exact: false }).waitFor());
   yield* io(() => page.getByRole("dialog").getByLabel("Type the Tenant ID to confirm").fill("whale-copy"));
   yield* io(() => page.getByRole("dialog").getByRole("button", { name: "Delete tenant", exact: true }).click());
+  // The page says so only once the server has answered; the row's button can leave the page before that, so its
+  // going is no sign that the removal finished.
+  yield* io(() => page.getByText("Deleted Tenant whale-copy.", { exact: true }).waitFor());
   yield* io(() => page.getByRole("button", { name: "Delete Tenant whale-copy", exact: true }).waitFor({ state: "detached" }));
   const afterDelete = (yield* request(whaleProxy + "/database/tenants/overview")).tenants;
   assert.equal(afterDelete.some(entry => entry.tenantId === "whale-copy"), false, "Every part of the deleted Tenant is gone");

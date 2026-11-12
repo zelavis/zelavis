@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, Semaphore, Stream } from "effect";
+import { Deferred, Duration, Effect, Option, Semaphore, Stream } from "effect";
 import { ReadBudgetExceeded, StoreError } from "../errors.js";
 import {
   equalBytes, scanRange, type KvCondition, type KvDurability, type KvEngine, type KvEntry, type KvReadBudget, type KvReader, type KvScanOptions, type KvWrite,
@@ -88,6 +88,18 @@ const BACKGROUND_CHECKPOINT_SETUP = `
 
 /** Read-only connections kept open between snapshots; more are opened when needed. */
 const IDLE_READERS = 4;
+
+/** At most this many batches share one commit. A group always takes at least one batch. */
+const GROUP_BATCHES = 64;
+
+/** At most this many key and value bytes share one commit, unless a single batch is larger alone. */
+const GROUP_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The priority a commit's leader yields with. The scheduler runs a pass in ascending priority, so
+ * the leader resumes after every fiber already scheduled, and those that reach a commit join it.
+ */
+const AFTER_READY_FIBERS = Number.MAX_SAFE_INTEGER;
 
 /**
  * Snapshots open at once on one shard, each a read-only connection of its own. Each maps the file separately, so its
@@ -359,35 +371,153 @@ export const sqliteKvEngineOver = (
   ));
 
   /**
-   * One batch, one transaction: its conditions are checked and its writes applied inside it, and a
-   * refused or failed batch leaves nothing behind. (Grouping batches into one commit is LMDB's binding
-   * only for now: a SQLite group commit let a read right after an answered write miss it.)
+   * Group commit: batches that are ready together commit in one transaction, so they share one
+   * flush of the log rather than paying one each.
+   *
+   * Each batch is still its own atomic unit with its own conditions, checked inside the shared
+   * transaction after the batches ahead of it: the group's outcome is exactly the batches run one
+   * after another, in arrival order, with one commit at the end. A refused batch writes nothing, so
+   * it needs no undo. A batch whose writes throw leaves the transaction in a state not worth
+   * trusting, so the whole transaction is rolled back, that batch fails alone, and the others run
+   * again from the start; each retry holds one batch fewer, so it ends. No batch is answered until
+   * the commit has returned, which keeps each caller's durability exactly what it was alone.
+   *
+   * The first batch to arrive leads: it yields once, after every fiber already scheduled, so writers
+   * ready at the same moment can join, then commits whatever has queued, a bounded group at a time.
+   * Leading and waiting are uninterruptible: a queued batch is always committed or refused, so an
+   * interrupted caller never leaves an outcome it cannot know. The wait is bounded by the commit
+   * itself, which runs synchronously once it starts.
    */
-  const batch = (writes: ReadonlyArray<KvWrite>, conditions: ReadonlyArray<KvCondition>) =>
-    Effect.try({
-      try: () => {
+  interface Queued {
+    readonly writes: ReadonlyArray<KvWrite>;
+    readonly conditions: ReadonlyArray<KvCondition>;
+    readonly done: Deferred.Deferred<boolean, StoreError>;
+  }
+  const queue: Queued[] = [];
+  let leading = false;
+
+  const bytesOf = (entry: Queued): number => {
+    let bytes = 0;
+    for (const write of entry.writes) bytes += write.key.length + (write.op === "put" ? write.value.length : 0);
+    return bytes;
+  };
+
+  /** The next group: at least one batch, then as many as fit both limits. */
+  const nextGroup = (): Queued[] => {
+    // Measured before anything leaves the queue, so a batch that cannot be measured leaves every
+    // batch still queued, and so still answered.
+    let count = 1;
+    let bytes = bytesOf(queue[0]!);
+    while (count < queue.length && count < GROUP_BATCHES) {
+      const size = bytesOf(queue[count]!);
+      if (bytes + size > GROUP_BYTES) break;
+      bytes += size;
+      count += 1;
+    }
+    return queue.splice(0, count);
+  };
+
+  /** One batch inside the open transaction: false, having written nothing, when a condition does not hold. */
+  const apply = (entry: Queued): boolean => {
+    for (const condition of entry.conditions) {
+      const row = statements.get.get(toKey(condition.key)) as { value: unknown } | undefined;
+      if (!equalBytes(row === undefined ? undefined : toBytes(row.value), condition.value)) return false;
+    }
+    for (const write of entry.writes) {
+      if (write.op === "put") statements.put.run(toKey(write.key), Buffer.from(write.value));
+      else statements.del.run(toKey(write.key));
+    }
+    return true;
+  };
+
+  /** The failure a rollback adds to the one that caused it, so neither is lost. */
+  const rollback = (cause: unknown): unknown => {
+    try {
+      db.exec("ROLLBACK");
+      return cause;
+    } catch (cleanup) {
+      return new AggregateError([cause, cleanup], "A write and its rollback both failed.");
+    }
+  };
+
+  type Answer = readonly [Queued, Effect.Effect<boolean, StoreError>];
+
+  /** Commit one group and decide every batch in it, whatever happens. */
+  const commitGroup = (group: ReadonlyArray<Queued>, answers: Answer[]): void => {
+    const settle = (entry: Queued, outcome: Effect.Effect<boolean, StoreError>) => { answers.push([entry, outcome]); };
+    let members = group;
+    while (members.length > 0) {
+      try {
         db.exec("BEGIN IMMEDIATE");
+      } catch (cause) {
+        for (const member of members) settle(member, Effect.fail(fail("sqlite-kv.write")(cause)));
+        return;
+      }
+      const outcomes: boolean[] = [];
+      let broken: { readonly index: number; readonly cause: unknown } | undefined;
+      for (let index = 0; index < members.length && broken === undefined; index++) {
         try {
-          for (const condition of conditions) {
-            const row = statements.get.get(toKey(condition.key)) as { value: unknown } | undefined;
-            if (!equalBytes(row === undefined ? undefined : toBytes(row.value), condition.value)) {
-              db.exec("ROLLBACK");
-              return false;
-            }
-          }
-          for (const write of writes) {
-            if (write.op === "put") statements.put.run(toKey(write.key), Buffer.from(write.value));
-            else statements.del.run(toKey(write.key));
-          }
-          db.exec("COMMIT");
-          return true;
+          outcomes.push(apply(members[index]!));
         } catch (cause) {
-          db.exec("ROLLBACK");
-          throw cause;
+          broken = { index, cause };
         }
-      },
-      catch: fail("sqlite-kv.write"),
-    });
+      }
+      if (broken !== undefined) {
+        const { index, cause } = broken;
+        settle(members[index]!, Effect.fail(fail("sqlite-kv.write")(rollback(cause))));
+        members = members.filter((_, at) => at !== index);
+        continue;
+      }
+      try {
+        db.exec("COMMIT");
+      } catch (cause) {
+        const failure = fail("sqlite-kv.write")(rollback(cause));
+        for (const member of members) settle(member, Effect.fail(failure));
+        return;
+      }
+      members.forEach((member, index) => settle(member, Effect.succeed(outcomes[index]!)));
+      return;
+    }
+  };
+
+  const batch = (writes: ReadonlyArray<KvWrite>, conditions: ReadonlyArray<KvCondition>): Effect.Effect<boolean, StoreError> =>
+    Effect.uninterruptible(Effect.suspend(() => {
+      const done = Deferred.makeUnsafe<boolean, StoreError>();
+      queue.push({ writes, conditions, done });
+      if (leading) return Deferred.await(done);
+      leading = true;
+      return Effect.yieldNowWith(AFTER_READY_FIBERS).pipe(
+        Effect.andThen(Effect.sync(() => {
+          // Everything queued now, and nothing more: commits are synchronous, so nothing joins
+          // while they run. Answering resumes the waiting fibers on this stack, and they commit
+          // again at once, so the answers wait until this leader has stepped down: whoever queues
+          // next leads the next group, and no leader ends up committing everyone else's work.
+          // The flag is cleared here and nowhere later: once answers go out, a new leader may
+          // already hold it.
+          const answers: Answer[] = [];
+          let taken: ReadonlyArray<Queued> = [];
+          try {
+            while (queue.length > 0) {
+              taken = nextGroup();
+              commitGroup(taken, answers);
+              taken = [];
+            }
+          } catch (cause) {
+            // Only a defect gets here (a malformed batch): every statement failure is decided inside
+            // `commitGroup`. Even so, no batch may be left waiting for an answer that never comes.
+            const failure = fail("sqlite-kv.write")(cause);
+            const answered = new Set(answers.map(([entry]) => entry));
+            for (const entry of [...taken, ...queue.splice(0)]) {
+              if (!answered.has(entry)) answers.push([entry, Effect.fail(failure)]);
+            }
+          } finally {
+            leading = false;
+          }
+          for (const [entry, outcome] of answers) Deferred.doneUnsafe(entry.done, outcome);
+        })),
+        Effect.andThen(Deferred.await(done)),
+      );
+    }));
 
   return {
     ...readerOn(db, statements.get, false),
