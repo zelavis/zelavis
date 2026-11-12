@@ -442,8 +442,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             if (current?.process?.running && current.snapshot.status === "standby") {
                 if (role === "standby") return current.snapshot;
                 // The Agent binds a Project's placement when its process starts and has no way to give a running one a placement,
-                // so the standby does not become the writer in place: it is stopped (its lease is released) and the Project
-                // starts again here under the placement it was given, taking the lease as this node's own next epoch.
+                // so the standby does not become the writer in place: it is stopped and the Project starts again here under
+                // the placement it was given, taking the lease as this node's own next epoch. The standby keeps the lease as
+                // it stops (`releaseOnClose: false`): released, the standby it named could promote in between.
                 appendLog(current, "system", "Replacing the standby process with the writer.");
                 yield* driver.stop(project.id);
             }

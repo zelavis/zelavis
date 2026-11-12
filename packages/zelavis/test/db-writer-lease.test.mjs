@@ -7,7 +7,7 @@ import test from "node:test";
 import { Clock, Effect, Exit, Fiber, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import {
-  acquireWriter, memoryLeaseStore, promoteFollower, releaseWriter, renewWriter,
+  acquireWriter, holdWriter, memoryLeaseStore, promoteFollower, releaseWriter, renewWriter,
 } from "../dist/db/writer-lease.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
@@ -344,4 +344,33 @@ test("a lease over the whole database gates every Tenant on every shard at once,
   for (const tenant of tenants) assert.ok(Exit.isFailure(await write(tenant, "after")), `${tenant} refused`);
   assert.equal(await A.api.forTenant("tenant-7").documents.findById({ collection: "posts", id: "after" }), undefined, "nothing of a refused write landed");
   assert.equal((await A.api.forTenant("tenant-7").documents.findById({ collection: "posts", id: "p1" }))?.id, "p1", "reads go on");
+});
+
+test("a stand-in writer that keeps its lease as it closes hands it to its own node, never to the standby it named", async () => {
+  await Effect.runPromise(Effect.gen(function* () {
+    const leases = memoryLeaseStore();
+    const store = { partition: "p", guard: () => Effect.void };
+    // B was the writer and named A as its standby; A promoted (as a Project's standby process does on failover).
+    yield* acquireWriter(leases, { partition: "p", owner: "B", ttlMillis: 1000, standby: "A" });
+    yield* releaseWriter(leases, (yield* leases.read("p")).lease);
+    const promoted = yield* promoteFollower(leases, { partition: "p", owner: "A", ttlMillis: 1000, followerHead: 0, successor: "B" });
+    // The stand-in holds it, then closes without releasing: the Platform is replacing it with A's own Project.
+    const scope = yield* Scope.make();
+    yield* Scope.provide(holdWriter({ leases, store, owner: "A", ttlMillis: 1000, lease: promoted.lease, releaseOnClose: false }), scope);
+    yield* Scope.close(scope, Exit.void);
+    const kept = (yield* leases.read("p")).lease;
+    assert.deepEqual([kept.owner, kept.epoch], ["A", promoted.lease.epoch], "the lease is still A's");
+    // B, started again meanwhile and named as the standby, cannot take it while it is live...
+    assert.equal(fail(yield* Effect.exit(promoteFollower(leases, { partition: "p", owner: "B", ttlMillis: 1000, followerHead: 0 })))._tag, "LeaseStillHeld");
+    // ...and A's own next writer takes it at once, at the next epoch.
+    const next = yield* acquireWriter(leases, { partition: "p", owner: "A", ttlMillis: 1000, standby: "B" });
+    assert.equal(next.epoch, promoted.lease.epoch + 1);
+
+    // By default a closing writer releases, so the standby it names may promote at once.
+    const released = yield* Scope.make();
+    yield* Scope.provide(holdWriter({ leases, store, owner: "A", ttlMillis: 1000, lease: next }), released);
+    yield* Scope.close(released, Exit.void);
+    const taken = yield* promoteFollower(leases, { partition: "p", owner: "B", ttlMillis: 1000, followerHead: 0 });
+    assert.equal(taken.lease.owner, "B");
+  }));
 });

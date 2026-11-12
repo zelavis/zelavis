@@ -54,6 +54,10 @@ export const leaseFromEnvironment = (projectId: string, environment: Readonly<Re
     const rootPath = platform.pathname.replace(/\/+$/, "") || "/";
     return {
       role, leases, scope: projectId, owner, successor: standby, ttlMillis: ttl, endpoint,
+      // A promoted standby is a stand-in: the Platform replaces it with this node's Project, which takes the lease at the
+      // next epoch as the same owner. Releasing it on the way out would let the named standby (the node the writer left,
+      // started again meanwhile) promote in between, and leave this node's Project refused with LeaseStillHeld.
+      releaseOnClose: false,
       // Once promoted it is the writer, and a writer that finds itself superseded stops serving (see below).
       onSuperseded: () => {
         console.error(`Project ${projectId} was superseded as the writer of its database; stopping.`);

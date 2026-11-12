@@ -256,6 +256,12 @@ export interface HoldWriterInput {
   readonly onSuperseded?: () => void;
   /** The highest log position acknowledged by followers now: carried in every renewal. */
   readonly acknowledged?: Effect.Effect<number>;
+  /**
+   * Release the lease when the scope closes (the default), so a graceful stop hands over at once. A writer that is a
+   * stand-in for its own node's next writer keeps it instead: that writer takes it at the next epoch as the same owner,
+   * while a release would let the named standby promote in the moment between the two.
+   */
+  readonly releaseOnClose?: boolean;
 }
 
 /**
@@ -294,7 +300,7 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
     }));
     yield* Effect.addFinalizer(() => Effect.andThen(
       Fiber.interrupt(renewing),
-      Effect.suspend(() => superseded ? Effect.void : releaseWriter(input.leases, held)).pipe(
+      Effect.suspend(() => superseded || input.releaseOnClose === false ? Effect.void : releaseWriter(input.leases, held)).pipe(
         // An unreachable authority must not keep a closing scope open for ever: the lease expires on its own.
         Effect.timeout(Duration.millis(ttl)),
         Effect.catchCause((cause) => Effect.logWarning(`The writer lease of ${partition} could not be released; it expires on its own`, cause)),
@@ -324,6 +330,8 @@ export interface StandbyInput {
   readonly allowDataLoss?: boolean;
   /** Called once if this node, as the writer it became, is later found superseded (see `HoldWriterInput.onSuperseded`). */
   readonly onSuperseded?: () => void;
+  /** Once promoted, release the lease when the scope closes (see `HoldWriterInput.releaseOnClose`). */
+  readonly releaseOnClose?: boolean;
 }
 
 const STANDBY_RETRY_MILLIS = 1000;
@@ -362,6 +370,7 @@ export const standby = (input: StandbyInput): Effect.Effect<WriterHandle & { rea
           leases: input.leases, store: input.store, owner: input.owner, ttlMillis: ttl, lease: promoted.value.lease,
           ...(input.acknowledged === undefined ? {} : { acknowledged: input.acknowledged }),
           ...(input.onSuperseded === undefined ? {} : { onSuperseded: input.onSuperseded }),
+          ...(input.releaseOnClose === undefined ? {} : { releaseOnClose: input.releaseOnClose }),
         }).pipe(Effect.catchTags({
           LeaseOwnedByAnother: (error) => Effect.die(error),
           LeaseStillHeld: (error) => Effect.die(error),

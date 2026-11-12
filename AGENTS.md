@@ -916,7 +916,9 @@ Bun as the Agent runtime. This is Project placement, not a remote App shard
 grant; remote shard placement is the separate capability above.
 A lease-guarded Project (`ZELAVIS_PROJECT_LEASES_*`) also runs a placement-free standby process on its standby node
 (`<id>#standby` on the Agent) and fails over to it: the Platform learns of a promotion from the writer lease, moves the
-placement `{owner, epoch}` to that node and starts the Project there under it. Proven with a real Platform and a real
+placement `{owner, epoch}` to that node and starts the Project there under it. The promoted standby process keeps the
+lease as it is replaced (`releaseOnClose: false`): the node's Project takes it at the next epoch, and a release in
+between would let the standby it named (the node the writer left, started again) promote first. Proven with a real Platform and a real
 remote Agent on one machine, through two failovers; the Platform's Gateway reaches a remotely placed Project through its
 Agent (a Platform-signed route request, fenced by the committed placement), and multi-host partition drills are still not
 run.
