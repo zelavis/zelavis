@@ -26,6 +26,8 @@
       }
       form { display: grid; gap: 0.5rem; }
       .fields { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      #registration-form label { display: flex; gap: 0.5rem; align-items: center; }
+      #registration-form input { flex: none; }
       input {
         font: inherit;
         flex: 1 1 14rem;
@@ -45,6 +47,15 @@
           <p class="zv-muted" id="providers-hint">Loading…</p>
         </div>
         <div class="grid" id="providers"></div>
+      </section>
+
+      <section class="zv-card zv-stack">
+        <h2>Public registration</h2>
+        <form id="registration-form">
+          <label><input id="registration-enabled" type="checkbox" disabled /> Allow public registration</label>
+          <div><button id="registration-save" class="zv-button" type="submit" disabled>Save</button></div>
+        </form>
+        <p id="registration-status" class="zv-muted" role="status">Loading…</p>
       </section>
 
       <section class="zv-card zv-stack">
@@ -99,10 +110,60 @@
         const text = await response.text();
         const body = text ? JSON.parse(text) : undefined;
         if (!response.ok) {
-          throw new Error(body?.error ?? `Request failed (${response.status})`);
+          throw Object.assign(new Error(body?.error ?? `Request failed (${response.status})`), { code: body?.code });
         }
         return body;
       }
+
+      const registrationPath = "/auth/registration/settings";
+      const registrationEnabled = el("registration-enabled");
+      const registrationSave = el("registration-save");
+      const registrationStatus = el("registration-status");
+      let registration;
+
+      function showRegistration(settings, notice) {
+        if (typeof settings?.enabled !== "boolean" || !Number.isSafeInteger(settings.revision) || settings.revision < 0) {
+          throw new Error("The runtime returned invalid registration settings.");
+        }
+        registration = settings;
+        registrationEnabled.checked = settings.enabled;
+        registrationEnabled.disabled = false;
+        registrationSave.disabled = true;
+        registrationStatus.textContent = notice ?? (settings.enabled ? "Registration is open." : "Registration is closed.");
+      }
+
+      async function renderRegistration(notice) {
+        try {
+          showRegistration(await api(registrationPath), notice);
+        } catch (cause) {
+          registrationStatus.textContent = cause.message;
+        }
+      }
+
+      registrationEnabled.addEventListener("change", () => {
+        registrationSave.disabled = !registration || registrationEnabled.checked === registration.enabled;
+      });
+      el("registration-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!registration || registrationSave.disabled) return;
+        registrationEnabled.disabled = true;
+        registrationSave.disabled = true;
+        registrationStatus.textContent = "Saving…";
+        try {
+          const saved = await api(registrationPath, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ enabled: registrationEnabled.checked, expectedRevision: registration.revision }),
+          });
+          showRegistration(saved, saved.enabled ? "Registration opened." : "Registration closed.");
+        } catch (cause) {
+          registration = undefined;
+          const notice = cause.code === "registration_settings_conflict"
+            ? "Registration settings changed. Review the current setting and try again."
+            : cause.message;
+          await renderRegistration(notice);
+        }
+      });
 
       function card(children) {
         const row = document.createElement("div");
@@ -253,7 +314,7 @@
         }
       });
 
-      await Promise.all([renderProviders(), renderConnections(), renderExtensions()]);
+      await Promise.all([renderProviders(), renderRegistration(), renderConnections(), renderExtensions()]);
     </script>
   </body>
 </html>

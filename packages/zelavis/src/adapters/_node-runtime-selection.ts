@@ -1,16 +1,17 @@
-import { isUnknown, recordOf, parseJson } from "../core/json-validation.js";
 import { randomUUID } from "node:crypto";
 import { open, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Deferred, Effect } from "effect";
 import { installationInstanceScope } from "../core/runtime/installation-instance.js";
-import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, IntegrationFailure, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { isRecord } from "../core/json-validation.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
-import { planZelavisRuntimeHostAssetsProgram } from "../core/runtime/installation-plan.js";
+import { planZelavisRuntimeHostAssetsProgram, readNativeInstallationReceiptProgram } from "../core/runtime/installation-plan.js";
 import { assertInstallationPath, planZelavisProductionEdgeDirectories } from "../core/runtime/installation-plan.js";
 import { assertProductionEdgePortsProgram } from "../core/runtime/installation-health.js";
 import { isExactVersion } from "../updates.js";
+import { prepareInstalledProjectAgentUpdate } from "./_agent-update.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 
 const flushDirectory = (path: string) => process.platform === "win32" ? Effect.void : Effect.acquireUseRelease(
@@ -34,14 +35,16 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
 }) {
   yield* evaluate(() => { if (!isExactVersion(options.version)) throw new Error("Runtime selection requires an exact version."); });
   const scope = installationInstanceScope(options.prefix, options.instance);
-  const source = yield* integration(() => readFile(scope.receipt, "utf8"));
-  const receipt = yield* evaluate(() => {
+  yield* evaluate(() => {
     assertInstallationPath(options.prefix, "runtime selection prefix");
     assertInstallationPath(options.dataDirectory, "runtime selection data");
-    const value = parseJson(source, recordOf(isUnknown));
-    if (value.schemaVersion !== 2 || value.prefix !== options.prefix || value.instance !== options.instance || value.dataDirectory !== options.dataDirectory || !isExactVersion(value.version) || !["system", "user"].includes(String(value.mode))) throw new Error("Runtime selection disagrees with the installation receipt.");
-    if (value.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
-    return value;
+  });
+  // The one reader of the receipt: it validates the shape and refuses a worker's.
+  const found = yield* readNativeInstallationReceiptProgram(createNodeInstallHost(), options.prefix, options.instance);
+  const receipt = yield* evaluate(() => {
+    if (!found || found.prefix !== options.prefix || found.instance !== options.instance || found.dataDirectory !== options.dataDirectory || !isExactVersion(found.version)) throw new Error("Runtime selection disagrees with the installation receipt.");
+    if (found.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
+    return found;
   });
   const runtimeSource = yield* integration(() => readFile(scope.runtime, "utf8"));
   const runtime = yield* evaluate(() => {
@@ -69,14 +72,37 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
     for (const step of planZelavisProductionEdgeDirectories(paths)) yield* integration(() => host.execute(step.action));
   }
   const completed = Deferred.makeUnsafe<Readonly<Record<string, unknown>>, TaggedFailure>();
-  return yield* Effect.scoped(Effect.gen(function* () {
+  let agentUpdate: Effect.Effect<void, TaggedFailure> | undefined;
+  const result = yield* Effect.scoped(Effect.gen(function* () {
     yield* Effect.forkChild(requestNodeRuntimeControl(endpoint, { action: "select", version: options.version, commit: true }).pipe(
       Effect.onExit(exit => Deferred.done(completed, exit).pipe(Effect.asVoid)),
       Effect.ignore,
     ));
     const acknowledged = new Set<string>();
-    while (!(yield* Deferred.isDone(completed))) {
+    let disconnected: TaggedFailure | undefined;
+    let committedGeneration: number | undefined;
+    for (;;) {
+      if (disconnected === undefined && (yield* Deferred.isDone(completed))) {
+        const answer = yield* Effect.result(Deferred.await(completed));
+        if (answer._tag === "Success") return answer.success;
+        const cause = unwrapFailure(answer.failure);
+        if (!isRecord(cause) || cause.code !== "ECONNRESET") return yield* Effect.fail(answer.failure);
+        // Losing the response does not cancel the host's transition. Continue
+        // handling inventory acknowledgements and verify the committed generation.
+        disconnected = answer.failure;
+      }
       const status = yield* requestNodeRuntimeControl(endpoint, { action: "status" });
+      if (disconnected !== undefined && status.pendingCommit === undefined) {
+        if (status.requiresRecovery === true) {
+          return yield* new IntegrationFailure(new Error("Platform handover requires fenced recovery after the control connection closed.", { cause: disconnected }));
+        }
+        if (status.ready === true && status.requiresRecovery === false &&
+            committedGeneration !== undefined && status.generation === committedGeneration &&
+            isRecord(status.release) && status.release.version === options.version &&
+            isRecord(status.admission) && status.admission.paused === false && status.admission.closed === false) {
+          return { release: status.release, generation: committedGeneration, cleanupFailures: status.cleanupFailures };
+        }
+      }
       const pending = status.pendingCommit as { nonce: string; release: RuntimeRelease; generation: number } | undefined;
       if (pending && !acknowledged.has(pending.nonce)) {
         const committed = yield* Effect.result(Effect.gen(function* () {
@@ -111,15 +137,21 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
               yield* integration(() => createNodeInstallHost().execute({ kind: "command", command: "systemctl", args: ["enable", "zelavis-traefik.service"] }));
             }
           }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
+          if (receipt.mode === "system") agentUpdate = yield* prepareInstalledProjectAgentUpdate({ prefix: options.prefix, instance: options.instance,
+            dataDirectory: options.dataDirectory, target: pending.release.version, engineGeneration: pending.generation }).pipe(
+              Effect.catch(error => Effect.logError(`Agent update preparation failed; selected engine retained: ${error.message}`).pipe(Effect.as(undefined))),
+            );
         }));
         yield* requestNodeRuntimeControl(endpoint, { action: "commit", nonce: pending.nonce, version: pending.release.version,
           generation: pending.generation, accepted: committed._tag === "Success" });
         acknowledged.add(pending.nonce);
+        if (committed._tag === "Success" && pending.release.version === options.version) committedGeneration = pending.generation;
       }
       yield* Effect.sleep(20);
     }
-    return yield* Deferred.await(completed);
   })).pipe(Effect.timeoutOrElse({ duration: 150_000,
     orElse: () => Effect.fail(new IntegrationFailure(new Error("Runtime inventory selection did not complete within its bounded handover window."))),
   }));
+  if (agentUpdate) yield* agentUpdate.pipe(Effect.catch(error => Effect.logError(`Agent update bookkeeping failed; selected engine retained: ${error.message}`)));
+  return result;
 });

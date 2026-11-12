@@ -9,31 +9,34 @@
  * explicit `--password-stdin` pipe.
  */
 import { createInterface } from "node:readline";
+import { Effect, Stream } from "effect";
+import { IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
 
 type StdIn = NodeJS.ReadableStream & { isTTY?: boolean };
 
-export async function readAllStdin(
+export function readAllStdin(
   stream: NodeJS.ReadableStream = process.stdin,
 ): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-  }
-  // A trailing newline is an artifact of the pipe, not part of the secret.
-  return Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/u, "");
+  return present(Stream.fromAsyncIterable(stream as AsyncIterable<unknown>, (cause) => new IntegrationFailure(cause)).pipe(
+    Stream.runCollect,
+    // A trailing newline is an artifact of the pipe, not part of the secret.
+    Effect.map((chunks) => Buffer.concat(chunks.map((chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))))
+      .toString("utf8").replace(/\r?\n$/u, "")),
+  ));
 }
 
-export async function promptSecret(
+export function promptSecret(
   question: string,
   streams: { input?: StdIn; output?: NodeJS.WriteStream } = {},
 ): Promise<string> {
+  return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const input = streams.input ?? (process.stdin as StdIn);
   const output = streams.output ?? process.stdout;
 
   if (!input.isTTY) {
-    throw new Error(
+    return yield* Effect.fail(new IntegrationFailure(new Error(
       "A password is required but the terminal is not interactive. Pipe it with --password-stdin.",
-    );
+    )));
   }
 
   const rl = createInterface({ input, output, terminal: true });
@@ -50,16 +53,14 @@ export async function promptSecret(
       : (write as (...args: unknown[]) => boolean)(chunk, ...rest)) as
     NodeJS.WriteStream["write"];
 
-  try {
-    const answer = await new Promise<string>((resolve) => {
-      rl.question(question, (value) => resolve(value));
-      muted = true;
-    });
-    return answer;
-  } finally {
+  return yield* Effect.callback<string>((resume) => {
+    rl.question(question, (value) => resume(Effect.succeed(value)));
+    muted = true;
+  }).pipe(Effect.ensuring(Effect.sync(() => {
     muted = false;
     (output as { write: NodeJS.WriteStream["write"] }).write = write;
     output.write("\n");
     rl.close();
-  }
+  })));
+  }));
 }

@@ -184,6 +184,10 @@ export interface ZelavisServerRoute<TService = unknown> {
   host?: ZelavisRouteHostMatcher;
   access?: ZelavisAccessRequirement | readonly ZelavisAccessRequirement[];
   meta?: Record<string, unknown>;
+  /** Maximum request bytes after access checks, before body parsing. */
+  maxRequestBodyBytes?: number;
+  /** Machine-readable code for invalid JSON before the handler is reached. */
+  invalidJsonBodyCode?: string;
   /** Typed schema metadata for OpenAPI generation and SDK codegen. */
   spec?: ZelavisRouteSpec;
   handler: (
@@ -251,6 +255,8 @@ export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
   /** Public plugin API namespace, owned by the package manifest. */
   namespace?: string;
+  /** Host operations the manifest allows this plugin to name (see `ZelavisServiceHostOperations`). */
+  hostOperations?: readonly string[];
   kind?: string;
   basePath?: string;
   /**

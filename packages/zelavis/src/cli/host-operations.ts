@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
@@ -7,7 +9,8 @@ const usage =
  * `zelavis host-operations` — host operations through the JS
  * SDK client, so the CLI cannot drift from `client.hostOperations.*`.
  */
-export async function runHostOperationsCommand(args: readonly string[]): Promise<void> {
+export function runHostOperationsCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const operationArguments: Record<string, string> = {};
   let url = "http://localhost:3000/zelavis";
@@ -64,7 +67,7 @@ export async function runHostOperationsCommand(args: readonly string[]): Promise
     console.log(json ? JSON.stringify(value, null, 2) : text());
 
   if (action === "catalog") {
-    const operations = await client.hostOperations.catalog();
+    const operations = (yield* integrationValue(client.hostOperations.catalog()));
     print({ operations }, () =>
       operations.map((entry) =>
         `${entry.operation}@${entry.version}\t${entry.authorization.scope}\t${entry.authorization.permission}\t${Object.keys(entry.arguments).join(",")}`,
@@ -73,21 +76,21 @@ export async function runHostOperationsCommand(args: readonly string[]): Promise
   }
   if (action === "submit") {
     if (!target) throw new Error("host-operations submit requires an operation name.");
-    const operation = await client.hostOperations.submit({
+    const operation = (yield* integrationValue(client.hostOperations.submit({
       operation: target,
       ...(version ? { version } : {}),
       ...(projectId ? { projectId } : {}),
       arguments: operationArguments,
       ...(deadlineMs !== undefined ? { deadlineMs } : {}),
-    });
+    })));
     print({ operation }, () => `Submitted ${operation.operationId} (${operation.agent?.status ?? "unknown"}).`);
     return;
   }
   if (action === "audit") {
-    const records = await client.hostOperations.audit({
+    const records = (yield* integrationValue(client.hostOperations.audit({
       ...(projectId ? { projectId } : {}),
       ...(limit !== undefined ? { limit } : {}),
-    });
+    })));
     print({ records }, () =>
       records.map((record) =>
         `${record.requestedAt}\t${record.operationId}\t${record.operation}@${record.version}\t${record.projectId ?? "-"}\t${record.actorId}`,
@@ -96,10 +99,11 @@ export async function runHostOperationsCommand(args: readonly string[]): Promise
   }
   if (action === "get") {
     if (!target) throw new Error("host-operations get requires an operation id.");
-    const operation = await client.hostOperations.get(target);
+    const operation = (yield* integrationValue(client.hostOperations.get(target)));
     print({ operation }, () =>
       `${operation.operationId}\t${operation.operation}@${operation.version}\t${operation.agent?.status ?? "unknown"}\t${operation.actorId}`);
     return;
   }
   throw new Error(`Unknown host-operations command "${action}". ${usage}`);
-}
+}));
+  }

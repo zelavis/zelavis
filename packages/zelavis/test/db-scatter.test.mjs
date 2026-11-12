@@ -5,8 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
 import {
-  and, edge, equals, makeDatabase, partitionMapFor, term,
-  TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE,
+  and, COLLECTION_NAMESPACE, edge, equals, makeDatabase, partitionMapFor, term,
 } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { asSeq } from "../dist/db/index.js";
@@ -164,24 +163,26 @@ test("a raw scatter names matches by shard and identity, not by bare identifier"
     Effect.gen(function* () {
       yield* seed(db);
 
+      // Every tenant's "posts" collection record carries this posting.
       const result = yield* db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
       });
 
-      // Every shard allocates from its own dense space, so the same number can
-      // come back from several shards naming different objects. Only the pair
-      // is a name.
+      // Every partition allocates from its own dense space, so the same number
+      // comes back from several places naming different objects. Only the
+      // shard, the partition and the number together are a name.
       const shards = new Set();
       for (const match of result.rows) {
         shards.add(match.shard);
-        assert.equal(match.namespace, TENANT_NAMESPACE);
-        assert.ok(TENANTS.includes(match.key));
+        assert.equal(match.namespace, COLLECTION_NAMESPACE);
+        assert.equal(match.key, "posts");
+        assert.ok(TENANTS.includes(match.tenant));
       }
       assert.equal(result.rows.length, TENANTS.length);
       assert.ok(shards.size > 1);
 
-      const pairs = new Set(result.rows.map((match) => `${match.shard}:${match.seq}`));
-      assert.equal(pairs.size, result.rows.length, "shard and identifier together are unique");
+      const names = new Set(result.rows.map((match) => `${match.shard}:${match.tenant}:${match.seq}`));
+      assert.equal(names.size, result.rows.length, "shard, partition and identifier together are unique");
 
       // The point of carrying the shard: the bare identifiers really do
       // collide. Without this the test would pass on data where they happened
@@ -232,7 +233,7 @@ test("a shard the map does not have is refused, not quietly skipped", async (t) 
       // fourth would answer a narrower question than the caller asked, and
       // return it looking exactly like the answer to the one they did.
       const refused = yield* Effect.flip(db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
         shards: ["s0", "typo"],
       }));
       assert.equal(refused._tag, "UnknownShard");
@@ -240,7 +241,7 @@ test("a shard the map does not have is refused, not quietly skipped", async (t) 
       assert.deepEqual([...refused.known], ["s0", "s1", "s2", "s3"]);
 
       const named = yield* db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
         shards: ["s0", "s2"],
       });
       assert.equal(named.shards, 2);
@@ -284,7 +285,7 @@ test("the identifier an edge names really does mean something else next door", a
 
       const enc = new TextEncoder();
       const put = (shard, seq, name, edges) =>
-        stores.get(shard).transact((txn) =>
+        stores.get(shard).partition("x").transact((txn) =>
           txn.put(
             asSeq(seq),
             enc.encode(JSON.stringify({ name })),

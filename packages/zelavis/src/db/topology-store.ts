@@ -1,5 +1,5 @@
 import { isString, isNonNegativeInteger, isPositiveInteger, objectFields, arrayOf, recordOf, literal, parseJson } from "../core/json-validation.js";
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import {
   PartitionMapInvalid,
   PlacementCatalogInvalid,
@@ -7,10 +7,8 @@ import {
   RangeNotEmpty,
   SubdivisionInvalid,
 } from "./errors.js";
-import { isReservedCollectionName, isValidCollectionName } from "./naming.js";
-import { equals } from "./query.js";
-import type { ObjectStoreApi } from "./store.js";
-import { TENANT_COLUMN, TENANT_MARKER } from "./tenancy.js";
+import { isReservedCollectionName, isReservedTenantId, isValidCollectionName } from "./naming.js";
+import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import {
   GLOBAL_SHARD,
   PART_SEPARATOR,
@@ -102,19 +100,22 @@ export const validatePartitionMap = (map: PartitionMap): PartitionMapInvalid | u
   return undefined;
 };
 
-/** Tenants known to hold data on this shard. */
-export const tenantsOn = (store: ObjectStoreApi): Effect.Effect<ReadonlyArray<TenantId>> =>
-  Effect.gen(function* () {
-    const seqs = yield* Stream.runCollect(store.resolve(equals(TENANT_COLUMN, TENANT_MARKER)));
-    const out: TenantId[] = [];
-    for (const seq of seqs) {
-      const object = yield* store.read(seq);
-      if (object !== undefined) {
-        out.push((parseJson(dec.decode(object.bytes), objectFields<{ tenant: string }>({tenant: isString}))).tenant);
-      }
-    }
-    return out.sort();
-  }).pipe(Effect.orDie);
+/**
+ * Tenants holding data on this shard: every partition with anything in it,
+ * but the reserved ones — the App's replicated records and the topology,
+ * which are never a tenant a move takes.
+ *
+ * Read from the keys themselves, one seek per partition, rather than from a
+ * marker some layer has to remember to write. Anything a partition holds is
+ * the tenant's: its records, but also its log, its identifier counter, its
+ * receipts, its time series and its outbox. A tenant whose last collection is
+ * gone still has those, and a move that left them behind would let the tenant
+ * start its identifiers and log positions over on its new shard, where every
+ * cursor handed out before would name a different event.
+ */
+export const tenantsOn = (shard: ShardStoreApi): Effect.Effect<ReadonlyArray<TenantId>> =>
+  Effect.map(shard.partitions, (partitions) => partitions.filter((partition) => !isReservedTenantId(partition)).sort())
+    .pipe(Effect.orDie);
 
 export const loadPartitionMap = (
   store: ObjectStoreApi,
@@ -416,7 +417,7 @@ export interface RangeMove {
 export const subdivisionFor = (input: {
   readonly topologyStore: ObjectStoreApi;
   readonly initial: SubdivisionCatalog;
-  readonly shards: ReadonlyMap<ShardId, ObjectStoreApi>;
+  readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
   readonly mapNow: () => PartitionMap;
 }): SubdivisionApi => {
   let catalog = input.initial;
@@ -541,7 +542,7 @@ export interface TopologyApi {
 export const topologyFor = (
   topologyStore: ObjectStoreApi,
   initial: PartitionMap,
-  shards: ReadonlyMap<ShardId, ObjectStoreApi>,
+  shards: ReadonlyMap<ShardId, ShardStoreApi>,
   catalog: PlacementCatalog,
   subdivisions: SubdivisionCatalog,
 ): TopologyApi => {

@@ -13,7 +13,7 @@ const marker = openSync(markerPath, "a");
 
 await Effect.runPromise(
   Effect.scoped(Effect.gen(function* () {
-    const store = yield* makeNodeSqliteStore("acme", directory);
+    const store = (yield* makeNodeSqliteStore("acme", directory)).partition("acme");
     writeSync(marker, "sealing\n");
     fsyncSync(marker);
     yield* store.sealPostings;

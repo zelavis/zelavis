@@ -1,112 +1,113 @@
-# @zelavis/ui
+# @zelavis/ui, the Zelavis dashboard
 
-Zelavis dashboard UI packaged as a React Router 8 SPA and a Zelavis system
-service.
+The dashboard of every Platform, built with Fuzor: an HTML-first shell, a Swiper Element sidebar, compiled server views and a native database workspace with three MIT grid libraries. Every page is native; the original React dashboard (`zelavis-ui-legacy`) is kept only as a reference and is no part of the build.
 
-The app is designed to be served either as a standalone dev server or mounted by
-the Zelavis runtime under the dashboard root path, which defaults to `/zelavis`.
-That root opens the Projects overview; project-local dashboard pages are routed
-under `/zelavis/projects/:projectId/*`.
-The global marketplace and server management routes live outside projects, while
-project-specific plugins install through `/zelavis/projects/:projectId/marketplace`.
-Managed app projects such as WordPress, static sites, or generic apps use
-hosting-style navigation instead of Zelavis-native Auth/Database/Content plugin
-navigation.
+The package ships its built output only (`dist`, `.fuzor/web/dist-spa`, `.fuzor/dist-backend`, `.fuzor/fuzor-build.json`). An installation never needs Fuzor: the server entry is bundled so it imports only `effect`, which the Platform provides.
 
-## Dashboard Boundary
+## Build and run
 
-The dashboard is a client of Zelavis endpoints. It should never be the only
-place where a platform action exists.
-
-When adding dashboard features, put authoritative behavior behind a server
-capability and endpoint first, then have the UI call that capability. Security
-checks, resource metrics, domains, backups, service installs, project settings,
-database mutations, and hosting actions must stay scriptable outside the
-dashboard through the API.
-
-## Mobile-Ready Slots
-
-Dashboard feature surfaces should be built as reusable workspace or panel
-components, then composed by routes. The desktop content area and future
-mobile/sidebar slide slots should share those same components instead of
-forking behavior.
-
-Below the dashboard desktop breakpoint (`lg`), the sidebar becomes the app shell
-and the desktop content inset is hidden. Phone and smaller tablet experiences
-should therefore come from slide navigation and route slots, not from squeezing
-the desktop workspace into a narrow viewport.
-
-Use `DashboardSlotLayout` and `DashboardSlot` from
-`app/components/DashboardSlots.tsx` when a route naturally breaks into
-mobile-ready areas such as:
-
-- `overview`
-- `main`
-- `create`
-- `edit`
-- `inspect`
-- `settings`
-
-Routes may declare `handle.slots` metadata so the responsive sidebar/mobile app
-shell can later discover which pieces can be mounted into slide slots. Keep
-data loading in route `clientLoader`s or resource routes, not inside duplicated
-mobile-only components.
-
-## Assistant UI
-
-The Assistant workspace uses the official assistant-ui Thread component with a
-custom Zelavis runtime adapter. It does not use the Vercel AI SDK or Assistant
-Cloud. Threads and messages come from the Platform OS runtime API, and the same
-chat workspace is mounted in the desktop content area and compact mobile
-sidebar slots. The utility navigation follows Projects -> project -> Chats so
-mobile does not need a separate chat navigation model.
-
-Keep assistant-ui on the presentation side of the boundary. Provider calls,
-thread persistence, tools, approvals, and privileged operations belong behind
-Zelavis capabilities and endpoints.
-
-## SDK registration
-
-`package.json` is the source of package identity and static frontend metadata.
-The `@zelavis/ui/service` entry exports `register`, which the standard
-`loadPluginPackage` loader calls once per load. It uses:
-
-- `zelavis.createAPI` to define the local shell rendering API.
-- `zelavis.plugins.ui.menus.create` to declare its dashboard menu.
-- `zelavis.frontend.configure` to attach the shell and development URL.
-
-`@zelavis/ui/frontend` supplies the host adapter, passing runtime configuration
-and trusted scope to the loader. The runtime mounts the resulting frontend at
-`/zelavis` by default. There is no parallel dashboard service factory or
-exported metadata object. Cached ESM modules are safe to load in another runtime:
-the register hook runs again with that runtime's configuration.
-
-## Development
-
-```bash
-pnpm --filter ./packages/zelavis/services/zelavis-ui dev
-pnpm --filter ./packages/zelavis/services/zelavis-ui dev:mounted
+```sh
+pnpm --filter @zelavis/ui build        # Fuzor build, then the service and frontend in dist/
+pnpm --filter @zelavis/ui typecheck
+pnpm --filter @zelavis/ui test         # unit tests
+pnpm run ci:ui                         # browser suites against throwaway Platforms (from the repository root)
 ```
 
-`dev:mounted` sets `ZELAVIS_UI_BASE_PATH=/zelavis/` so generated assets and
-client routes match the runtime-mounted dashboard path.
+**Which Fuzor.** On the owner's machine the build uses their own checkout (`FUZOR_DIR`, default `../fuzor` beside this repository), rebuilds it first when its sources are newer than its `dist`, and points `node_modules/fuzor`, `vite` and `typescript` at it. Without a checkout it uses the pinned `fuzor` from npm; `ZELAVIS_FUZOR=npm` forces that (after `pnpm install` restores the links). Either way `.fuzor/fuzor-build.json` records the version, and for a checkout its commit and a digest of its uncommitted changes. See [scripts/fuzor-source.mjs](scripts/fuzor-source.mjs).
 
-## Build And Validation
+**Mounting.** One build mounts at any root path. It is compiled against the placeholder root `/__zelavis__` ([app/mount.ts](app/mount.ts)) and [src/mount-rewrite.ts](src/mount-rewrite.ts) replaces it with the Platform's `rootPath` in the assets it serves and in what the server entry receives and answers. The dev server has no adapter in front of it and mounts at `/zelavis`.
 
-```bash
-pnpm --filter ./packages/zelavis/services/zelavis-ui typecheck
-pnpm --filter ./packages/zelavis/services/zelavis-ui test
-pnpm --filter ./packages/zelavis/services/zelavis-ui build
+**Development.** From the repository root, `pnpm dev` runs a Platform with this package's Fuzor dev server. In the package, a self-contained launcher starts its own isolated Platform:
+
+```sh
+cd packages/zelavis/services/zelavis-ui
+node scripts/dev.mjs                  # Platform + Fuzor dev server, isolated test data
+node scripts/dev.mjs --embedded       # the built dashboard served by the Platform, no dev server
+node scripts/dev.mjs --runtime-url=http://127.0.0.1:3000   # attach to a running Platform
 ```
 
-The app uses React Router route config in `app/routes.ts`; route modules live in
-`app/routes/*`. Keep route wiring there rather than introducing generated router
-trees or framework-specific route shells.
+It prints the addresses and the first-owner token. Defaults are ports 3200/3201; busy ports advance within a bounded range, and it never kills existing listeners. Optional flags: `--port=3200`, `--ui-port=3201`, `--data-dir=/absolute/test/data`.
 
-Key route scopes:
+## Pages
 
-- `/zelavis` for Projects
-- `/zelavis/marketplace` for Project recipes presented as apps and starters,
-  plus templates and server provider plugins
-- `/zelavis/projects/:projectId/*` for project-local pages
-- `/zelavis/server/*` for domains, backups, logs, and server operations
+Every route in [app/dashboard-routes.ts](app/dashboard-routes.ts) is a native page: a screen function in [app/screens.ts](app/screens.ts) or a module it calls (`host-pages`, `fabric-pages`, `projects-pages`, `project-pages`, `content-pages`, `storage-pages`, `workloads-pages`, `settings-pages`, `marketplace-pages`, `auth-pages`, `assistant-pages`). Pages are drawn from the DOM builders in [app/dom.ts](app/dom.ts) and [app/page-kit.ts](app/page-kit.ts), read what they need from the Platform's endpoints with Effect, and run actions through `context.run`.
+
+Platform Auth and Project Backend → Auth expose the runtime's registration setting.
+Login offers Create account while password signup is enabled. New customers enter
+an empty Projects view until assigned a view grant. Platform and Project Users
+offer conditional Edit access drawers. The shell reads caller authority from
+`/runtime/access` to filter menus and actions.
+
+A page with live state is a `fuzor-island` whose module owns its state and cleans up with the page: the terminal, the media gallery, the schema builder, the Assistant conversation, the rich text editor (Lexical, without its React bindings), the code editor (CodeMirror) and the update card. React remains only where a library needs it: the Glide Data Grid.
+
+Server Resources and both Marketplace scopes use Fuzor’s declarative URL-backed views (`data-fuzor-view-query`, `data-fuzor-view-value`, `data-fuzor-view-values`). The router discovers and updates these views automatically, including Back/Forward, without a page-specific updater. The dashboard uses `router.isViewNavigation` to retain any such mounted view when only its declared query keys change. Undeclared data filters still reload their screen; there is no route or parameter allow-list for individual pages.
+
+Fuzor owns the canonical browser URL, mounted route matching, history, the outer shell, footer utilities and the persistent Swiper navigation. The sidebar's menus are built in [app/navigation-menu.ts](app/navigation-menu.ts) from the menus services register, the capabilities a Project has, its content types, tables and workloads, and what the signed-in principal may use. The shell also carries the update banner, so **Update now** is one click from any page.
+
+The canonical Project Database route is native Fuzor server rendering with three MIT grids; **Create table** is a `fuzor/ui` dialog opened by the sidebar's Create Table item through `databaseDialog=create-table`.
+
+## Fuzor changes this experiment required
+
+Fuzor now accepts static SPA `clientRoutes` that map runtime patterns such as `/projects/:projectId` and `/projects/:projectId/:section*` to compiled templates. Static pages take priority; wildcard runtime routes leave the Vite asset directory and script/style requests to asset serving; Fuzor owns navigation, history, route parameters, mounted paths, island cleanup and not-found boundaries. Runtime project IDs are never enumerated at build time. Template mappings work alongside request-rendered HTML server components in SPA builds (a pattern that a request-rendered route also matches is left out of the mapping, see `app/routes.ts`); MPA builds refuse the mapping option. This needs Fuzor with the `clientRoutes` + server-component support, which Fuzor 0.5.2 provides. Data flows are cancellable Effect v4 operations in [app/api.ts](app/api.ts) and [app/screens.ts](app/screens.ts), rather than a second application router.
+
+Fuzor also exposes declared `routeTree` metadata through `matches()` and `subscribeMatches()`, inspired by React Router’s active match hierarchy. Matches carry `id`, app-relative `pathname`, `pattern`, ancestor-specific `params` and application-owned `handle`; they do not claim loader data. The generated SPA client exports `ready`/`router`, allowing [app/client.ts](app/client.ts) to mount one persistent shell outside the route outlet. [app/routes.ts](app/routes.ts) declares dashboard handles and [app/sidebar.ts](app/sidebar.ts) connects those handles to Swiper Element. Swiper is linked from the existing UI installation and bundled locally, with no CDN. Mouse drag simulation is disabled so small trackpad movements do not cancel navigation clicks; actual touch swipes still control mobile panels.
+
+Fuzor’s framework and server examples were upgraded to stable Effect 4.0.1, verified against npm on 2026-10-07. Reactivity/HTTP imports and Vite’s dependency optimizer use the stable APIs. Zelavis’s own Effect pin stays unchanged.
+
+## Server components
+
+The native Database workspace is one Fuzor HTML server component, [components/database-workspace.html](components/database-workspace.html), used by the request-rendered page `pages/projects/[projectId]/database`. Its `<script server>` loader calls [app/database-reads.ts](app/database-reads.ts): a bounded, cancellable read that forwards the current session to the existing authenticated Platform/project APIs, including the exact Project proxy. It cannot choose an upstream from the caller's Host header. Zelavis remains the authority for bootstrap, authentication, permissions and database mutations.
+
+Fuzor generates everything around it: the request route, SPA template mapping, lazy handlers, public seeds and the version-2 read stream. There is no view registry, fragment, handler file or `serverComponents` option. The one thing the component adds is `fuzor.effect("draw")`, which hands the current public answer to [app/database-workspace.ts](app/database-workspace.ts); that module mounts the grid, inspector and schema editor once and updates them in place. Refresh is a client action that revalidates the route. The Platform routes only GET to the dashboard shell, so the component declares no server action. The shell relearns its sidebar context from a `zelavis:database-drawn` event after each draw. The mount adapter rewrites the `x-fuzor-page` header the same way it rewrites the request path.
+
+The public answer is bounded (2 MiB); a page of records beyond 1.5 MB reports a smaller-page-size message. Selection, filters and sidebar state live in the URL, and a query change refreshes the loader.
+
+The compiled HTML supplies the stable workspace frame and the SPA stream reveals the answer. The workspace module retains the inspector, staged records and grid owner during fresh server props. Glide updates its existing React root; Tabulator replaces data on its existing table; VTable updates the existing canvas table. Dirty records retain their original expected versions, so a server refresh cannot silently turn a stale edit into an overwrite. Selection/filter/sort/sidebar state remains in the URL. Changing Project/Tenant/table/panel deliberately remounts the workspace; navigating out of the Database/Content branch releases it. An in-progress vendor cell editor is not claimed to be resumable. Staged records and incomplete inspector text survive hard reloads in tab-local `sessionStorage`, partitioned by opaque session identity, Project, Tenant and table. Original record versions remain save preconditions. Recovery is bounded at 1 MB total, 250 records per table, 32 tables and 24 hours, and ends when the tab closes. Save/discard remove journaled entries; sign-out clears this tab's journals. Expired/malformed/full/denied storage produces visible recovery errors. URL selection remains separate from record contents; credentials are never journaled.
+
+`node scripts/build.mjs` now writes `.fuzor/web/dist-spa` and `.fuzor/dist-backend`. Embedded serving passes the generated Fuzor handler's `Response.body` stream through this package's existing frontend shell registration, retaining cancellation and backpressure. The ordinary React dashboard and Zelavis core do not need changes. `ZELAVIS_DEV_SERVER` identifies the operator-controlled Platform origin for server reads; the launcher supplies it for both dev and embedded modes.
+
+## Service pages and schema editing
+
+Service menu HTML pages mount through the runtime's generated asset endpoint.
+The iframe fills the workspace and its document owns the scroll. Pages can link
+the shared `service-page.css` to use the design tokens. The injected service-page
+runtime receives the dashboard's resolved light or dark choice from its parent
+and sets `data-theme` on the page's root. Custom styles can use the same attribute.
+A standalone page falls back to the browser's preferred scheme.
+
+Trust comes only from runtime `scope`: system pages retain same-origin behavior, while extension pages have an opaque iframe origin. The Effect-scoped broker authenticates the source window and confines calls to that service's namespace, rebased through the exact Project proxy where applicable. Requests allow five JSON API methods, refuse traversal, external targets and redirects, and are bounded at eight in flight, 1 MB per body/response and 30 seconds. Leaving the page releases the listener and aborts pending work. A subsequent iframe document navigation closes its grant; refreshing the dashboard opens the selected entry again. Broker responses never forward cookies or authentication headers. Registered service paths survive direct reloads and are represented in the sidebar; workspace menu contributions also preserve their nested routes and search values.
+
+Native Database **Collection schema** opens the schema workspace (`databasePanel=schema`, with optional `schemaVersion` in the URL). It builds fields, reorders/removes them, accepts all public field metadata through typed JSON, saves immutable new versions, and explicitly activates historical versions for future writes. Schema drafts use a separate bounded journal partition and retain incomplete JSON and their source version through refresh/reload. They share record draft retention/storage limits and sign-out cleanup. Mutation failures revalidate persisted state while retaining the draft.
+
+Selected records expose text, numeric, boolean, select and multi-select controls. Rich text is currently HTML source; references, file descriptors, JSON and repeaters use JSON controls. Representable edits feed the existing inspector/journal, retain original optimistic record versions and are staged/saved through the same database operation. Saves preserve later unstaged text and advance its version only from the acknowledged own write; discard resets its controls and journal. Invalid structured field text is reported as not yet recoverable; complete it or use the JSON inspector, which can journal incomplete text. For rich-text visual editing and dedicated relation/media/repeater widgets, open Content Studio or Full database tools; those use the existing feature islands. No new privileged platform operation was added.
+
+## Validate
+
+```sh
+node scripts/typecheck.mjs
+node scripts/build.mjs
+node --test tests/*.test.mjs
+node scripts/test-server-views.mjs
+node scripts/test-route-parity.mjs
+node scripts/test-embedded-server-views.mjs
+node scripts/test-embedded-server-views.mjs --dev
+```
+
+The tests also validate explicit sidebar ancestry, parent landing URLs, encoded Project IDs, managed capability visibility, Tenant table selection and the complete Projects list.
+
+The tests validate the real frontend registration and built assets, malformed API responses, persisted deletion state, exact project proxy routing, permission failures and request cancellation. Browser verification should cover setup/login, project creation and start/stop, query filters with Back/Forward, deep-link reloads, mobile navigation and both dev/embedded serving. Use disposable data for lifecycle testing.
+
+## Database grid comparison
+
+The native Database workspace renders Project records in Glide Data Grid (MIT, exact-pinned) inside a Fuzor React island. Filtering (`databaseWhere=<field>|<op>|<value>`) and sorting (`databaseSort=<field>:asc|desc`) are URL state and run in the database over the whole table, so Glide only receives the page the server returned. Paging uses the database cursor (`POST …/database/documents/:collection/page`, `client.data.documents.page`, `zelavis data page --after`): the URL carries `databaseAfter`, a page can only continue, and Previous page walks the cursors visited in the current tab. The Tenant picker lists every Tenant, marking those whose tables were all dropped (they keep their history). A refused query, such as an unindexed field, is shown in place of the records. Cells are typed per value: booleans are checkboxes, numbers right-aligned, strings edit as plain text, and null, missing and structures edit as JSON literals (null and missing are shown faded and stay distinct). Headers carry a type icon from the loaded values, columns size to their content, clicking a header sorts in the database (ascending, descending, off), and the Columns menu hides fields through `databaseHide`. The grid takes the dashboard's own light and dark colors when it renders. Editing stages values with version-checked saves.
+
+The grid libraries are pinned devDependencies of this package in the workspace lockfile; their licenses are checked at build time.
+
+The server-view browser test uses an isolated authenticated API fixture to exercise all three MIT grids, refreshed server data, retained drafts/DOM/sidebar identity, failed-save retention, retry, staged and unstaged hard-reload recovery, prototype-named database fields, mobile Back navigation and permission failures. It also qualifies schema draft/version controls, typed record reload recovery, iframe sandboxing and both scoped service brokers, assistant approvals and inert reply text, exact-version marketplace installs in both scopes, Project uploads and provider configuration controls. The embedded and dev tests create a real disposable Platform and native App, qualify setup/login gates, render actual records, refresh a staged edit and verify its persisted database value, then create/activate an actual schema and save typed record edits after reload. They choose free ports and release their own servers, browser and temporary data.
+
+
+The dashboard frame is authored in `index.html`, with static header, sidebar, workspace and footer markup. Client startup adopts those elements, and loading/errors are confined to content slots. Native refresh therefore keeps the layout visible while scripts or startup data are pending; saved appearance is applied before first paint. Browser qualification holds scripts and data separately on desktop/mobile and checks frame identity and geometry before and after startup.
+
+**Project Domains** connects an exact hostname to a Project after DNS TXT
+proof. Customers see the screen and its controls according to their scoped
+grants. Server Domains reads the global Edge inventory.

@@ -1,10 +1,9 @@
 import { Effect } from "effect";
 import type { DocumentsApi } from "./documents.js";
 import {
-  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnindexedGeometry, UnknownReference,
-} from "./errors.js";
+  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnindexedGeometry, UnknownReference, SchemaActivationRefused, TenantMoving } from "./errors.js";
 import type { Json, JsonObject } from "./json.js";
-import type { SchemasApi } from "./schemas.js";
+import type { SchemasApi } from "./schema-activation.js";
 import {
   validateDocumentData,
   type CollectionFieldEntry,
@@ -147,7 +146,7 @@ export interface MigrationsApi {
   ) => Effect.Effect<
     MigrationResult,
     | SchemaNotFound | SchemaMigrationBlocked | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry
+    | UnindexedGeometry | SchemaActivationRefused | TenantMoving
   >;
 }
 
@@ -293,10 +292,12 @@ export const migrationsFor = (
       const differences = differencesBetween(source.fields, target.fields);
       const keep = new Set(target.fields.map((entry) => entry.name));
       // No `similar` clause here either; see `relatedFilters`.
+      // Every document, unfiltered and unordered: nothing here needs an index.
       const docs = yield* documents.findMany({ collection }).pipe(Effect.catchTags({
             UnembeddedCollection: Effect.die,
             InvalidVectorQuery: Effect.die,
             UnknownEdge: Effect.die,
+            UnindexedField: Effect.die,
           }));
       return {
         source,

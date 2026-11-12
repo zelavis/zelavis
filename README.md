@@ -332,7 +332,7 @@ Current database architecture includes:
 - A document API for create, read, query, update, and delete operations.
 - An in-memory driver for development and tests.
 - Optional SQL capability contracts.
-- SQLite and libSQL adapter packages.
+- SQLite, RocksDB and LMDB storage engines.
 - `defineDatabaseService(database)` for mounting database routes through `zelavis/core`, with documents exposed as a nested service.
 
 The core implementation is intentionally portable and does not depend on native bindings or host-specific storage APIs. Durable database drivers live behind adapter packages.

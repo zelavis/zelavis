@@ -1,5 +1,352 @@
 # zelavis
 
+## 2.0.0-alpha.44
+
+### Patch Changes
+
+- 8a1210d: Verify installed engines on a worker thread, so the engine checks before a data migration no longer wait behind a busy Platform's request handling: the combined data migration and recipe upgrade of a managed WordPress Project fell from 75–89 s to about 55 s in the update gate. On a native App, **Manage version** now moves to an engine that writes another data layout with **Stop, migrate and switch** (the restarting upgrade) instead of the plain switch, which the Platform refuses across layouts. A call to a remote shard's Agent is now refused at its 15 s deadline even while it waits for a pooled connection; before, a silent Agent could hold a write until the Gateway gave up at 30 s.
+
+## 2.0.0-alpha.43
+
+### Minor Changes
+
+- 0f0457f: Accounts and media can be imported from other systems: `POST /auth/accounts/import` (`client.auth.admin.importAccounts`, `zelavis auth import-accounts`) carries over profiles and PBKDF2-SHA256 passwords (Zelavis or Django format) and lists accounts whose hashes need a reset, and `POST storage/import` (`client.storage(projectId).import`, `zelavis storage import`) copies files from an S3-compatible bucket in resumable, checksummed pages.
+- 0f0457f: A branch can be merged back into the Tenant it came from: per document from the branch point, applying what only the branch changed through the source's own writes, with conflicts (changed differently on both sides) settled explicitly per document and nothing written while one is unsettled. Available as `db.mergeBranch`, `POST …/tenants/:id/merge`, `client.projects.mergeTenantBranch`, `zelavis projects merge-branch` and the dashboard's Merge back; the Tenants overview reports `branchedFrom`.
+- 0f0457f: Count collection documents in constant time using namespace counters maintained
+  atomically with each record change. Replication, restore, copy, rollback, replay
+  and reindexing maintain the same counts. The pre-release shard layout is now v4;
+  older development layouts are explicitly refused and must be recreated.
+- 4f6719c: Add holds on a partition's log. A reader that copies records and then follows the log takes a hold (`store.holdLog({ id, position, ttlMillis })`, `releaseLog`), and `compact` goes only as far as the lowest live hold and reports where it was held (`heldAt`) instead of refusing, so a long copy of a busy Tenant is not started over by every compaction pass. A hold is renewable, only ever raised, ends with its time (at most ten minutes) and is limited to 64 a partition; one below the compaction point is refused (`LogCompacted`). Branching a Tenant, a moved or followed copy and the export stream hold their source this way. Holds are in-process like the writer and only prevent starvation: the readers' own detection stays what keeps them correct.
+- 0f0457f: Persist cross-Tenant index refresh timestamps and failures across restarts. Add a native dashboard page for defining, listing, refreshing, querying, paging and dropping indexes through the shared Project API.
+- d57e446: Add cross-Tenant indexes to `zelavis/db`. `db.crossTenantIndexes` keeps one collection's documents from every Tenant in a partition of its own, fed from each Tenant's event log through a per-partition cursor that is committed with the entries it produced, so a live query across Tenants reads one partition instead of asking every Tenant. A Tenant that moves carries on from its cursor; one compacted past it, or removed and written again, is derived again from its records. Plugins' `service:` Tenants are never read. Indexes refresh in the background shortly after writes and on a sweep, and are available as HTTP routes under `database/cross-tenant-indexes`, `client.crossTenantIndexes(projectId)` and `zelavis cross-tenant-indexes`. Defining one needs the new `database.indexes.manage` permission, carried by `project.runtime.manage`; querying needs `database.inspect`.
+  
+  Partitions now record an `incarnation` with their first write, kept by a move or a follower's copy and new after a partition is removed, exposed in `PartitionStats`.
+  
+  A shard a move has left now keeps the partition-map version that moved the Tenant, and refuses a call routed by an older map with `TenantRelocated` instead of answering it from an emptied partition.
+- 0f0457f: Separate App schema and collection/index definition authority (`project.data.define` / `database.define`) from record writes. Delegate exact data grants through the Project Gateway so POST queries work for read-only clients. Add the bounded Tenant change feed to HTTP, SDK and CLI, and distinguish collection updates/deletion in domain events. Allocate bulk-write identifiers and idempotency receipts in the data transaction instead of committing each allocation separately.
+- 0f0457f: Collections can be filled from another system's CSV, NDJSON or JSON export: `imports.plan` (dry run with row-numbered problems and a checksum), `imports.run` (bounded, idempotent, resumable batches) and `imports.verify` (content and checksum comparison for cutover), through the SDK, `POST …/documents/:collection/imports/plan|run|verify` and `zelavis data import-plan|import-run|import-verify --file`.
+- 4f99eca: A Project's data layout can change between releases, and the upgrade migrates it. Engine releases declare the data layout they write. A Platform update never moves a Project across a layout
+  change: a native App keeps its engine, and a managed app's bound App stays on the engine that wrote its data (also after a restart), and its Project reports `dataLayout` so its card offers
+  the upgrade even when its recipe is current. **Update recipe** then stops the Project, exports its database with the engine that wrote it, recreates collections, documents and schemas with the
+  current one, verifies them, and swaps them in with the original data kept as `data.format-<n>-<time>`; a failure puts the original back. The response carries a `dataMigration` report. Document
+  versions, change history and event positions restart, and idempotency receipts are dropped. The migration needs free space of about 3.5 times the data and fails, naming them, on record kinds it
+  cannot recreate yet.
+  Time series are not carried (their points are derived from the restarted event log; register the series again and rebuild it). The kept data is listed and removed from each Project card, over
+  HTTP (`GET|DELETE /runtime/projects/:id/retained-data`), the SDK (`projects.retainedData`, `removeRetainedData`) and the CLI (`zelavis projects retained-data|remove-retained-data`).
+- 0f0457f: Database images record a SHA-256 digest per shard and can be verified, deleted and pruned to the newest N, through HTTP, the SDK (`verifyDatabaseImage`, `deleteDatabaseImage`, `pruneDatabaseImages`), the CLI (`verify-image`, `delete-image`, `prune-images`) and a new Database → Images dashboard page.
+- 4f6719c: Add database images: a physical backup of the whole database made through the ordered key-value interface alone, so any engine images into any other. `db.maintenance.image(destination)` copies every shard (topology and global included) from one snapshot each into an empty engine; on a Node host `POST database/maintenance/images` (`{ name, engine? }`), `GET database/maintenance/images`, `client.projects.createDatabaseImage` and `databaseImages`, and `zelavis projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb|libsql]` and `images <id>` write it as an ordinary shard directory under the database's `images/` folder, named, renamed into place only once whole. An image opens as a database in the engine it was written in. There is deliberately no restore route: replacing the live database is the operator's, with the Project stopped. All need `database.backup`.
+- 0f0457f: Sagas across Tenants run on Effect's workflow model with a durable engine recorded in the database (`db.workflowEngine`): each completed step is recorded and never run again, compensations run on failure, unfinished executions resume after a restart, `tenantWriteActivity` writes each Tenant exactly once and `startFromOutbox` starts executions from a Tenant's outbox. Recorded executions are listed through `GET …/database/workflows/executions`, `client.projects.workflowExecutions` and `zelavis projects workflows`.
+- 4326e6b: Give every Tenant its own storage partition in `zelavis/db`. Everything a Tenant stores (records, postings, its event log, identities, counters) now lives in one key range of its shard, with its own identifiers, its own log positions and its own writer. Isolation follows from the key layout rather than from each lens remembering to scope itself, and a transaction cannot touch another Tenant's keys. Shards written by earlier builds are refused with a format error: delete and recreate development databases.
+  
+  Confine full-text search and geometry to the Tenant and collection being queried. Term and cell postings were filed under the bare field path, so a search or a geometry filter with no other clause could return another Tenant's documents, or documents from another collection, and fuzzy search matched another Tenant's words.
+  
+  Stop a Tenant's event stream from stalling behind other writes. `events.read` returns `{ events, cursor, more }`: `cursor` moves past every log entry the read looked at, matching or not, and one read looks at a bounded stretch of the log. Projections and the KV change feed (`kv.namespace(name).changes()`, `POST …/kv/:namespace/changes`, `zelavis data kv-changes`) use the same page shape. Event ids are `${tenant}:${record}:${version}` and `nodeId` is the node that accepted the write, so both survive a move.
+  
+  Move Tenants verbatim. A move seeds the destination from a consistent image of the source (its records, then the log written while they were copied), keeps identifiers and log positions, fences the source inside the final commit, and keeps only the fence on the old shard, so cursors, projection checkpoints, idempotency receipts and graph links carry on. Backup export is consistent under concurrent writes, and a restore carries graph links to the new identifiers instead of naming whatever the destination gave those numbers to.
+  
+  Stop counters from wrapping. Identifiers are 48-bit and log positions and meta counters 64-bit; a full partition refuses with `PartitionExhausted` instead of reusing a number. A deleted record leaves a tombstone, so re-applying an old put no longer brings it back, and a follower's `apply` refuses a gap (`EventGap`) or a different event at a position it already holds (`ReplicaDiverged`).
+  
+  Bound reads and upkeep. A query reads each clause up to a cap and checks broad clauses per candidate against the record instead of reading them in full; an update rewrites only the postings that changed; `measure` is sparse. Sealing, reindexing, rebuilding, snapshots and compaction write in bounded batches; a rebuild or reindex cut off by a crash leaves the partition refusing reads (`LensesRebuilding`) until the database opens and finishes it, and a snapshot no longer holds the writer while it copies. Maintenance status is reported per Tenant partition from stored counters.
+  
+  Replicated collections may now hold graph edges between themselves; an edge to a collection that is not replicated is still refused.
+  
+  Stop reading the writer before every write. A partition keeps its revision, lens state and move fence instead of reading them, and the shard's writer generation and session, ahead of each commit; the conditional commit checks all of them, and a refused or failed commit makes the next operation read afresh. The move fence is now the partition's own and the store refuses every change behind it with `TenantMoving` (a 409 over HTTP), including time-series points, projection checkpoints and restores that previously wrote to the shard being left; it is never copied, so a moved Tenant takes writes on its new shard as soon as routing points there.
+  
+  Make time-series ingestion exact. Each batch of points now commits together with the place in the log it reached, so an ingest cut off by a crash, an engine failure or a move and then run again stores every point once; before, it duplicated the points written since the last checkpoint. `timeSeries.rebuild` builds a new generation beside the series reads use and replaces it in the same commit as its last points, so a rebuild cut off part way leaves the old series serving instead of a partly cleared one. Projection `apply` is documented as at least once and should be idempotent by `eventId`, and `projections.rebuild` clears the checkpoint before its reset, so an interrupted rebuild restarts from the beginning. `ingest`, `rebuild` and projection runs fail with a typed `TenantMoving` while a tenant is moved, a full log fails with `PartitionExhausted` (`resource: "log"`), and a move whose copy disagrees with its source fails with `TenantMoveFailed` instead of an untyped error.
+  
+  Let a collection index only the fields it queries. `createCollection({ columns })` (HTTP `columns` on collection creation, CLI `--columns`) indexes just those fields, each covering the fields below it, and `documents.setColumns` (`POST …/documents/:collection/columns`, `client.data(id).collections.setColumns`, `zelavis data set-columns`) changes the choice and rewrites the documents under it. Equality, `in`, ranges and single-field order on any other field fail with `UnindexedField` (400) instead of scanning; a reference must read a declared field. A document with 28 fields and four declared writes 47% fewer bytes on insert and stores 56% less once the log is compacted than the same collection indexing every field. A time-series mapper that throws or returns an unstorable point fails the ingest with `TimeSeriesMapFailed` (422) naming the event, and addressing a divided tenant as a whole throws `TenantDivided`, and an unknown part `UnknownPart` (both 400), instead of untyped errors.
+  
+  Read only what a page returns. `resolve(query, { after, limit })` reads the matching identifiers a window at a time from a cursor and stops once the caller has enough, so `findPage` in the default identifier order and `findMany` with a limit and no order read about a page's worth of postings and only the records they return, instead of the whole match on every call (and, for `findMany`, every matching record). A filter made only of ranges or text prefixes is driven by the collection's own postings (`within`), each document checked, and a call that spends the probe cap in checks without filling its page evaluates the filter whole instead, so thinly scattered matches cost no more than before.
+  
+  Resume an interrupted move from where it stopped: a seed marks itself unfinished until its last batch (`stats.seeding`), so a resume carries a finished copy on from the target's head and copies again only when the seed was cut off or the source has compacted past it. Restore an empty or purged tenant under the backup's own identifiers, reserving them first (`reserve`) so nothing written meanwhile can take one; a merge, or a tenant where live records hold some of them, still remaps. A backup no longer carries time-series state, which is a position in the old log, and applying an event marks its identifier taken. The documents implementation is split by concern into `document-*.ts` modules behind the unchanged `documents.ts` surface.
+- f88cb26: Emit messages with a write. `documents.write({ emit })` records each message in the Tenant's outbox in the same transaction as the batch's changes, so a message exists exactly when the change it describes does, and `outbox.emit` emits one on its own. `outbox.read({ after, limit, topic })` returns messages in commit order with the same `{ messages, cursor, more }` paging as event reads; delivery is at least once, so consumers deduplicate by message id and `outbox.remove({ ids })` what they have handled. An id the outbox holds is refused (`MessageExists`, 409) and a malformed message (`InvalidMessage`, 400). The same through HTTP (`…/database/outbox/messages`, `emit` on `…/documents/write`), the SDK (`client.data(id).outbox`, `emit` on `documents.write`) and the CLI (`zelavis data outbox`, `outbox-emit`, `outbox-remove`, `--emit`). Reading needs only data-read authority.
+  
+  Read several steps from one moment. Every engine now takes snapshots (a read transaction on a second connection for SQLite and libSQL, LMDB's read transaction, a RocksDB transaction, remote libSQL's read transaction, an immutable array in memory), and document, KV, event and time-series reads and backup exports each answer from one, so a query no longer sees a write that landed between resolving its matches and reading them. Writes and a partition's own beliefs always read the shard as it is. SQLite and libSQL engines must be files: an in-memory database has no second connection to read a snapshot from, and is refused.
+  
+  Stop binding a Tenant handle to a shard. Each operation now runs against the placement routing names as it starts, under an in-process lease, so a handle taken before a move works after it (it used to keep writing to the old shard, refused for ever, and reading it empty), and no operation spans two placements. Once routing moves, a move waits for operations still using the old shard (`drainTimeout`, default 30 seconds; past it `PlacementInUse` with routing moved, finished by `resume`) and then removes the Tenant from the old shard entirely, fence included, instead of leaving a fence there for ever.
+  
+  Count every partition with data as a Tenant on its shard. Occupancy used to be a marker written with a Tenant's first collection and removed with its last, so a Tenant holding only messages, time series or history was not moved with its range and its data was stranded on the old shard. A Tenant whose collections are all gone now stays listed, since its log and identifiers move with it.
+  
+  Keep followers level. `levelFollower` brings a follower partition level with its leader from its own head, copying it again only when carrying on cannot be exact (nothing copied, a seed cut off, a leader compacted past it, or a follower that diverged or ran ahead, each reported), and `followLeader` keeps one level until interrupted; a move uses the same driver, with bounded catch-up rounds. Event reads take an inclusive `from` cursor.
+  
+  A move's seed of a compacted source now writes the copy's first snapshot, so a moved Tenant can still `rebuildLenses`. `terms()` no longer lists a word whose postings are all tombstoned. A `purge` restore retracts a page of records per transaction instead of reading the whole Tenant into memory and committing once per record; projections and time series carry on across a restore and end where a rebuild would.
+- 0f0457f: Spread cross-Tenant indexes across bounded immutable shard placements, with
+  ordered page merging and query-bound continuations. Add geometry, vectors and
+  non-unique composite declarations through HTTP, SDK, CLI and dashboard forms.
+  Persist re-derivation markers and refuse queries after an interrupted rebuild
+  until refresh completes, instead of returning stale or incomplete entries.
+- 0f0457f: A divided Tenant is backed up whole: one file holding a backup per part (`zelavis.db-backup.divided.v1`), restored part by part into a Tenant divided the same way, with an `empty` restore checking every part before writing any. The backup routes, `client.projects.exportTenant|restoreTenant`, `zelavis projects export-tenant|restore-tenant` and the dashboard's Back up carry both formats.
+- 0f0457f: Durable entities: actors whose mailbox and state live in their Tenant's partition. `tenant.entities.send` keeps a
+  message until a handler has processed it, one at a time per entity in arrival order; a handler's document writes,
+  outbox messages, new state and reply commit with the message's processed mark, so its database effects land exactly
+  once over at-least-once delivery, across crashes. A `primaryKey` dedupes resends, `deliverAt` delays a message,
+  failed attempts are retried with a doubling pause and then marked `failed`, messages can be cancelled, and a mailbox
+  holds at most 4096 unfinished messages. `db.entities.serve` runs handlers by type; in a Project the enabled `entity`
+  workloads are the handlers. HTTP `…/database/entities/*`, `client.data(projectId).entities`, `zelavis entities`, and
+  an entity workload's dashboard page show its entities, state and mailbox and send messages. The docs gain a table of
+  what every channel promises about delivery.
+- ac78c91: Durable Workloads. A job run is a message in its Tenant's mailbox, kept until the job's code has handled it
+  (`workloads run` enqueues it, with `tenantId`, `input`, `primaryKey` and `deliverAt`). A schedule's next wake is a
+  pending message saved before it is due and armed only where the database's writer runs; a fire missed during downtime
+  runs once. An inbound webhook (`POST workloads/webhooks/:projectId/:name`) is verified by an optional HMAC secret,
+  saved before it is answered and keyed by the provider's event id, so retries are recognised. An outbound webhook
+  delivers outbox messages with topic `webhook.<name>` to its `url` at least once with an `Idempotency-Key` header.
+  Webhook secrets are write-only. The entity runner now keeps an in-memory due index and sleeps until the earliest
+  due time instead of reading every partition each second; its `sweepInterval` is a five-minute safety net. The
+  delivery-guarantees page lists each channel.
+  
+  Writer leases and follower failover. A partition's writer lease (`{ owner, epoch, expiresAt, acknowledgedHead }`,
+  changed only by compare-and-set) gates every change to the partition, so a writer that was paused past its lease is
+  refused at its first write, before any follower may be promoted. A follower is promoted only when the lease has
+  expired or been released and its copy holds the highest acknowledged position (`allowDataLoss` reports what may be
+  lost); one compare-and-set raises the epoch. `db.writerLeases.hold|standby`, `GET followers/:partition/lease`,
+  `POST followers/:partition/lease/promote|demote`, `client.followers(projectId).lease|promote|demote` and
+  `zelavis followers lease|promote|demote`. A leased partition cannot be moved or removed until released. The Fabric
+  planner never plans more than one replica of a runtime that holds a database. Inbound webhooks accept timestamped
+  signatures (`signatureScheme: "timestamped"`), and the workload runner no longer polls: it is woken by definition
+  changes, outbox commits and due times.
+  
+  The Platform serves the writer-lease authority at `/runtime/writer-leases/:partition`, with `httpLeaseStore`,
+  `client.writerLeases` and `zelavis leases` for runtimes on other hosts. `pnpm release:qualify:failover` qualifies
+  failover in separate containers (a `SIGKILL`, a partition and an unacknowledged tail). Requests to a leader are now
+  interruptible, so a follower whose leader is partitioned can still be stopped and a standby promoted.
+  
+  Followers find the new writer from the lease alone (`endpoint`, `db.writerLeases.follow`), accepting data loss in a
+  promotion needs `database.failover.accept-data-loss`, and the Platform audits every change of writer
+  (`GET /runtime/writer-lease-audit`, `client.writerLeases.audit()`, `zelavis leases audit`).
+  
+  A writer lease can name its `standby`, the one follower its acknowledgments wait for; only that follower is promoted
+  without accepting data loss (`NotDesignatedStandby`), so an acknowledged write is held by the follower that is promoted.
+  
+  Following and failing over a whole database scale with the changes, not the Tenants. The leader's change feed is a fixed
+  ring (`feed`, replacing `changes`, which read every partition on every call), partitions are listed a page at a time
+  (`partitions`), `followers.followAll` follows a database by the feed, and a Project fails over as one: a single lease
+  over the whole database (`writerLeases.holdDatabase|standbyDatabase|followDatabase`) gates every shard with one check per
+  write and always names its standby. A single write reached a follower in a median 5 ms with 500 Tenants and 6 ms with 4,000.
+  `remoteChanges` keeps its shape over the feed; `zelavis followers feed|partitions` and `client.followers(id).feed|partitions`
+  replace `changes`.
+  
+  A Project runtime's start is guarded by its whole-database writer lease: with `ZELAVIS_LEASE_AUTHORITY`, `_TOKEN`, `_NODE` and
+  `_STANDBY` set it takes the lease before its database opens (`openNodeDatabase({ lease })`), or does not open; another node's
+  lease is taken only as the lapsed writer's named standby, and a runtime superseded while serving stops.
+  
+  Projects can be lease-guarded by the Platform that starts them: with `ZELAVIS_PROJECT_LEASES_URL`, `_NODE` and `_STANDBY` set it gives
+  each Project a lease capability (an HMAC over the Project and node, `/runtime/project-leases/:scope`) that opens that Project's lease
+  for that node only, and the runtime takes the lease before serving.
+  
+  A node that follows one leader and leads a third now wakes its own followers: what a follower applies touches its change feed
+  like a write does (followers chain).
+- 0f0457f: An export page now holds at most `limit` entries in all: a divided Tenant's parts share it, a fair share each, starting each call where the last stopped, and the cursor's bound grows with the number of parts. A divided Tenant's restore that fails after earlier parts were restored answers `DividedRestoreIncomplete`, naming the parts restored and that a `purge` restore completes it.
+- 4f6719c: Add the export stream: a Tenant read out a page at a time, its records and then every change since, from an opaque cursor. Apply the entries by version; once a page says `consistent` they are the Tenant as of one log position, and the same cursor keeps delivering changes, so one operation copies, backs up and feeds. Nothing is pinned between calls but the Tenant's log, held only until the export is consistent. A divided Tenant is one export whose entries name their part, consistent once every part is. Available as `db.exportPage` and `tenant.backups.exportPage`, `POST database/tenants/:tenantId/export` (needs `database.backup`), `client.projects.exportTenantPage` and `zelavis projects export-stream [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`. A bad cursor or limit is `InvalidExport` (400); a cursor the log has outrun is `CursorCompacted`/`LogCompacted` (now 409). `backups.exportTenant` is built on the stream, so a large Tenant's backup no longer holds a read snapshot for its length. `examples/analytics-feed` is a dependency-free consumer that keeps an analytics copy current, with a guide.
+- 0f0457f: Account import carries bcrypt (`$2a$`/`$2b$`/`$2y$`, Django `bcrypt_sha256`), scrypt (Django) and Firebase Authentication's modified scrypt passwords (with the project's `hashConfig` and each account's `passwordSalt`). They are verified in plain JavaScript over Web Crypto, yielding as they run, and replaced by Zelavis's own PBKDF2 hash at their owner's first sign-in; the import report lists them in `rehashOnSignIn`.
+- 0f0457f: Backups of managed apps, and restore drills on another machine. Each named directory of a recipe manifest says how a
+  backup captures it (`backup: "files" | "recipe"`), and a managed app's Project backups gain an `app` component: the
+  `files` directories copied as they are, and what the recipe's `backup` phase makes of the rest. The MariaDB recipes dump
+  their database in one transaction while the site serves, with the shared `dumpMariaDb` from `zelavis/recipe` and the
+  `mariadb-dump` they now pin beside `mariadbd` (the host's where they fall back to it, the image's own in the container
+  method). A drill checks the `app` component. `drillFrom` drills any run on a machine holding nothing but the target and
+  the recovery key: `POST …/runtime/backups/drills`, `client.runtime.backups.drillFrom`, `zelavis backups drill-from`.
+  The release gate `pnpm release:qualify:backups` backs up a serving WordPress Project, drills and restores it, and
+  drills the same run on a second, fresh machine.
+- 0f0457f: Measures gain covariance and histograms, read from the measure lens alone, and Tenants gain materialized aggregates: immutable definitions whose results are published together with the log position they were computed at, through the SDK (`documents.covariance|histogram`, `aggregates.*`), HTTP and the CLI.
+- 0f0457f: Each Project chooses its storage durability (`crash` or `power`), recorded beside its shards and used from its next start: `GET|PUT …/database/maintenance/storage`, `client.projects.databaseStorage|setDatabaseStorage`, `zelavis projects storage --durability`, and the dashboard's Database → Images page.
+- 0f0457f: Scheduled backups capture a whole Project (database image, a consistent copy of its runtime store, and its media) and the Platform backs up its own System Store on its own schedules (`runtime/backups`, `client.runtime.backups`, `zelavis backups`, Server → Backups). A restored System Store is applied host-locally with the Platform stopped by `zelavis system-store import`.
+- 0f0457f: Compaction now stops at a Tenant's stored snapshot, which with the log after it becomes the recovery horizon: a Tenant whose log was compacted can still be branched as of any point from its snapshot on, and `recoveryWindow` reports that reach.
+- 0f0457f: Followers on other hosts. The leader's database serves everything a follower pass reads over its versioned API —
+  partition stats, records and log a page at a time, holds on the log, acknowledgments, and a change feed of which
+  partitions moved — through `GET|POST …/database/followers/*` (`database.replicate`, granted with
+  `project.runtime.manage`), `client.followers(projectId)` and `zelavis followers`. `remoteLeader`, `remoteAcknowledgments`
+  and `remoteChanges` in `zelavis/db` make that the same source `levelFollower` and `followLeader` read in-process, so a
+  follower on another host seeds, carries on, re-seeds after compaction (the leader's `CursorCompacted` arrives as itself)
+  and acknowledges what it committed, and the leader's `writeAcknowledged` waits on it. `db.followers.follow` keeps a
+  partition of a database a follower and tells its cross-Tenant indexes after every pass; `followLeader` takes `wakeups`
+  (the change feed) so a follower wakes on a write instead of polling. Log holds move with a partition: a move carries the
+  live holds to the target. Cross-Tenant indexes take `crossTenantRefresh.notifications`, so a write they did not see is
+  read without waiting for the sweep.
+- 0f0457f: Remove the libSQL and remote libSQL storage adapters, public subpaths, optional peers and configuration. SQLite remains the default; LMDB and RocksDB remain optional. Unsupported engine names are refused explicitly rather than falling back to another engine. Replication continues through Zelavis's engine-neutral event log.
+- 0f0457f: Backup restore drills: restore a schedule's newest run into a fresh directory, open it, and record what it held with measured RTO and RPO, for Projects (`drillBackup`, `zelavis projects drill-backup`) and the Platform (`client.runtime.backups.drill`, `zelavis backups drill`), with a Drill button in the dashboard.
+- 0f0457f: Scheduled, encrypted, off-site backups: cron schedules (Effect `Cron`) that image the whole database, seal it with AES-256-GCM per part under a per-schedule key answered once as `recoveryKey`, and write it to an S3-compatible bucket or directory that passed the conditional-write probe, manifest last; retention, recorded runs, verification and restore through HTTP, the SDK, the CLI and the dashboard's Database → Images.
+- 0f0457f: Activating a schema version now declares what it implies, safely: prose fields become searchable, numeric fields measures, a single reference an edge, and the new `GeometryField` (`coordinates: "wgs84"`, `resolution`) and `VectorField` (`model`, `modelVersion`, `dimension`, `metric`) the spatial index and the embedding. Nothing is inferred from a field that does not state it, hand-made declarations are kept, and the next activation replaces only what the previous one derived. Activation is a durable workflow: intent, apply and re-derive postings, publish in one transaction; one whose declarations stored documents break is refused (`SchemaActivationRefused`, 400) and leaves the collection as it was, and one cut off by a crash finishes when the database opens. The answer carries `activation: { applied, skipped, documents }`. Pending activations are listed and resumed through `tenant.schemas.pendingActivations`/`resumeActivations`, `GET|POST data/schemas/collections/activations[/resume]`, `client.data(p).schemas.activations()`/`resumeActivations()` and `zelavis data schema-activations`/`resume-schema-activations`. The dashboard's content-type builder and schema editor offer Geometry and Vector fields and report what an activation declared.
+- 0f0457f: Add bounded logical-schema import/export and standalone TypeScript generation
+  through the database API, HTTP, SDK and CLI. Imports default to dry run, preflight
+  immutable-version conflicts and activate only when explicitly requested. Schema
+  versions are now claimed atomically under the partition writer.
+- 0f0457f: Require explicit `--project-permission` grants when creating a Project-scoped service account. Naming a Project no longer silently adds operator, settings, identity or data authority; Platform-wide `--permission` grants remain separate.
+- 0f0457f: The SDK client gains deadlines (`timeoutMs`), cancellation (`signal`), opt-in retries that repeat only idempotent requests or writes carrying an idempotency key (Effect `Schedule`, exponential backoff with jitter), typed failures (`ZelavisClientHttpError` with `code`, `operation` and `retryable`; `ZelavisClientTransportError`; `ZelavisClientAbortError`) and `pages()` for every cursor-paged operation.
+- 0f0457f: Add phrase-pair postings, query-time synonyms, globally comparable scatter text ranking and bounded text/vector reciprocal-rank fusion. Expose typed search statistics, hybrid queries and operator scatter through HTTP, SDK and CLI with validation and parity coverage.
+- 0f0457f: Databases take a `durability` choice when they open: `crash` (default) or `power`, which flushes every commit to the device on SQLite and LMDB and is refused by RocksDB. Database health reports the engine and durability. Followers can acknowledge the positions they hold, and `writeAcknowledged` waits for a number of them before a write is treated as kept, failing with `FollowersNotAcknowledged` without undoing it.
+- 0f0457f: Project storage gains quotas (total and per-file bytes, enforced on every write, import and upload) and signed, single-use direct uploads: an HMAC-bound link a browser sends bytes to without credentials, staged with their SHA-256 until an authorized caller confirms them, with abandoned uploads cleaned up. Available through `storage/quota`, `storage/uploads*`, the Platform's public `runtime/projects/:id/uploads/:token`, the SDK storage client, `zelavis storage quota|set-quota|create-upload|upload|confirm-upload|cleanup-uploads`, and the dashboard's storage page.
+- b7e5333: Back up and restore a Tenant from the SDK and the CLI, and choose the restore mode over HTTP. `client.projects.exportTenant(projectId, { tenantId? })` and `client.projects.restoreTenant(projectId, backup, { into?, tenantId? })`, and `zelavis projects export-tenant <id> [--tenant T] [--output FILE]` and `zelavis projects restore-tenant <id> --file FILE [--into empty|purge|merge]`, reach the database's backup routes through the Project proxy and need `project.runtime.manage`. The restore route now takes `into` (`empty`, `purge`, `merge`); it used to ignore it and always restore as `empty`, so a purge or merge restore could only be run in-process. A restore mode that is not one of the three is refused with `InvalidRestoreMode` (400) before anything is written, where the JS API used to replay the backup over live data without checking that the Tenant was empty. The runtime API's `restoreTenant` takes the same options and returns the whole result (`tenantId`, `events`, `removed`, `superseded`).
+- 362ae43: Branch a Tenant: `db.branchTenant(tenant, into, { outbox })` makes `into` a new Tenant holding a copy of `tenant` as of one position of its log (records, history, definitions, projection and time-series state and idempotency receipts), taken while the source keeps taking writes and while it may be moved: only the branch is leased for the copy, the source is read a page at a time. The source's undelivered outbox messages stay with it by default (`outbox: "leave"`, retracted in the branch's own log after the branch point) or are copied with `outbox: "copy"`. The branch keeps the source's identifiers and log positions and records its lineage, so a cursor or checkpoint from before the branch point carries on in it. A divided Tenant branches into one divided the same way, part by part, each part as of its own position (per-part consistency only; there is no one moment across parts). Until a copy is whole it answers `TenantBranching`; running the branch again, or opening the database again, finishes one that was cut off. Also `POST database/tenants/:tenantId/branch` (needs `database.restore`), `client.projects.branchTenant`, `zelavis projects branch-tenant --tenant T --to NEW [--outbox leave|copy]` and a Branch action on the dashboard's Database → Tenants page. Merging a branch back is not supported.
+- 0f0457f: A Tenant can be recovered as it was at a past moment: `branchTenant` takes `asOf` (a change-feed cursor) or `asOfTime`, replaying the source's log from empty into a new Tenant while that log was never compacted, and `recoveryWindow` reports how far back each partition reaches. Both are on HTTP, the SDK (`branchTenant`, `tenantRecoveryWindow`), the CLI (`branch-tenant --as-of|--as-of-time`, `recovery-window`) and the dashboard's Branch dialog.
+- 0f0457f: Removing a Tenant now handles divided Tenants (every part, the division kept), gives the Tenant back writable when calls do not drain in time instead of leaving it fenced, and finishes a removal cut off by a crash when the database opens. A cut-off branch whose source is gone is removed at open, and one waiting on a relocation finishes when the relocation does. The dashboard deletes divided Tenants and asks explicitly where a branch's outbox messages go.
+- 4f6719c: `db.tenants` and the Tenants overview (`GET database/tenants/overview`, `client.projects.tenants`, `zelavis projects tenants`) now report Tenants, not partition keys: a divided Tenant is one entry with no shard of its own and a `parts` list (each part that holds data, with its shard, tables, documents, records and bytes), and its counts are the parts' sums. `db.partitions` (and `DatabaseRuntimeApi.partitions`) lists the partition keys, `DatabaseRuntimeApi.partsOf` and `forPart` reach a divided Tenant's parts, and `ZelavisTenantSummary.shard` is optional. The dashboard's Database → Tenants page shows a divided Tenant as one row with its parts, offers Branch on it and no Delete (which is refused for a divided Tenant). A divided Tenant's branch is consistent within each part, not across them; this is documented rather than changed.
+
+### Patch Changes
+
+- 0f0457f: Bun Project runtimes back up their runtime store and media like Node's: the runtime-store component copies the SQLite file through `bun:sqlite` there.
+- 0f0457f: The CLI gains `zelavis nodes trust` and `zelavis data kv-has`, closing the last gaps an automated check now enforces: every public operation has a typed SDK method and a CLI command, or a stated exemption.
+- bf41f4b: On a desktop screen the dashboard's sidebar no longer opens a Projects slide that repeats the overview page. Projects is an ordinary item of the root slide with the projects listed under it, and a project still opens its own slide with Back to the root. On a narrow screen, where the sidebar is the whole app, the slide stays. "Create project" is no longer highlighted on the Projects page, and the top bar reads "Projects".
+- b2e08f1: A Platform update no longer moves a managed app's bound App to an engine that writes a different data layout. Engine
+  releases now declare the data format they write (`runtime-artifact.json` `metadata.dataFormat`; a release that declares
+  none is read as format 2, which every release up to alpha.42 wrote). A running bound App follows the Platform's engine
+  only when both formats are equal; otherwise it stays on the engine that wrote its data, says why in its logs, and waits
+  for its own recipe upgrade.
+  
+  The same rule applies when a bound App's host starts cold (after a reboot or crash): it starts on the engine its host last
+  selected rather than being reset to the Platform's.
+- ec60fac: Let long Platform handovers finish after the control request body has arrived. If the selection reply is interrupted, the installer finishes the inventory acknowledgement and verifies the selected generation before reporting success.
+
+- c29d32a: A managed App waiting for a data-layout upgrade keeps serving requests without repeatedly querying its private host for the same engine decision.
+
+## 2.0.0-alpha.42
+
+### Patch Changes
+
+- 65e65af: Refuse `install --stage-only --dry-run` before release preparation and correct installer guidance for default Traefik ingress and private management listeners.
+  
+  Correct Debian package removal to inspect its lifecycle argument and stop the Platform, ingress, dashboard socket and updater activation. Management requests can no longer restart the removed Platform. The removal hook leaves running services alone during package upgrades.
+
+## 2.0.0-alpha.41
+
+### Patch Changes
+
+- e3cd867: Keep the dashboard, login, Project status, logs and repair APIs available during
+  Project Agent conversion. Resume recovered sites before private integrations
+  finish starting, and release expired or failed recovery holds so one Project
+  cannot leave the Platform and other sites permanently unavailable. Allow cold
+  Project hosts to finish their bounded startup before declaring them failed.
+  
+  Keep unused hosting backends lazy during conversion, include private integration
+  failures in the owning Project's logs, and show App hosts and workers in their
+  Project diagnostics.
+  Private Project runtimes restore asynchronously after public recovery, with
+  separate per-Project deadlines. Qualification covers both the previous-release
+  update and the direct pre-survival Agent conversion on two CPUs and 4 GB.
+
+## 2.0.0-alpha.40
+
+### Patch Changes
+
+- d07cc80: Update the separately supervised Linux Project Agent with the Platform while preserving Project process identities, placement custody and private App-host control. Durable process records, authenticated reconnectable host commands, kernel locks and client reconnection also recover surviving workloads after an Agent crash. Ordinary stops still stop workloads, and uninstall fences the owned unit cgroup.
+
+  An Agent installed before this protocol needs one explicit conversion during Update now: Projects restart once while management and preview admission wait for recovery. Later Agent replacements preserve their processes. Agent failure is reported separately from the committed Platform engine. User-mode embedded Agents receive new code when their persistent host next starts; remote-worker and Bun replacement are not qualified by this Linux system-installation path.
+
+## 2.0.0-alpha.39
+
+### Patch Changes
+
+- c038a76: The terminal fills its window: it was fitted to nine columns because the island holding it was an inline element, which also made typed text hard to follow. API keys are now a section of Server → Access with presets (Debug read-only, Operator, Project client), one-time display, rotation and revocation. A new read-only diagnostic, `zelavis debug processes` (`client.debug.processes`, `GET /runtime/debug/processes`, permission `server.debug.read`), lists the Platform account's Zelavis processes with secrets removed and flags a command running more than once side by side.
+- 84b8e68: Two more read-only diagnostics behind `server.debug.read`: `zelavis debug updates` shows the last ten finished updates with the installer's output, which the updater now keeps so a failed update can still be read after the next attempt; `zelavis debug project <id>` gathers one Project's record, runtime log, related Platform log entries and processes in one answer.
+- 5745c67: A Platform update is no longer rolled back because a Project is down. After the new engine takes over, a Project that is stopped or failed is reported in the log and left to the normal restoration of Projects that should be running; only a Project running at the wrong address, or stuck mid-transition, still fails the update.
+
+## 2.0.0-alpha.38
+
+### Patch Changes
+
+- acf44d8: A Platform update no longer fails because a Project has leftover duplicate processes. When adopting a Project's running processes, identical extra copies of a process the plan already adopted (left by a replacement an earlier failed update never stopped) are stopped instead of making the whole adoption fail, and a genuine mismatch now names the process and the field that differs.
+- c8c7ff0: A Project never runs two copies of the same process. Before a recipe process starts, any uncontrolled process of that Project running the exact same command (left behind when an engine was lost mid-start, or a failed update) is stopped first.
+
+## 2.0.0-alpha.37
+
+### Patch Changes
+
+- 3548515: The Marketplace no longer offers a version your Zelavis cannot run. Each version on the allow-list now names the oldest Zelavis it needs, so a server is offered every app, plugin and frontend at the newest version it runs, and creating or upgrading a Project picks that version too. Installing a version that needs a newer Zelavis is refused before anything is downloaded, with a message naming the version to update to.
+- 659cb13: The dashboard is now built with Fuzor. It is the same dashboard to use: every page is there and every page is now native: the Database workspace uses three grid libraries with draft recovery, Content Studio, Workloads, Storage and Media, the Marketplaces, Server and Fabric, the Assistant, Settings and the first-run setup were rebuilt, and **Update now** is in the shell on every page. Uploads from the dashboard keep their label, alt text and purpose (the Gateway removed them before). One build now mounts at any root path (`/zelavis`, `/admin`, `/`), the dashboard calls the Platform it runs in directly rather than over a guessed address, and the package ships only built output that needs nothing installed beside it. The previous React dashboard stays in the repository as `@zelavis/ui-legacy`, private and no longer shipped. Development uses the Fuzor checkout next to the repository when there is one, and the pinned npm release otherwise.
+- 16739cd: Recipe updates that move an app to a new layout keep its site answering throughout. Reading a Project while it crossed to a new layout reported it stopped, and that closed its preview listener, so visitors were refused for a few seconds; a crossing Project now stays running to readers and to Edge. Processes a live upgrade starts now run from the new recipe's root, so after the next Platform update they are taken over instead of being started a second time (a duplicate web server, and a PHP-FPM that restarted every 15 seconds). Apps already upgraded by an earlier release are taken over too. A new release gate qualifies these against a server with a history: apps made by old releases, carried by live updates onto the new release, and every recipe upgrade answered without a single failed request.
+
+## 2.0.0-alpha.36
+
+### Patch Changes
+
+- f803d6d: A managed app whose integration host had kept running through several Platform updates could fail **Update recipe** with "Recipe manifest does not match contract 1", because that host loaded the new recipe with its own older code. A host now checks only that a recipe is the locked one, never its content, so later recipes cannot trip it, and a host from an earlier release that cannot read a recipe it is about to load is replaced first. The app's own processes keep serving while it is. Requests that fail with a reference ID now record the full error under that ID in **Server → Logs** and the service journal, so the reference always leads to the cause.
+
+## 2.0.0-alpha.35
+
+### Patch Changes
+
+- f7202e9: A recipe update that failed with "Update recovery required" is now recovered when the Platform reconciles, such as after **Update now**. Before, the recovery restarted the app's previous processes without the Project's placement, so the Agent refused them again and the Project stayed stuck. The app then runs on its previous recipe and can be updated again.
+
+## 2.0.0-alpha.34
+
+### Patch Changes
+
+- f869f2a: A recipe update that replaces an app's processes, such as DokuWiki moving to the new `app/` layout, now works after the Platform has been updated. After **Update now**, the Platform takes over running apps without the placement it had handed out, so a replacement process was refused by the Agent ("A process could not be started") and the update needed recovery. The Platform now hands the current placement to every process it starts, including for apps it took over. A failed update of this kind is recovered when the Platform next starts, including through **Update now**.
+
+## 2.0.0-alpha.33
+
+### Patch Changes
+
+- a68c62c: Creating a Project from an app or upgrading one now installs the app's newest listed version first, on the server, when it is not installed yet. This works the same from the dashboard, the API, the SDK and the CLI. A WordPress site created while WordPress came with the Platform now upgrades with one click: before, the Upgrade button failed with "listed in the Marketplace but not installed yet". App cards in the Marketplace no longer offer **Update**, because each Project keeps its own version and moves only when you upgrade it. Plugins and frontends keep their **Update** button.
+
+## 2.0.0-alpha.32
+
+### Patch Changes
+
+- 2492a84: Upgrading a Project to a recipe the Marketplace lists but this server has not installed now works from the dashboard: **Upgrade** installs the recipe first, then upgrades. This is the case of a WordPress site created while WordPress came with the Platform. Before, the upgrade ran from the listing, which carries no install instructions, and failed with "Integration updates cannot change the app's deployment contract". Through the API, SDK and CLI such an upgrade is now refused with a message saying to install the recipe first.
+
+## 2.0.0-alpha.31
+
+### Patch Changes
+
+- 43f76c4: Creating a Project from the form works again for a recipe the Platform bundles but has not switched on yet, such as Zelavis App. The form tried to download it from npm, the Platform refused, and no Project was created. It now installs each recipe the way the Marketplace does: a listed package is downloaded, a bundled one is switched on where it is.
+- fc4b2dd: An installed app, plugin or frontend that the Marketplace now offers at a newer version shows **Update to** that version, and updating it takes effect at once. Before, installing a newer WordPress recipe was accepted but ignored until the Platform restarted, so Projects never offered the upgrade. The Platform picks the version from its allow-list, as it does for its own updates. After updating a recipe, its Projects offer **Upgrade** straight away. The same update is available as `POST /runtime/services/:name/update`, `client.marketplace.update(name)` and `zelavis marketplace update <name>`. `client.marketplace.services()` and `zelavis marketplace updates` list what can be updated.
+
+## 2.0.0-alpha.30
+
+### Patch Changes
+
+- 7185b50: A third-party app's Project now keeps the application, and only the application, in `app/`: its site in `app/site` and its database in `app/db`. Everything Zelavis runs it with (web server and PHP configuration, pid files, logs, temporary files) lives in `.zelavis/server` instead, so recipe updates, new dashboard features and Platform updates never touch the application's folder. WordPress, DokuWiki, Drupal, Joomla, TYPO3 and PrestaShop use this layout (recipe contract 2). An existing Project moves to it with an ordinary recipe upgrade, live and without stopping: its site and database stay exactly where they are, only the Platform's own files move out of `app/`.
+- e540a0d: A WordPress Project created before the recipe-based WordPress (alpha.26) upgrades from the dashboard while it runs: the Platform fetches what the new recipe needs while the site keeps serving, then holds the site's requests for the few seconds it takes to stop the old processes, take its folders over into the new layout (the same files, database, address, password and admin login) and start the new ones. Visitors wait instead of getting an error, and if anything goes wrong the earlier setup is put back and started again. Site previews and a Project's own domains now wait the same way during any such switch, instead of answering that the site is not running.
+
+## 2.0.0-alpha.29
+
+### Patch Changes
+
+- da0251b: A Project that keeps failing to start is no longer prepared and failed again every 15 seconds: automatic starts back off after each failure (15 seconds, doubling, up to an hour), its failure reason stays on the Project, and starting, stopping, updating, upgrading or deleting it tries again at once.
+
+## 2.0.0-alpha.28
+
+### Patch Changes
+
+- ec1e06e: Requests to a Project keep flowing while its Zelavis version is switched or its recipe is updated live: the Platform finds and reaches the Project without waiting for the operation (a managed app's integration runtime aside), so they pause only for the moment the engine is handed over instead of for the whole switch (which could exceed 30 seconds).
+- b14db6c: Deleting a third-party app Project (WordPress, DokuWiki, Drupal, Joomla, TYPO3, PrestaShop) no longer breaks the next Project created from the same recipe with "The recipe package has no readable package.json." Projects of one recipe version share its runtime, which now runs from a copy kept beside the Projects instead of inside the first one; copies no Project uses are removed when the Platform starts.
+- da2994f: A plugin or frontend installed, updated or uninstalled on a running Platform now takes effect without a restart: the Platform hands traffic to a fresh engine of the same release through the same handover that applies updates, so requests wait briefly instead of failing and no previous code stays loaded. Installing a Project recipe needs no reload; the next Project created or upgraded uses it.
+
+## 2.0.0-alpha.27
+
+### Patch Changes
+
+- fd2b31c: The Platform now records the cause behind every "Action failed, Reference: …" message in a bounded, redacted log (and the service journal), read from Server → Logs, `client.logs.read`, `GET /runtime/logs` and `zelavis logs --ref`. Server → Terminal (`client.terminal`, `/runtime/terminal*`, `zelavis terminal`) gives principals with `server.terminal.use` a shell inside tmux as the Platform's unprivileged account, with a fixed `terminal` host package set that installs tmux. A recipe that is only in the Marketplace catalogue is installed before a Project is created from it (the Marketplace and the Projects form do it, and the server refuses otherwise), and the installed package then replaces its catalogue listing, so the Project is locked with the recipe's install methods instead of none. A service installed at runtime stays extension-scoped in the service list once the Platform recomposes, so its dashboard page stays sandboxed and its menus are not offered inside Projects.
+
+## 2.0.0-alpha.26
+
+### Patch Changes
+
+- 7c7dab2: WordPress is now a recipe (`defineRecipe` install and start phases) run by the Platform's recipe runtime instead of a hand-written runtime module. Phases run in their own process under Node's permission model, the process plan is supervised and adopted after a restart, and the WordPress release is pinned in the recipe's `zelavis.project.install` manifest. A stopped WordPress Project made by an earlier version upgrades to it from the Upgrade action: its folders are renamed into the new layout and its ports, database password and socket identity are carried over, so its address, content, uploads and admin login stay as they were (the move is journaled and is reversed if anything fails). New Projects use the new layout.
+  
+  A running Project made from a recipe with a process plan now upgrades to a newer recipe without stopping: the new plan is reconciled against the running processes, unchanged ones keep serving, configuration-only changes reload in place and only changed processes are replaced in dependency order, with a durable journal and rollback to the previous plan on any failure.
+  
+  Managed apps (WordPress and any recipe that declares `managed`) upgrade their processes and their Zelavis integration in one transaction while running, and a recipe upgraded while stopped prepares the app the next time it starts.
+  
+  A recipe can place its data directories by name (`directories` in the manifest, `context.directories.named`). A running Project upgrades to a recipe that names another path without touching its data, and the data moves, atomically, the next time the Project starts from a stop.
+  
+  While a launch change replaces a serving process, public requests wait at the gateway instead of failing. `@zelavis/dokuwiki` is a second managed recipe (Nginx and PHP-FPM, no database) on the same path, and WordPress now declares its site and database directories by name.
+  
+  Recipes can declare `setup` values (templates over the Project's ports, directories, sockets, account and generated secrets) for an application's own installer: `projects setup <id> [--reveal]`, `client.projects.setup|revealSetup` and `GET|POST /projects/:id/setup[/reveal]`; revealing needs `project.setup.reveal` and is audited. `@zelavis/joomla` is the first recipe to use them. Host package sets `php-stack` and `mariadb-server` join `wordpress-stack`; `@zelavis/dokuwiki` uses `php-stack` alone.
+  
+  The dashboard has a Setup page for managed Projects (values, a Reveal secrets button and recent reveals), and the reveal trail is readable through HTTP, SDK and CLI (`projects setup-audit`). `@zelavis/wordpress` now needs the `php-stack` and `mariadb-server` sets; `@zelavis/typo3` is a fourth managed recipe.
+  
+  Recipes bring their own PHP: manifest `runtimes` pin a build per platform (address, SHA-256, size), unpacked once into `<data>/runtimes/<sha256>/` and offered as commands. WordPress, DokuWiki, Joomla and TYPO3 no longer need PHP on the host, run the PHP version they pin, and an upgrade can switch builds. The host package sets are now `nginx` and `mariadb-server`.
+  
+  Recipes bring their own web server too: all five managed recipes (WordPress, DokuWiki, Joomla, TYPO3, new `@zelavis/prestashop`) pin Caddy next to their PHP, so only MariaDB is still taken from the host (`mariadb-server`), and DokuWiki needs nothing from it. The recipe host unpacks `.zip` archives with plain Node, retries downloads that stumble, and the Platform prunes runtime builds no Project names.
+  
+  New `@zelavis/drupal` (Drupal 11.4.9 from drupal.org, pinned): the sixth managed recipe, on its own PHP 8.4 and Caddy, with Drupal's web installer fed from the Project's setup values. A runtime download may list up to three `mirrors` (other places holding the same archive, tried in order; the digest is the only trust).
+  
+  Recipes bring their own MariaDB on Linux x86_64 (pinned official 11.4.9 build as the `mariadbd`, `mariadb-install-db` and `mariadb` runtimes); a runtime's `hostRequirement` names the host requirement used on platforms without a build. WordPress, Joomla, TYPO3, PrestaShop and the new Drupal no longer need the `mariadb-server` host package there.
+  
+  WordPress, Joomla, TYPO3, PrestaShop and Drupal offer a second install method, `container`, that runs MariaDB from the official image (pinned by digest) through the operator's own Docker; the database code of all five is now one shared helper in `zelavis/recipe`. A process can be ready on its server's greeting (`readiness.greeting`), and `RecipeContext.account` carries numeric `uid`/`gid`.
+
 ## 2.0.0-alpha.25
 
 ### Patch Changes

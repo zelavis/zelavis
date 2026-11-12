@@ -1,10 +1,12 @@
+import { present, integrationValue } from "../../core/runtime/effect-boundary.js";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
-import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { equalBytes, scanRange, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * The slice of the `lmdb` package this engine uses.
@@ -14,7 +16,7 @@ import type { ObjectStoreApi } from "../store.js";
  * `zelavis` to typecheck or run.
  */
 interface LmdbDatabase {
-  get(key: Uint8Array): Uint8Array | undefined;
+  get(key: Uint8Array, options?: { transaction?: LmdbReadTransaction }): Uint8Array | undefined;
   put(key: Uint8Array, value: Uint8Array): unknown;
   remove(key: Uint8Array): unknown;
   childTransaction<A>(run: () => A): Promise<A>;
@@ -22,18 +24,25 @@ interface LmdbDatabase {
     start?: Uint8Array;
     end?: Uint8Array;
     reverse?: boolean;
+    transaction?: LmdbReadTransaction;
   }): Iterable<{ key: Uint8Array; value: Uint8Array }>;
+  /** A read transaction marked in use: reads through it see one version until `done`. */
+  useReadTransaction(): LmdbReadTransaction;
   close(): Promise<void>;
 }
 
+interface LmdbReadTransaction {
+  done(): void;
+}
+
 const loadLmdb = Effect.tryPromise({
-  try: async () => {
+  try: () => present(Effect.gen(function* () {
     const specifier = "lmdb";
-    const mod = (await import(specifier)) as {
+    const mod = ((yield* integrationValue(import(specifier)))) as {
       open: (options: Record<string, unknown>) => LmdbDatabase;
     };
     return mod.open;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "lmdb.load",
@@ -58,6 +67,7 @@ const loadLmdb = Effect.tryPromise({
 export const makeLmdbEngine = (
   partition: PartitionKey,
   directory: string,
+  durability: KvDurability = "crash",
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.flatMap(loadLmdb, (open) =>
@@ -71,7 +81,8 @@ export const makeLmdbEngine = (
             // stricter than the others: SQLite runs at synchronous=NORMAL and
             // RocksDB does not fsync per write. Matching them makes this a
             // comparison of engines rather than of durability settings.
-            overlappingSync: true,
+            // `power` keeps LMDB's own default: the commit returns once flushed.
+            overlappingSync: durability === "crash",
             // `useWritemap` is deliberately not set. It writes directly into
             // the mapped region and is the obvious throughput knob, but it
             // tripped an assertion inside LMDB's own free-list handling
@@ -87,11 +98,14 @@ export const makeLmdbEngine = (
     Effect.map((db): KvEngine => {
       const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
-      return {
+      /** Reads as of now, or as of the read transaction given. */
+      const readerAt = (transaction?: LmdbReadTransaction): KvReader => {
+        const at = transaction === undefined ? {} : { transaction };
+        return {
         // Synchronous, and the only engine here that can be: the value is a
         // pointer into a mapped page rather than a row to decode.
         get: (key) =>
-          Effect.try({ try: () => db.get(key), catch: fail("lmdb.get") }),
+          Effect.try({ try: () => db.get(key, at), catch: fail("lmdb.get") }),
 
         scan: (prefix, options) =>
           Stream.fromIterableEffect(
@@ -101,7 +115,7 @@ export const makeLmdbEngine = (
                 const limit = options?.limit ?? Infinity;
                 if (empty || limit <= 0) return [];
                 if (options?.reverse !== true) {
-                  const range = db.getRange(hi === undefined ? { start: lo } : { start: lo, end: hi });
+                  const range = db.getRange(hi === undefined ? { start: lo, ...at } : { start: lo, end: hi, ...at });
                   return (function* (): Generator<KvEntry> {
                     let left = limit;
                     for (const entry of range) {
@@ -116,7 +130,7 @@ export const makeLmdbEngine = (
                 // `hi`, passes over `hi` itself, and stops at the first key below
                 // `lo`: the same entries as the forward scan, read backwards.
                 const range = db.getRange(
-                  hi === undefined ? { reverse: true } : { start: hi, reverse: true },
+                  hi === undefined ? { reverse: true, ...at } : { start: hi, reverse: true, ...at },
                 );
                 return (function* (): Generator<KvEntry> {
                   let left = limit;
@@ -131,6 +145,11 @@ export const makeLmdbEngine = (
               catch: fail("lmdb.scan"),
             }),
           ),
+        };
+      };
+
+      return {
+        ...readerAt(),
 
         write: (writes: ReadonlyArray<KvWrite>) =>
           Effect.tryPromise({
@@ -162,16 +181,25 @@ export const makeLmdbEngine = (
         }),
         coordination: "host",
 
+        snapshot: Effect.map(
+          Effect.acquireRelease(
+            Effect.try({ try: () => db.useReadTransaction(), catch: fail("lmdb.snapshot") }),
+            (transaction) => Effect.sync(() => transaction.done()),
+          ),
+          readerAt,
+        ),
+
         close: Effect.orDie(Effect.promise(() => db.close())),
       };
     }),
   );
 
 export const makeLmdbStore = (
-  partition: PartitionKey,
+  shard: ShardId,
   directory: string,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  options?: OpenShardOptions & { readonly durability?: KvDurability },
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeLmdbEngine(partition, directory);
-    return yield* openStoreOverKv(partition, engine);
+    const engine = yield* makeLmdbEngine(shard, directory, options?.durability);
+    return yield* openShardOverKv(shard, engine, options);
   });

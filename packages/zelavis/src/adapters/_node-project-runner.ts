@@ -8,8 +8,10 @@ import { evaluate, IntegrationFailure, present } from "../core/runtime/effect-bo
 import { shutdownOnSignals } from "../runtimes/node.js";
 import { createNodeProjectHost } from "./_node-project-host.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
-import { serveNodeRuntimeCommands } from "./_node-runtime-commands.js";
+import { serveNodeProjectControl } from "./_node-project-control.js";
 import { projectProcessEnvironment } from "./_node-project-runtime.js";
+import { inheritedAppShardEnvironment } from "./_app-shard-environment.js";
+import { inheritedProjectLeaseEnvironment } from "./_project-lease-environment.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 
 // The Agent runs a persistent host; Platform and App workers use the same
@@ -31,9 +33,11 @@ const run = Scope.use(Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Effect.sync(() => shutdown?.dispose()));
   shutdown = shutdownOnSignals(() => present(Scope.close(scope, Exit.void)));
   const catalogDirectory = process.env.ZELAVIS_RUNTIME_RELEASES_DIR;
-  const catalog = catalogDirectory ? createNodeRuntimeCatalog({ directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" }) : undefined;
-  const host = yield* createNodeProjectHost({ ...options, environment: projectProcessEnvironment(),
-    ...(catalog ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
+  const catalogOptions = catalogDirectory ? { directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" } : undefined;
+  const host = yield* createNodeProjectHost({ ...options, environment: { ...projectProcessEnvironment(), ...inheritedProjectLeaseEnvironment(), ...inheritedAppShardEnvironment() },
+    ...(catalogOptions ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
+      // One resolution hashes the release once, however many steps name it; the next resolution (a replaced worker) hashes afresh.
+      const catalog = createNodeRuntimeCatalog(catalogOptions, new Map());
       if (options.integrationOnly) return yield* catalog.resolve(yield* catalog.select(version), "project", configuration, environment);
       const selected = yield* evaluate(() => {
         const engine = record.engine as { runtime?: RuntimeRelease } | undefined;
@@ -47,8 +51,7 @@ const run = Scope.use(Effect.gen(function* () {
   const port = yield* host.listen({ port: options.port, host: "127.0.0.1" });
   const emit = (value: Record<string, unknown>) => { process.stdout.write(`${JSON.stringify(value)}\n`); };
   const commits = new Map<string, { id: unknown; reply: Deferred.Deferred<void, IntegrationFailure> }>();
-  emit({ type: "ready", projectId: options.projectId, url: `http://127.0.0.1:${port}` });
-  const finished = yield* serveNodeRuntimeCommands({ input: process.stdin, emit,
+  yield* serveNodeProjectControl({ directory: options.directory, integrationOnly: options.integrationOnly, emit,
     acknowledge: input => {
       if (input.action !== "commit-ack") return false;
       const waiting = typeof input.nonce === "string" ? commits.get(input.nonce) : undefined;
@@ -82,8 +85,9 @@ const run = Scope.use(Effect.gen(function* () {
       return yield* new IntegrationFailure(new Error("Unknown Project host command."));
     }),
   });
-  // An Agent which dies closes this pipe. Close workers before the host exits.
-  yield* Effect.raceFirst(finished, host.failure);
+  emit({ type: "ready", projectId: options.projectId, url: `http://127.0.0.1:${port}` });
+  // Agent transport loss has no bearing on this host's serving lifetime.
+  return yield* host.failure;
 }), scope);
 
 Effect.runFork(run.pipe(Effect.catchCause(cause => Effect.sync(() => { console.error(String(cause)); process.exit(1); }))));

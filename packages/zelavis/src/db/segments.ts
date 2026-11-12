@@ -1,3 +1,5 @@
+import type { Container } from "./postings.js";
+
 /**
  * Postings stored as blobs rather than as one key per posting.
  *
@@ -76,6 +78,31 @@ export const decodeSegment = (bytes: Uint8Array, base: number, emit: (id: number
   for (let at = 1; at + 1 < bytes.length; at += 2) {
     emit(base + view.getUint16(at, true));
   }
+};
+
+/**
+ * A blob as a postings container, as it is: a dense blob is already a bitmap
+ * and a sparse one already a sorted list, so a read of a sealed posting list
+ * copies blobs rather than walking their identifiers one at a time.
+ */
+export const containerOf = (bytes: Uint8Array): Container | undefined => {
+  if (bytes.length === 0) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes[0] === DENSE) {
+    const words = new Uint32Array(DENSE_BYTES / 4);
+    let count = 0;
+    for (let w = 0; w < words.length; w++) {
+      const word = view.getUint32(1 + w * 4, true);
+      words[w] = word;
+      let v = word - ((word >>> 1) & 0x55555555);
+      v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+      count += (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+    }
+    return count === 0 ? undefined : { kind: "bitmap", words, count };
+  }
+  const offsets = new Uint16Array((bytes.length - 1) >>> 1);
+  for (let i = 0; i < offsets.length; i++) offsets[i] = view.getUint16(1 + i * 2, true);
+  return offsets.length === 0 ? undefined : { kind: "list", offsets };
 };
 
 /**

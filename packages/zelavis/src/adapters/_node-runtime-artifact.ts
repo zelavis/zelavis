@@ -1,12 +1,14 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { lstat, readdir, readFile, readlink, realpath, writeFile } from "node:fs/promises";
+import { Worker } from "node:worker_threads";
 import { join, relative, sep } from "node:path";
 import { Effect } from "effect";
 import { createRuntimeArtifactManifestDigest, defineRuntimeArtifact, type ZelavisRuntimeArtifactManifest } from "../core/artifact/index.js";
 import { evaluate, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 import { isExactVersion } from "../updates.js";
+import { fileDigest } from "./_node-file-digest.js";
+import type { HashReply, HashRequest } from "./_node-runtime-hash-worker.js";
 
 const ARTIFACT = "runtime-artifact.json";
 const required = ["bin/zelavis", "platform/package.json", "runtime/node/bin/node",
@@ -20,19 +22,49 @@ const executableFiles = Effect.fn("RuntimeArtifact.executables")(function* (root
   }
 });
 
-const fileDigest = Effect.fn("RuntimeArtifact.fileDigest")(function* (path: string) {
-  return yield* Effect.callback<`sha256:${string}`, IntegrationFailure>(resume => {
-    const hash = createHash("sha256"), stream = createReadStream(path);
-    let bytes = 0;
-    stream.on("data", chunk => {
-      bytes += chunk.length;
-      if (bytes > 512 * 1024 * 1024) { stream.destroy(new Error("Runtime artifact file exceeds its size bound.")); return; }
-      hash.update(chunk);
-    });
-    stream.once("error", cause => resume(Effect.fail(new IntegrationFailure(cause))));
-    stream.once("end", () => resume(Effect.succeed(`sha256:${hash.digest("hex")}` as const)));
-    return Effect.sync(() => { stream.destroy(); });
+/**
+ * The process's file hasher: one worker thread, made when first needed and kept, which also remembers the files this
+ * process already hashed and found equal (see `_node-runtime-hash-worker.ts`). A worker that fails or exits fails what it
+ * was asked and is replaced by the next request, empty. Each request is bounded by a deadline.
+ */
+const HASH_DEADLINE_MS = 300_000;
+let hasher: { readonly worker: Worker; readonly pending: Map<number, (reply: HashReply) => void> } | undefined;
+let nextRequest = 0;
+const hasherWorker = () => {
+  if (hasher) return hasher;
+  const worker = new Worker(new URL("./_node-runtime-hash-worker.js", import.meta.url));
+  const made = { worker, pending: new Map<number, (reply: HashReply) => void>() };
+  const failAll = (error: string) => {
+    if (hasher === made) hasher = undefined;
+    for (const [id, resume] of made.pending) resume({ id, error });
+    made.pending.clear();
+  };
+  worker.on("message", (reply: HashReply) => {
+    const resume = made.pending.get(reply.id);
+    if (!resume) return;
+    made.pending.delete(reply.id);
+    // Idle, the hasher never keeps the process alive.
+    if (made.pending.size === 0) worker.unref();
+    resume(reply);
   });
+  worker.on("error", (cause: Error) => failAll(`The runtime file hasher failed: ${cause.message}`));
+  worker.on("exit", code => failAll(`The runtime file hasher exited (${code}).`));
+  worker.unref();
+  hasher = made;
+  return made;
+};
+
+/** Every file of a release against its manifest digest, hashed off this process's event loop. */
+const hashReleaseFiles = Effect.fn("RuntimeArtifact.hashFiles")(function* (root: string, files: ReadonlyArray<readonly [string, string]>) {
+  const reply = yield* Effect.callback<HashReply>(resume => {
+    const { worker, pending } = hasherWorker();
+    const id = nextRequest++;
+    pending.set(id, reply => resume(Effect.succeed(reply)));
+    worker.ref();
+    worker.postMessage({ id, root, files } satisfies HashRequest);
+    return Effect.sync(() => { pending.delete(id); if (pending.size === 0) worker.unref(); });
+  }).pipe(Effect.timeoutOrElse({ duration: HASH_DEADLINE_MS, orElse: () => Effect.succeed<HashReply>({ id: -1, error: "Verifying the runtime artifact's files did not finish in time." }) }));
+  if (reply.error !== undefined) return yield* new IntegrationFailure(new Error(reply.error));
 });
 
 /** Enumerate all bytes and the complete dependency-link graph. A digest which
@@ -82,7 +114,7 @@ export const sealNodeRuntimeArtifact = Effect.fn("RuntimeArtifact.seal")(functio
   const input: ZelavisRuntimeArtifactManifest = { formatVersion: "ZELAVIS_RUNTIME_ARTIFACT_V1", name: `zelavis-${release.platform}-${release.architecture}`,
     version: release.version, runtime: "node", entrypoint: "bin/zelavis", files: tree.files, fileDigests: Object.fromEntries(entries),
     ...(compatibilityDate ? { compatibilityDate } : {}),
-    metadata: { platform: release.platform, architecture: release.architecture, nodeVersion: release.nodeVersion, protocol: NODE_RUNTIME_PROTOCOL,
+    metadata: { platform: release.platform, architecture: release.architecture, nodeVersion: release.nodeVersion, protocol: NODE_RUNTIME_PROTOCOL, dataFormat: CURRENT_FORMAT,
       edgeDefaultAdapter: "traefik", ...(release.edge?.traefikVersion ? { traefikVersion: release.edge.traefikVersion } : {}), links: tree.links } };
   const digest = yield* integration(() => createRuntimeArtifactManifestDigest(input));
   const artifact = yield* evaluate(() => defineRuntimeArtifact({ ...input, digest }));
@@ -107,10 +139,7 @@ export const verifyNodeRuntimeArtifact = Effect.fn("RuntimeArtifact.verify")(fun
   });
   const digest = yield* integration(() => createRuntimeArtifactManifestDigest(artifact));
   if (digest !== artifact.digest) return yield* new IntegrationFailure(new Error("Runtime artifact manifest digest mismatch."));
-  yield* Effect.forEach(tree.files, path => Effect.gen(function* () {
-    const actual = yield* fileDigest(join(tree.root, path));
-    if (actual !== artifact.fileDigests![path]) return yield* new IntegrationFailure(new Error(`Runtime artifact file digest mismatch: ${path}.`));
-  }), { concurrency: 8, discard: true });
+  yield* hashReleaseFiles(tree.root, tree.files.map(path => [path, artifact.fileDigests![path]!] as const));
   // Package identity and Node pin are covered by the digest, but must also
   // agree with the semantic engine selection rather than just its file list.
   const packageSource = yield* integration(() => readFile(join(tree.root, "platform", "package.json"), "utf8"));

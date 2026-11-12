@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { parseAllowlist } from "./parse.js";
 import { ALLOWLIST_MAX_BYTES, type Allowlist } from "./types.js";
 
@@ -53,18 +54,28 @@ function isLocalhost(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
 }
 
-async function readBounded(response: Response, limit: number): Promise<string> {
+/** A Promise-based collaborator (cache, fetch, body stream) adapted into a program; its own error is the failure. */
+const call = <A>(operation: () => A | PromiseLike<A>): Effect.Effect<Awaited<A>, unknown> =>
+  Effect.tryPromise({ try: () => Promise.resolve(operation()), catch: (cause) => cause });
+
+/** A synchronous step that may throw a validation error, as a typed failure. */
+const attempt = <A>(operation: () => A): Effect.Effect<A, unknown> => Effect.try({ try: operation, catch: (cause) => cause });
+
+/** Promise presentation for the public contract; the failure is rethrown as it was raised. */
+const present = <A>(program: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(program);
+
+const readBounded = Effect.fn("allowlist.readBounded")(function* (response: Response, limit: number): Effect.fn.Return<string, unknown> {
   const reader = response.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = yield* call(() => reader.read());
     if (done) break;
     size += value.byteLength;
     if (size > limit) {
-      await reader.cancel();
-      throw new RangeError("The response is larger than the allowed size.");
+      yield* call(() => reader.cancel());
+      return yield* Effect.fail(new RangeError("The response is larger than the allowed size."));
     }
     chunks.push(value);
   }
@@ -74,8 +85,8 @@ async function readBounded(response: Response, limit: number): Promise<string> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-}
+  return yield* attempt(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+});
 
 /**
  * Keeps an installation's copy of the allow-list current.
@@ -105,23 +116,23 @@ export function createAllowlistClient(options: {
     return now() < expires + graceMs ? "stale" : "expired";
   };
 
-  async function cached(): Promise<AllowlistView | undefined> {
-    const value = await options.cache?.read();
+  const cached = Effect.fn("allowlist.cached")(function* (): Effect.fn.Return<AllowlistView | undefined, unknown> {
+    const value = yield* call(() => options.cache?.read());
     if (!value) return undefined;
     // Parsed again on every read: a cache is a file someone could edit.
-    let allowlist: Allowlist;
-    try { allowlist = parseAllowlist(value.allowlist); } catch { return undefined; }
+    const allowlist = yield* attempt(() => parseAllowlist(value.allowlist)).pipe(Effect.option);
+    if (allowlist._tag === "None") return undefined;
     return {
-      allowlist,
+      allowlist: allowlist.value,
       origin: "cache",
       source: value.source,
       fetchedAt: value.fetchedAt,
-      status: statusOf(allowlist),
-    };
-  }
+      status: statusOf(allowlist.value),
+    } satisfies AllowlistView;
+  });
 
-  async function current(): Promise<AllowlistView | undefined> {
-    const fromCache = await cached();
+  const current = Effect.fn("allowlist.current")(function* (): Effect.fn.Return<AllowlistView | undefined, unknown> {
+    const fromCache = yield* cached();
     const fromBundle: AllowlistView | undefined = options.bundled
       ? { allowlist: options.bundled, origin: "bundled", status: statusOf(options.bundled) }
       : undefined;
@@ -129,66 +140,72 @@ export function createAllowlistClient(options: {
       return fromBundle.allowlist.sequence > fromCache.allowlist.sequence ? fromBundle : fromCache;
     }
     return fromCache ?? fromBundle;
-  }
+  });
 
-  async function fetchList(source: string): Promise<unknown> {
-    const url = new URL(source);
+  const fetchList = Effect.fn("allowlist.fetchList")(function* (source: string): Effect.fn.Return<unknown, unknown> {
+    const url = yield* attempt(() => new URL(source));
     if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost(url))) {
-      throw new TypeError("An allow-list source must use https.");
+      return yield* Effect.fail(new TypeError("An allow-list source must use https."));
     }
-    const response = await send(url, {
+    const response = yield* call(() => send(url, {
       headers: { accept: "application/json" },
       // A redirect is somewhere the operator did not name.
       redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) throw new Error(`The source answered ${response.status}.`);
-    return JSON.parse(await readBounded(response, ALLOWLIST_MAX_BYTES));
-  }
+    }));
+    if (!response.ok) return yield* Effect.fail(new Error(`The source answered ${response.status}.`));
+    const text = yield* readBounded(response, ALLOWLIST_MAX_BYTES);
+    return yield* attempt((): unknown => JSON.parse(text));
+  });
 
-  return {
-    current,
-    async refresh() {
-      const attempts: AllowlistAttempt[] = [];
-      const held = await current();
-      const floor = held?.allowlist.sequence ?? 0;
-      for (const source of options.sources) {
-        let body: unknown;
-        try {
-          body = await fetchList(source);
-        } catch (error) {
+  const refresh = Effect.fn("allowlist.refresh")(function* (): Effect.fn.Return<AllowlistRefreshReport, unknown> {
+    const attempts: AllowlistAttempt[] = [];
+    const held = yield* current();
+    const floor = held?.allowlist.sequence ?? 0;
+    for (const source of options.sources) {
+      const body = yield* fetchList(source).pipe(
+        Effect.map((value) => ({ value })),
+        Effect.catch((error) => {
           attempts.push({
             source,
             outcome: "unreachable",
             detail: error instanceof Error ? error.message : "The source could not be reached.",
           });
-          continue;
-        }
-        let allowlist: Allowlist;
-        try {
-          allowlist = parseAllowlist(body);
-        } catch (error) {
+          return Effect.succeed(undefined);
+        }),
+      );
+      if (!body) continue;
+      const parsed = yield* attempt(() => parseAllowlist(body.value)).pipe(
+        Effect.map((value) => ({ value })),
+        Effect.catch((error) => {
           attempts.push({ source, outcome: "invalid", detail: error instanceof Error ? error.message : "The allow-list could not be read." });
-          continue;
-        }
-        if (statusOf(allowlist) === "expired") {
-          attempts.push({ source, outcome: "expired", detail: "The allow-list has expired." });
-          continue;
-        }
-        if (allowlist.sequence < floor) {
-          attempts.push({
-            source,
-            outcome: "stale",
-            detail: `Sequence ${allowlist.sequence} is older than the ${floor} already held.`,
-          });
-          continue;
-        }
-        attempts.push({ source, outcome: "ok" });
-        const fetchedAt = new Date(now()).toISOString();
-        await options.cache?.write({ allowlist, source, fetchedAt });
-        return { updated: true, attempts, view: await current() };
+          return Effect.succeed(undefined);
+        }),
+      );
+      if (!parsed) continue;
+      const allowlist = parsed.value;
+      if (statusOf(allowlist) === "expired") {
+        attempts.push({ source, outcome: "expired", detail: "The allow-list has expired." });
+        continue;
       }
-      return { updated: false, attempts, view: held };
-    },
+      if (allowlist.sequence < floor) {
+        attempts.push({
+          source,
+          outcome: "stale",
+          detail: `Sequence ${allowlist.sequence} is older than the ${floor} already held.`,
+        });
+        continue;
+      }
+      attempts.push({ source, outcome: "ok" });
+      const fetchedAt = new Date(now()).toISOString();
+      yield* call(() => options.cache?.write({ allowlist, source, fetchedAt }));
+      return { updated: true, attempts, view: yield* current() };
+    }
+    return { updated: false, attempts, view: held };
+  });
+
+  return {
+    current: () => present(current()),
+    refresh: () => present(refresh()),
   };
 }

@@ -9,7 +9,7 @@ import type {
 } from "../project.js";
 import { ZelavisProjectRuntimeError } from "../project.js";
 import { Effect } from "effect";
-import { effectOperations, evaluate, presentOperations } from "../core/runtime/effect-boundary.js";
+import { effectOperations, evaluate, presentOperations, present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 
 export type ZelavisDeploymentBackendFeatureState =
   | "available"
@@ -185,15 +185,16 @@ export function createDeploymentBackendManager(options: {
     return result;
   }
 
-  async function readPolicy(): Promise<ZelavisDeploymentBackendPolicy> {
-    const stored = await options.store.get(STORE_NAMESPACE, POLICY_KEY);
+  function readPolicy(): Promise<ZelavisDeploymentBackendPolicy> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendPolicy, IntegrationFailure> {
+    const stored = (yield* integrationValue(options.store.get(STORE_NAMESPACE, POLICY_KEY)));
     if (!stored) {
       const policy: ZelavisDeploymentBackendPolicy = {
         defaultBackend: NATIVE_BACKEND,
         enabledBackends: [NATIVE_BACKEND],
         updatedAt: new Date().toISOString(),
       };
-      await options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy));
+      (yield* integrationValue(options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy))));
       return policy;
     }
     if (!isRecord(stored.value)) {
@@ -228,12 +229,14 @@ export function createDeploymentBackendManager(options: {
           ? stored.value.updatedAt
           : stored.updatedAt,
     };
+  }));
   }
 
-  async function writePolicy(input: {
+  function writePolicy(input: {
     defaultBackend: string;
     enabledBackends: readonly string[];
   }): Promise<ZelavisDeploymentBackendPolicy> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendPolicy, IntegrationFailure> {
     const policy: ZelavisDeploymentBackendPolicy = {
       defaultBackend: normalizeBackendId(input.defaultBackend),
       enabledBackends: Object.freeze([
@@ -241,46 +244,51 @@ export function createDeploymentBackendManager(options: {
       ]),
       updatedAt: new Date().toISOString(),
     };
-    await options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy));
+    (yield* integrationValue(options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy))));
     return policy;
+  }));
   }
 
-  async function detectDefinition(
+  function detectDefinition(
     definition: ZelavisDeploymentBackendAdapter,
   ): Promise<ZelavisDeploymentBackendDetection> {
-    let detection: ZelavisDeploymentBackendDetection;
-    try {
-      detection = normalizeDetection(await definition.detect());
-    } catch (error) {
-      detection = {
-        state: "unavailable",
-        installed: false,
-        healthy: false,
-        checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-    await options.store.set(
-      STORE_NAMESPACE,
-      `${DETECTION_PREFIX}${definition.id}`,
-      toStoreValue(detection),
-    );
-    return detection;
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendDetection, IntegrationFailure> {
+      const detection = yield* integration(() => definition.detect()).pipe(
+        Effect.flatMap((detected) => evaluate(() => normalizeDetection(detected))),
+        Effect.catch((failure): Effect.Effect<ZelavisDeploymentBackendDetection> => {
+          const error = unwrapFailure(failure);
+          return Effect.succeed({
+            state: "unavailable",
+            installed: false,
+            healthy: false,
+            checkedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      );
+      yield* integrationValue(options.store.set(
+        STORE_NAMESPACE,
+        `${DETECTION_PREFIX}${definition.id}`,
+        toStoreValue(detection),
+      ));
+      return detection;
+    }));
   }
 
-  async function snapshot(
+  function snapshot(
     definition: ZelavisDeploymentBackendAdapter,
     policy: ZelavisDeploymentBackendPolicy,
     refresh: boolean,
   ): Promise<ZelavisDeploymentBackendSnapshot> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendSnapshot, IntegrationFailure> {
     const detectionRecord = refresh
       ? undefined
-      : await options.store.get(
+      : (yield* integrationValue(options.store.get(
           STORE_NAMESPACE,
           `${DETECTION_PREFIX}${definition.id}`,
-        );
+        )));
     const detection = readDetection(detectionRecord?.value) ??
-      await detectDefinition(definition);
+      (yield* integrationValue(detectDefinition(definition)));
     return {
       id: definition.id,
       title: definition.title,
@@ -290,16 +298,18 @@ export function createDeploymentBackendManager(options: {
       capabilities: definition.capabilities,
       detection,
     };
+  }));
   }
 
-  async function requireReadyExecutable(id: string) {
+  function requireReadyExecutable(id: string) {
+    return present(Effect.gen(function* () {
     const definition = definitions.get(normalizeBackendId(id));
     if (!definition) {
       throw new ZelavisDeploymentBackendValidationError(
         `Deployment backend "${id}" is not registered.`,
       );
     }
-    const detection = await detectDefinition(definition);
+    const detection = (yield* integrationValue(detectDefinition(definition)));
     if (detection.state !== "ready") {
       throw new ZelavisDeploymentBackendConflictError(
         `Deployment backend "${definition.id}" is not healthy on this server.`,
@@ -311,19 +321,23 @@ export function createDeploymentBackendManager(options: {
       );
     }
     return definition;
+  }));
   }
 
   return {
-    async list(listOptions = {}) {
-      const policy = await readPolicy();
-      return Promise.all(
-        [...definitions.values()].map((definition) =>
-          snapshot(definition, policy, listOptions.refresh === true),
-        ),
-      );
+    list(listOptions = {}) {
+      return present(Effect.gen(function* () {
+        const policy = yield* integrationValue(readPolicy());
+        return yield* Effect.forEach(
+          [...definitions.values()],
+          (definition) => integrationValue(snapshot(definition, policy, listOptions.refresh === true)),
+          { concurrency: Math.max(1, definitions.size) },
+        );
+      }));
     },
-    async detect(id) {
-      const policy = await readPolicy();
+    detect(id) {
+      return present(Effect.gen(function* () {
+      const policy = yield* integrationValue(readPolicy());
       const selected = id
         ? [definitions.get(normalizeBackendId(id))].filter(
             (definition): definition is ZelavisDeploymentBackendAdapter =>
@@ -335,61 +349,64 @@ export function createDeploymentBackendManager(options: {
           `Deployment backend "${id}" is not registered.`,
         );
       }
-      return Promise.all(
-        selected.map((definition) => snapshot(definition, policy, true)),
+      return yield* Effect.forEach(
+        selected,
+        (definition) => integrationValue(snapshot(definition, policy, true)),
+        { concurrency: Math.max(1, selected.length) },
       );
+      }));
     },
     getPolicy: readPolicy,
     enable(id) {
-      return serializePolicyMutation(async () => {
-        const definition = await requireReadyExecutable(id);
-        const policy = await readPolicy();
-        return writePolicy({
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
+        const definition = (yield* integrationValue(requireReadyExecutable(id)));
+        const policy = (yield* integrationValue(readPolicy()));
+        return (yield* integrationValue(writePolicy({
           defaultBackend: policy.defaultBackend,
           enabledBackends: [...policy.enabledBackends, definition.id],
-        });
-      });
+        })));
+      })));
     },
     disable(id) {
-      return serializePolicyMutation(async () => {
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
         const backendId = normalizeBackendId(id);
         if (backendId === NATIVE_BACKEND) {
           throw new ZelavisDeploymentBackendConflictError(
             "The native deployment backend cannot be disabled.",
           );
         }
-        const policy = await readPolicy();
+        const policy = (yield* integrationValue(readPolicy()));
         if (policy.defaultBackend === backendId) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${backendId}" is the server default and cannot be disabled.`,
           );
         }
-        const assigned = await options.assignedProjectCount?.(backendId) ?? 0;
+        const assigned = (yield* integrationValue(options.assignedProjectCount?.(backendId))) ?? 0;
         if (assigned > 0) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${backendId}" still owns ${assigned} Project${assigned === 1 ? "" : "s"}.`,
           );
         }
-        return writePolicy({
+        return (yield* integrationValue(writePolicy({
           defaultBackend: policy.defaultBackend,
           enabledBackends: policy.enabledBackends.filter((value) => value !== backendId),
-        });
-      });
+        })));
+      })));
     },
     setDefault(id) {
-      return serializePolicyMutation(async () => {
-        const definition = await requireReadyExecutable(id);
-        const policy = await readPolicy();
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
+        const definition = (yield* integrationValue(requireReadyExecutable(id)));
+        const policy = (yield* integrationValue(readPolicy()));
         if (!policy.enabledBackends.includes(definition.id)) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${definition.id}" must be enabled before it can become the default.`,
           );
         }
-        return writePolicy({
+        return (yield* integrationValue(writePolicy({
           defaultBackend: definition.id,
           enabledBackends: policy.enabledBackends,
-        });
-      });
+        })));
+      })));
     },
   };
 }
@@ -419,18 +436,29 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   recipeDefinition: "descriptor",
   supportsLiveUpdate: "descriptor",
   prepareUpdate: "descriptor",
+  prefetchUpdate: "descriptor",
   gatewayTarget: "descriptor",
   versions: "wrapper",
   resolveVersion: "descriptor",
   applyUpdate: "project-id",
   recoverUpdate: "project-id",
+  settleUpdate: "project-id",
+  ingressReady: "project-id",
+  setupValues: "project-id",
   prepare: "descriptor",
   start: "descriptor",
+  startStandby: "descriptor",
   stop: "project-id",
   status: "project-id",
   logs: "project-id",
   destroy: "project-id",
   signGatewayAuthority: "project-id",
+  commitUpgrade: "project-id",
+  abandonUpgrade: "project-id",
+  migrateData: "descriptor",
+  prepareData: "descriptor",
+  retainedData: "project-id",
+  removeRetainedData: "project-id",
   fencePrevious: "placement",
   adopt: "every-driver",
   detach: "every-driver",
@@ -517,23 +545,47 @@ export function createDeploymentBackendProjectRuntime(options: {
     prepare: Effect.fn("BackendProjects.prepare")(function* (project: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[0], recipe: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[1]) {
       return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).prepare(project, recipe);
     }),
-    start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1]) {
-      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement);
+    startStandby: Effect.fn("BackendProjects.startStandby")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1], startOptions: Parameters<ZelavisProjectRuntimeDriver["start"]>[2]) {
+      const driver = yield* evaluate(() => forDescriptor(project));
+      if (driver.startStandby === undefined) {
+        return yield* Effect.fail(new ZelavisProjectRuntimeError(`The "${driver.name}" Project driver cannot run a Project as its writer's standby.`));
+      }
+      return yield* effectOperations(driver).startStandby!(project, placement, startOptions);
+    }),
+    start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1], startOptions: Parameters<ZelavisProjectRuntimeDriver["start"]>[2]) {
+      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement, startOptions);
     }),
     prepareUpdate: Effect.fn("BackendProjects.prepareUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[1], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[2]) {
       const prepare = effectOperations(yield* evaluate(() => forDescriptor(previous))).prepareUpdate;
       if (!prepare) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
       return yield* prepare(previous, candidate, placement);
     }),
+    prefetchUpdate: Effect.fn("BackendProjects.prefetchUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prefetchUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prefetchUpdate"]>>[1]) {
+      const prefetch = effectOperations(yield* evaluate(() => forDescriptor(previous))).prefetchUpdate;
+      if (prefetch) yield* prefetch(previous, candidate);
+    }),
     applyUpdate: Effect.fn("BackendProjects.applyUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[1], commit: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[2]) {
       const apply = effectOperations(yield* forProjectId(id)).applyUpdate;
       if (!apply) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
       return yield* apply(id, update, commit);
     }),
-    recoverUpdate: Effect.fn("BackendProjects.recoverUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[1]) {
+    recoverUpdate: Effect.fn("BackendProjects.recoverUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[1], placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[2]) {
       const recover = effectOperations(yield* forProjectId(id)).recoverUpdate;
       if (!recover) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot recover a Project update."));
-      return yield* recover(id, update);
+      return yield* recover(id, update, placement);
+    }),
+    setupValues: Effect.fn("BackendProjects.setupValues")(function* (id: string, options: { readonly reveal: boolean }) {
+      const values = effectOperations(yield* forProjectId(id)).setupValues;
+      return values ? yield* values(id, options) : [];
+    }),
+    ingressReady: Effect.fn("BackendProjects.ingressReady")(function* (id: string) {
+      const ready = effectOperations(yield* forProjectId(id)).ingressReady;
+      if (ready) yield* ready(id);
+    }),
+    settleUpdate: Effect.fn("BackendProjects.settleUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[1], selection: "previous" | "target", placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[3]) {
+      const settle = effectOperations(yield* forProjectId(id)).settleUpdate;
+      if (!settle) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot settle a Project update."));
+      return yield* settle(id, update, selection, placement);
     }),
     ...(uniqueRuntimes.some(runtime => runtime.fencePrevious) ? {
       fencePrevious: Effect.fn("BackendProjects.fencePrevious")(function* (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) {
@@ -564,6 +616,30 @@ export function createDeploymentBackendProjectRuntime(options: {
     gatewayTarget: Effect.fn("BackendProjects.gatewayTarget")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[1]) {
       const runtime = effectOperations(yield* evaluate(() => forDescriptor(project)));
       return runtime.gatewayTarget ? yield* runtime.gatewayTarget(project, placement) : project.runtime.url;
+    }),
+    migrateData: Effect.fn("BackendProjects.migrateData")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[1]) {
+      const migrate = effectOperations(yield* evaluate(() => forDescriptor(project))).migrateData;
+      return migrate ? yield* migrate(project, placement) : undefined;
+    }),
+    prepareData: Effect.fn("BackendProjects.prepareData")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareData"]>>[0]) {
+      const prepare = effectOperations(yield* evaluate(() => forDescriptor(project))).prepareData;
+      if (prepare) yield* prepare(project);
+    }),
+    retainedData: Effect.fn("BackendProjects.retainedData")(function* (id: string) {
+      const list = effectOperations(yield* forProjectId(id)).retainedData;
+      return list ? yield* list(id) : [];
+    }),
+    removeRetainedData: Effect.fn("BackendProjects.removeRetainedData")(function* (id: string, name: string) {
+      const remove = effectOperations(yield* forProjectId(id)).removeRetainedData;
+      if (remove) yield* remove(id, name);
+    }),
+    commitUpgrade: Effect.fn("BackendProjects.commitUpgrade")(function* (id: string) {
+      const commit = effectOperations(yield* forProjectId(id)).commitUpgrade;
+      return commit ? yield* commit(id) : undefined;
+    }),
+    abandonUpgrade: Effect.fn("BackendProjects.abandonUpgrade")(function* (id: string) {
+      const abandon = effectOperations(yield* forProjectId(id)).abandonUpgrade;
+      if (abandon) yield* abandon(id);
     }),
     signGatewayAuthority: Effect.fn("BackendProjects.signGatewayAuthority")(function* (id: string, claims: Parameters<NonNullable<ZelavisProjectRuntimeDriver["signGatewayAuthority"]>>[1]) {
       const sign = effectOperations(yield* forProjectId(id)).signGatewayAuthority;

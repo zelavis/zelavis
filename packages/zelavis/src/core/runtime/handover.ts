@@ -65,9 +65,12 @@ export function createRuntimeHandover<Candidate, Owner>(options: {
   let generationCounter = current.generation;
   let poisoned = false;
   let recoveryFailure: unknown;
-  const replace = Effect.fn("Runtime.handover")(function* (target: RuntimeRelease) {
+  // `reload` hands over to a fresh owner of the release already serving, which is how a change
+  // only a new composition can pick up (an installed service) reaches traffic. Otherwise the
+  // release already serving is no change at all.
+  const replace = Effect.fn("Runtime.handover")(function* (target: RuntimeRelease, reload: boolean) {
     if (poisoned) return yield* new RuntimeHandoverFailure({ cause: new Error("Handover requires fenced recovery after failed rollback.") });
-    if (target.version === current.release.version && target.digest === current.release.digest) return current;
+    if (!reload && target.version === current.release.version && target.digest === current.release.digest) return current;
     const previous = current;
     // Even an aborted drain has persisted a candidate generation. Never reuse
     // it on a later attempt while the previous owner keeps its original epoch.
@@ -141,7 +144,9 @@ export function createRuntimeHandover<Candidate, Owner>(options: {
     );
   });
   return {
-    replace: (release: RuntimeRelease) => permit.withPermit(replace(release)),
+    replace: (release: RuntimeRelease) => permit.withPermit(replace(release, false)),
+    // A copy, because a candidate is retained on success by being the release now serving.
+    reload: () => permit.withPermit(Effect.suspend(() => replace({ ...current.release }, true))),
     stop: <A, E>(operation: Effect.Effect<A, E>) => permit.withPermit(operation),
     snapshot: () => ({ ...current, lastGeneration: generationCounter, requiresRecovery: poisoned, recoveryFailure }),
   };

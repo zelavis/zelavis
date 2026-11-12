@@ -31,12 +31,16 @@ test("UI identity is loaded from its manifest and behavior is registered through
     assert.deepEqual(frontend.service.menus.map((menu) => menu.title), ["Dashboard", "Server"]);
     assert.equal(frontend.service.api.v1.length, 0);
   }
-  const render = frontend => frontend.service.app.shell.render({ path: "projects", request: new Request("http://localhost/") });
-  const [left, right] = await Promise.all([render(first), render(second)]);
+  const render = (frontend, mount) => frontend.service.app.shell.render({ path: "projects", request: new Request(`http://localhost${mount}/projects`) });
+  const [left, right] = await Promise.all([render(first, "/first"), render(second, "/second")]);
   assert.equal(left.status, 200);
-  assert.match(left.body, /"rootPath":"\/first"/);
-  assert.match(right.body, /"rootPath":"\/second"/);
-  assert.doesNotMatch(left.body, /"rootPath":"\/second"/);
+  const [leftHtml, rightHtml] = await Promise.all([new Response(left.body).text(), new Response(right.body).text()]);
+  // One build, mounted wherever the Platform is: the shell names its own mount and no other.
+  assert.match(leftHtml, /\/first\/assets\//);
+  assert.match(rightHtml, /\/second\/assets\//);
+  assert.doesNotMatch(leftHtml, /\/second\/|__zelavis__/);
+  // A request outside the mount is not the dashboard's.
+  assert.equal((await first.service.app.shell.render({ path: "projects", request: new Request("http://localhost/second/projects") })).status, 404);
 });
 
 test("cached first-party modules register menus for each independent load", async () => {
@@ -78,7 +82,9 @@ test("UI shell mounting remains separate from SDK-generated namespaced APIs", as
   const fetcher = (url, init) => runtime.fetch(new Request(url, init), { principal: { id: "owner", type: "user", permissions: ["*"] } });
   const page = await fetcher("http://localhost/custom/projects");
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /__ZELAVIS_RUNTIME_CONFIG__/);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /\/custom\/assets\//);
+  assert.doesNotMatch(pageHtml, /__zelavis__/);
   const client = createZelavisClient({ baseUrl: "http://localhost", rootPath: "/custom", fetch: fetcher });
   assert.deepEqual(await client.plugins.ui.health.list(), { ready: true });
   assert.equal((await fetcher("http://localhost/custom/health")).headers.get("content-type").includes("text/html"), true);
@@ -92,8 +98,8 @@ test("an executable frontend uses SDK registration through the generic service l
     importer: async () => dashboard,
   });
   assert.equal(service.menus.length, 2);
-  const page = await service.app.shell.render({ path: "", request: new Request("http://localhost/") });
-  assert.match(page.body, /"rootPath":"\/installed"/);
+  const page = await service.app.shell.render({ path: "", request: new Request("http://localhost/installed/") });
+  assert.match(await new Response(page.body).text(), /\/installed\/assets\//);
 });
 
 test("concurrent package loads retain their own namespaces and configuration", async () => {

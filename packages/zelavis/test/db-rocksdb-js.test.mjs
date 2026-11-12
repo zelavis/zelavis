@@ -14,7 +14,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect, Stream } from "effect";
 import { and, asSeq, equals, term } from "../dist/db/index.js";
-import { compareKeys, eventKey, orderedKey, payloadKey, termKey } from "../dist/db/keys.js";
+import { compareKeys, MAX_SEQ, partitionKeys } from "../dist/db/keys.js";
+
+const { event: eventKey, ordered: orderedKey, record: recordKey, term: termKey } = partitionKeys("acme");
 import { FORMAT_FILE, makeRocksdbJsEngine, makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
@@ -67,7 +69,7 @@ test("rocksdb-js: the key shapes the store writes survive byte for byte, in its 
     termKey("title", "a", 4),
     termKey("title", "ab", 5),
     orderedKey("region", "ÿþ", 6),
-    payloadKey(0xfffffffe),
+    recordKey(MAX_SEQ),
     eventKey(1),
     eventKey(256),
   ].map((key, i) => ({ op: "put", key, value: i % 3 === 0 ? EMPTY : Uint8Array.from([i, 0, 1, 255]) }));
@@ -98,7 +100,7 @@ test("rocksdb-js: a store answers through its lenses, and again after reopening"
   const dir = tempDir(t, "store");
   const run = (body) =>
     Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      return yield* body(yield* makeRocksdbJsStore("acme", dir));
+      return yield* body((yield* makeRocksdbJsStore("acme", dir)).partition("acme"));
     })));
   const query = and(term("tag", "t1"), equals("region", "r2"));
   const expected = Array.from({ length: 300 }, (_, i) => i + 1).filter((seq) => seq % 5 === 1 && seq % 3 === 2);

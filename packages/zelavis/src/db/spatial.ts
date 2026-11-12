@@ -1,3 +1,4 @@
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 /**
  * Geometry, as coordinates the database can index and check exactly.
  *
@@ -500,7 +501,7 @@ export const inBox = (box: BoundingBox, point: Position): boolean => {
  * Declared rather than imported as a type, so the package stays an optional
  * peer: a collection that indexes no geometry should not have to have it.
  */
-interface H3 {
+export interface H3 {
   latLngToCell: (lat: number, lng: number, resolution: number) => string;
   cellToChildrenSize?: (cell: string, resolution: number) => number;
   cellToParent: (cell: string, resolution: number) => string;
@@ -516,10 +517,10 @@ interface H3 {
 }
 
 export const loadH3 = Effect.tryPromise({
-  try: async () => {
-    const mod = (await import("h3-js")) as unknown as H3 & { default?: H3 };
+  try: () => present(Effect.gen(function* () {
+    const mod = ((yield* integrationValue(import("h3-js")))) as unknown as H3 & { default?: H3 };
     return (mod.default ?? mod) as H3;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "spatial.load",

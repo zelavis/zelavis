@@ -12,6 +12,21 @@ export function unwrapFailure(cause: unknown): unknown {
   return cause instanceof IntegrationFailure ? unwrapFailure(cause.cause) : cause;
 }
 
+/**
+ * A failure in words: its message, then its tag and plain fields, then its causes. A tagged domain error carries no
+ * message of its own, so `error.message` alone would report a refusal such as a held lease as an empty string.
+ */
+export function describeFailure(value: unknown, depth = 0): string {
+  const error = unwrapFailure(value);
+  if (typeof error !== "object" || error === null) return String(error);
+  const message = error instanceof Error && error.message !== "" ? [error.message] : [];
+  const fields = Object.entries(error)
+    .filter(([name, field]) => name !== "cause" && name !== "message" && ["string", "number", "boolean"].includes(typeof field) && field !== "")
+    .map(([name, field]) => `${name}=${String(field)}`);
+  const inner = "cause" in error && error.cause !== undefined && depth < 4 ? [describeFailure(error.cause, depth + 1)] : [];
+  return [...message, ...fields, ...inner].join(" ") || "an error with no description";
+}
+
 /** Non-cancellable calls finish before interruption; opt in only when the integration honours cancellation. */
 export const integration = <A>(operation: (signal: AbortSignal) => A | PromiseLike<A>, options?: { readonly interruptible?: boolean }): Effect.Effect<A, IntegrationFailure> => {
   const program = Effect.tryPromise({

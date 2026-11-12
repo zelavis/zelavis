@@ -299,7 +299,7 @@ export function createServerFrontendProjectRuntime(options: ServerFrontendProjec
             yield* driver.stop(projectId);
             processes.delete(projectId);
             prepared.delete(projectId);
-            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true }));
+            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
         }),
         close: Effect.fn("FrontendProjects.close")(function* () {
             yield* Effect.forEach([...processes.keys()], id => driver.stop(id), { concurrency: 8, discard: true });

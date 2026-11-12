@@ -1,6 +1,6 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integration, integrationValue, unwrapIntegrationResult, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
-import { isUnknown, isString, optional, objectFields, parseJson, literal, arrayOf } from "../core/json-validation.js";
+import { isUnknown, isString, optional, objectFields, parseJson, literal, arrayOf, recordOf } from "../core/json-validation.js";
 import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -32,13 +32,19 @@ function validPath(value: unknown): value is string {
     !value.startsWith("/") && value !== MARKER;
 }
 
-async function collect(root: string, directory = root,
-  budget = { files: 0, bytes: 0 }): Promise<{ path: string; body: string }[]> {
+const collect = (root: string, directory = root,
+  budget = { files: 0, bytes: 0 }, descriptorOnly = false): Effect.Effect<{ path: string; body: string }[], IntegrationFailure> => Effect.gen(function* () {
   const files: { path: string; body: string }[] = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
+  for (const entry of yield* integrationValue(readdir(directory, { withFileTypes: true }))) {
     const path = join(directory, entry.name);
+    if (descriptorOnly) {
+      // A running Project's directory holds its data and live runtime state; only what identifies it travels.
+      const relative = path.slice(root.length + 1).split(sep).join("/");
+      const wanted = relative === "project.json" || relative === ".zelavis" || relative === ".zelavis/recipe" || relative.startsWith(".zelavis/recipe/");
+      if (!wanted) continue;
+    }
     if (entry.isDirectory()) {
-      files.push(...await collect(root, path, budget));
+      files.push(...yield* collect(root, path, budget, descriptorOnly));
       continue;
     }
     if (!entry.isFile()) throw new Error("Remote Project snapshot contains a non-regular entry.");
@@ -49,9 +55,9 @@ async function collect(root: string, directory = root,
     const allowlist = `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`;
     if (relative === allowlist || relative.startsWith(`${allowlist}.`) &&
         /^[1-9]\d*\.tmp$/u.test(relative.slice(allowlist.length + 1))) continue;
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const stat = await file.stat();
+    const file = yield* integrationValue(open(path, constants.O_RDONLY | constants.O_NOFOLLOW));
+    yield* Effect.gen(function* () {
+      const stat = yield* integrationValue(file.stat());
       if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_BYTES) {
         throw new Error("Remote Project snapshot contains an unsafe file.");
       }
@@ -60,25 +66,41 @@ async function collect(root: string, directory = root,
       if (budget.files > MAX_FILES || budget.bytes > MAX_BYTES) {
         throw new Error("Remote Project snapshot exceeds its resource budget.");
       }
-      files.push({ path: relative, body: (await file.readFile()).toString("base64") });
-    } finally { await file.close(); }
+      files.push({ path: relative, body: (yield* integrationValue(file.readFile())).toString("base64") });
+    }).pipe(Effect.ensuring(integration(() => file.close()).pipe(Effect.orDie)));
   }
   return files;
-}
+});
 
 /** Freeze a prepared Project exactly once for authenticated Agent delivery. */
-export async function packRemoteProjectSnapshot(
+export function packRemoteProjectSnapshot(
   projectsDirectory: string,
   projectId: string,
+  /**
+   * Only the Project's descriptor and frozen recipe, from a directory that may hold its running data. For a standby, and for
+   * the start of a lease-guarded Project on the node its standby already runs on: the data there is its own copy.
+   */
+  options: { readonly descriptorOnly?: boolean } = {},
 ): Promise<{ readonly body: Uint8Array; readonly digest: ZelavisArtifactDigest }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ readonly body: Uint8Array; readonly digest: ZelavisArtifactDigest }, IntegrationFailure> {
   if (!validProjectId(projectId)) throw new TypeError("Invalid Project id.");
   const root = resolve(projectsDirectory, projectId);
-  if (!(await lstat(root)).isDirectory()) throw new Error("Project snapshot root is not a directory.");
+  if (!((yield* integrationValue(lstat(root)))).isDirectory()) throw new Error("Project snapshot root is not a directory.");
   // The allow-list the Platform handed this Project is the Platform's own file,
   // not Project data: it neither forks the Project nor travels with it (a remote
   // Node is handed the list separately).
-  const files = (await collect(root))
+  const files = ((yield* collect(root, root, { files: 0, bytes: 0 }, options.descriptorOnly === true)))
     .sort((left, right) => left.path.localeCompare(right.path));
+  if (options.descriptorOnly === true) {
+    // What identifies the Project, not the moments it was last touched: the node that installs this keeps it for good, and a
+    // later snapshot of the same Project must be the same bytes (the install refuses different ones, never overwriting).
+    const at = files.findIndex((file) => file.path === "project.json");
+    if (at >= 0) {
+      const descriptor = parseJson(Buffer.from(files[at]!.body, "base64").toString("utf8"), recordOf(isUnknown));
+      const stable = { ...descriptor, updatedAt: descriptor.createdAt, desiredState: "running" };
+      files[at] = { path: "project.json", body: Buffer.from(JSON.stringify(stable)).toString("base64") };
+    }
+  }
   // Only the frozen recipe travels. Anything else under `.zelavis` is Project
   // data (database, uploads, runtime state) that a copy would fork.
   if (files.some((file) => file.path.startsWith(".zelavis/") &&
@@ -93,8 +115,9 @@ export async function packRemoteProjectSnapshot(
     formatVersion: 1, projectId, engineVersion: ZELAVIS_VERSION, files,
   } satisfies ProjectSnapshot));
   if (body.byteLength > MAX_BYTES) throw new Error("Remote Project snapshot exceeds 64 MiB.");
-  return { body, digest: await createArtifactDigest(body) };
-}
+  return { body, digest: (yield* integrationValue(createArtifactDigest(body))) };
+}));
+  }
 
 /** Install only a digest-verified first snapshot; never overwrite remote data. */
 export function installRemoteProjectSnapshot(input: {

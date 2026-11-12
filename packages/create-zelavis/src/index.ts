@@ -15,7 +15,7 @@ export const HELP = `Install Zelavis on this machine.
   --dry-run          Show acquisition, layout and the exact command; make no changes
   --instance <name>  Select a named system instance
   --port <port>      Reserve its Platform port (required for a new named instance)
-  --public           Listen on all interfaces (already the default for a server's default instance)
+  --public           Expose the management listener on all interfaces
   --force            Replace a conflicting Zelavis command deliberately
   --allow-downgrade  Permit an older release deliberately
   --help, -h         Show help
@@ -89,7 +89,7 @@ export function installationOverview(mode: "system" | "user", version: string, h
   const instance = flags.includes("--instance") ? flags[flags.indexOf("--instance") + 1] : "default";
   const suffix = instance === "default" ? "" : `-${instance}`;
   const port = flags.includes("--port") ? flags[flags.indexOf("--port") + 1] : instance === "default" ? "3000" : "required for a new instance";
-  return [`Instance: ${instance}; port: ${port}`, `Install Zelavis ${version} (${mode})`, "Fetch the pinned private Node from nodejs.org (SHA-256 verified) and the exact package from npm (registry digest verified).", `Release: ${prefix}/releases/${version}; ${instance === "default" ? "current" : `instances/${instance}/current`} selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : `/var/lib/zelavis${suffix}`}`, `Config: ${mode === "user" ? join(prefix, "config") : `/etc/zelavis${suffix}`}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : "Start the systemd Platform on private Node with a separately supervised Project Agent. Edge stays disabled."].join("\n");
+  return [`Instance: ${instance}; port: ${port}`, `Install Zelavis ${version} (${mode})`, "Fetch the pinned private Node from nodejs.org (SHA-256 verified) and the exact package from npm (registry digest verified).", `Release: ${prefix}/releases/${version}; ${instance === "default" ? "current" : `instances/${instance}/current`} selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : `/var/lib/zelavis${suffix}`}`, `Config: ${mode === "user" ? join(prefix, "config") : `/etc/zelavis${suffix}`}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : `Start the systemd Platform on private Node with a separately supervised Project Agent. ${instance === "default" ? "Traefik enables host ingress on ports 80 and 443." : "Host Edge stays off for this named instance."} The management listener stays local unless --public is given.`].join("\n");
 }
 
 export async function loadInstallerAssets(): Promise<{ version: string; script: string }> {

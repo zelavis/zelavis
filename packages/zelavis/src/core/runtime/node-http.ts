@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { Effect } from "effect";
+import { integration } from "./effect-boundary.js";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { ZelavisServerRuntime } from "./contracts.js";
 import { sendNodeLikeResponse, toNodeLikeWebRequest } from "./node-http-shared.js";
@@ -53,7 +55,7 @@ export function createNodeHttpServer<TService = unknown>(
   runtime: Pick<ZelavisServerRuntime<TService>, "fetch">,
 ): Server {
   const server = createServer(
-    async (request: IncomingMessage, response: ServerResponse) => {
+    (request: IncomingMessage, response: ServerResponse) => {
       // Let handlers observe the client going away instead of finishing work
       // for a socket that is already closed.
       //
@@ -72,32 +74,33 @@ export function createNodeHttpServer<TService = unknown>(
       request.once("aborted", abort);
       response.once("close", abortIfUnfinished);
 
-      let webRequest: Request;
-      try {
-        webRequest = await toNodeLikeWebRequest(request, {
+      Effect.runFork(Effect.gen(function* () {
+        const webRequest = yield* integration(() => toNodeLikeWebRequest(request, {
           signal: controller.signal,
-        });
-      } catch {
-        // Malformed request line, path, or headers: the request could not even
-        // be represented, so this is a client error.
-        failClosed(response, 400);
-        return;
-      }
+        })).pipe(
+          Effect.map((value) => ({ value })),
+          // Malformed request line, path, or headers: the request could not even
+          // be represented, so this is a client error.
+          Effect.catchCause(() => Effect.sync(() => { failClosed(response, 400); return undefined; })),
+        );
+        if (!webRequest) return;
 
-      try {
-        const webResponse = await runtime.fetch(webRequest, {
-          platform: { node: { request, response } },
-        });
-        await sendNodeLikeResponse(response, webResponse, request.method ?? "GET");
-      } catch {
-        // Lifecycle hooks, principal resolution, and response streaming can all
-        // throw outside the dispatcher's own error mapping. Without this the
-        // client receives nothing and the process takes an unhandled rejection.
-        failClosed(response, 500);
-      } finally {
-        request.off("aborted", abort);
-        response.off("close", abortIfUnfinished);
-      }
+        yield* Effect.gen(function* () {
+          const webResponse = yield* integration(() => runtime.fetch(webRequest.value, {
+            platform: { node: { request, response } },
+          }));
+          yield* integration(() => sendNodeLikeResponse(response, webResponse, request.method ?? "GET"));
+        }).pipe(
+          // Lifecycle hooks, principal resolution, and response streaming can all
+          // throw outside the dispatcher's own error mapping. Without this the
+          // client receives nothing and the process takes an unhandled rejection.
+          Effect.catchCause(() => Effect.sync(() => failClosed(response, 500))),
+          Effect.ensuring(Effect.sync(() => {
+            request.off("aborted", abort);
+            response.off("close", abortIfUnfinished);
+          })),
+        );
+      }));
     },
   );
 

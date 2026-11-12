@@ -269,14 +269,42 @@ test("Authorization Code login binds PKCE, state, nonce, and explicit account li
   assert.ok(authorizationUrl.searchParams.get("codeChallenge"));
   assert.equal(authorizationUrl.searchParams.has("codeVerifier"), false);
 
-  const completed = await runtime.plain({
+  await auth.registration.setSettings({ enabled: true, expectedRevision: 0 });
+  await auth.registration.setSettings({ enabled: false, expectedRevision: 1 });
+  const refused = await runtime.plain({
     url: `/auth/oauth/oidc-test/callback?state=${encodeURIComponent(state)}&code=subject-1`,
+  });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.code, "registration_closed");
+  assert.deepEqual(await auth.accounts.list(), []);
+  const consumed = await runtime.plain({
+    url: `/auth/oauth/oidc-test/callback?state=${encodeURIComponent(state)}&code=subject-1`,
+  });
+  assert.equal(consumed.status, 400);
+
+  await auth.registration.setSettings({ enabled: true, expectedRevision: 2 });
+  const next = await runtime.plain({ url: "/auth/oauth/oidc-test/start", method: "POST" });
+  const nextUrl = new URL(next.body.authorizationUrl);
+  const nextState = nextUrl.searchParams.get("state");
+  const completed = await runtime.plain({
+    url: `/auth/oauth/oidc-test/callback?state=${encodeURIComponent(nextState)}&code=subject-1`,
   });
   assert.equal(completed.status, 200);
   assert.equal(completed.body.account.email, "subject-1@example.com");
   assert.equal(completed.body.credential.provider, "oidc-test");
+  assert.deepEqual(completed.body.account.roles, ["user"]);
+  assert.deepEqual(completed.body.account.grants, []);
   assert.equal(exchanges[0].nonce, authorizationUrl.searchParams.get("nonce"));
   assert.notEqual(exchanges[0].codeVerifier, authorizationUrl.searchParams.get("codeChallenge"));
+
+  await auth.registration.setSettings({ enabled: false, expectedRevision: 3 });
+  const returning = await runtime.plain({ url: "/auth/oauth/oidc-test/start", method: "POST" });
+  const returningState = new URL(returning.body.authorizationUrl).searchParams.get("state");
+  const signedIn = await runtime.plain({
+    url: `/auth/oauth/oidc-test/callback?state=${encodeURIComponent(returningState)}&code=subject-1`,
+  });
+  assert.equal(signedIn.status, 200);
+  assert.equal(signedIn.body.account.id, completed.body.account.id);
 
   const replayed = await runtime.plain({
     url: `/auth/oauth/oidc-test/callback?state=${encodeURIComponent(state)}&code=subject-1`,
@@ -364,7 +392,7 @@ test("opaque sessions authenticate Bearer and cookie requests without storing ra
   });
   const cookie = await runtime.plain({
     url: "/auth/session",
-    headers: { cookie: `zelavis_session=${issued.token}` },
+    headers: { cookie: `${auth.context.sessionCookieName}=${issued.token}` },
   });
 
   assert.equal(bearer.status, 200);
@@ -471,6 +499,8 @@ test("the App recipe ships signup and Project-scoped provider administration", a
     registry: [],
     methods: [],
     projectId: "fluxlist",
+    rootPath: "/",
+    options: { registration: true },
   });
   const runtime = await createServiceRuntime({ endpointGroups: [identity] });
 
@@ -611,16 +641,16 @@ test("Basic authentication is an optional native Request authenticator", async (
 
 test("Platform accounts and sessions use the System Store across runtime composition", async () => {
   const systemStore = createMemorySystemStore();
-  const first = await zelavis({ systemStore });
+  const bootstrapToken = "persistent-owner-bootstrap-token-long-enough";
+  const first = await zelavis({ systemStore, bootstrap: { token: bootstrapToken } });
   const created = await first.plain({
-    url: "/zelavis/api/v1/auth/accounts",
+    url: "/zelavis/api/v1/auth/bootstrap",
     method: "POST",
-    principal: { id: "owner", type: "system", permissions: ["*"] },
     body: {
-      id: "owner",
-      username: "owner",
-      roles: ["owner"],
-      permissions: ["*"],
+      bootstrapToken,
+      provider: "password",
+      account: { username: "owner" },
+      credential: { identifier: "owner", password: "persistent owner password" },
     },
   });
   assert.equal(created.status, 201);
@@ -629,10 +659,11 @@ test("Platform accounts and sessions use the System Store across runtime composi
   const second = await zelavis({ systemStore });
   const listed = await second.plain({
     url: "/zelavis/api/v1/auth/accounts",
-    principal: { id: "owner", type: "system", permissions: ["*"] },
+    headers: { authorization: `Bearer ${created.body.session.token}` },
   });
   assert.equal(listed.status, 200);
-  assert.equal(listed.body[0].id, "owner");
+  assert.equal(listed.body[0].id, created.body.account.id);
+  assert.deepEqual(listed.body[0].roles, ["owner"]);
   await second.close();
 });
 

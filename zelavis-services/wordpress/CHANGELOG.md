@@ -1,5 +1,106 @@
 # @zelavis/wordpress
 
+## 7.1.3-alpha.5
+
+### Patch Changes
+
+- 0f0457f: Backups of managed apps, and restore drills on another machine. Each named directory of a recipe manifest says how a
+  backup captures it (`backup: "files" | "recipe"`), and a managed app's Project backups gain an `app` component: the
+  `files` directories copied as they are, and what the recipe's `backup` phase makes of the rest. The MariaDB recipes dump
+  their database in one transaction while the site serves, with the shared `dumpMariaDb` from `zelavis/recipe` and the
+  `mariadb-dump` they now pin beside `mariadbd` (the host's where they fall back to it, the image's own in the container
+  method). A drill checks the `app` component. `drillFrom` drills any run on a machine holding nothing but the target and
+  the recovery key: `POST …/runtime/backups/drills`, `client.runtime.backups.drillFrom`, `zelavis backups drill-from`.
+  The release gate `pnpm release:qualify:backups` backs up a serving WordPress Project, drills and restores it, and
+  drills the same run on a second, fresh machine.
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [d57e446]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f99eca]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4326e6b]
+- Updated dependencies [f88cb26]
+- Updated dependencies [bf41f4b]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [ac78c91]
+- Updated dependencies [b2e08f1]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [ec60fac]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [b7e5333]
+- Updated dependencies [362ae43]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+  - zelavis@2.0.0-alpha.43
+
+## 7.1.3-alpha.4
+
+### Patch Changes
+
+- 7185b50: A third-party app's Project now keeps the application, and only the application, in `app/`: its site in `app/site` and its database in `app/db`. Everything Zelavis runs it with (web server and PHP configuration, pid files, logs, temporary files) lives in `.zelavis/server` instead, so recipe updates, new dashboard features and Platform updates never touch the application's folder. WordPress, DokuWiki, Drupal, Joomla, TYPO3 and PrestaShop use this layout (recipe contract 2). An existing Project moves to it with an ordinary recipe upgrade, live and without stopping: its site and database stay exactly where they are, only the Platform's own files move out of `app/`.
+- Updated dependencies [7185b50]
+- Updated dependencies [e540a0d]
+  - zelavis@2.0.0-alpha.30
+
+## 7.1.3-alpha.3
+
+### Patch Changes
+
+- 7c7dab2: WordPress is now a recipe (`defineRecipe` install and start phases) run by the Platform's recipe runtime instead of a hand-written runtime module. Phases run in their own process under Node's permission model, the process plan is supervised and adopted after a restart, and the WordPress release is pinned in the recipe's `zelavis.project.install` manifest. A stopped WordPress Project made by an earlier version upgrades to it from the Upgrade action: its folders are renamed into the new layout and its ports, database password and socket identity are carried over, so its address, content, uploads and admin login stay as they were (the move is journaled and is reversed if anything fails). New Projects use the new layout.
+  
+  A running Project made from a recipe with a process plan now upgrades to a newer recipe without stopping: the new plan is reconciled against the running processes, unchanged ones keep serving, configuration-only changes reload in place and only changed processes are replaced in dependency order, with a durable journal and rollback to the previous plan on any failure.
+  
+  Managed apps (WordPress and any recipe that declares `managed`) upgrade their processes and their Zelavis integration in one transaction while running, and a recipe upgraded while stopped prepares the app the next time it starts.
+  
+  A recipe can place its data directories by name (`directories` in the manifest, `context.directories.named`). A running Project upgrades to a recipe that names another path without touching its data, and the data moves, atomically, the next time the Project starts from a stop.
+  
+  While a launch change replaces a serving process, public requests wait at the gateway instead of failing. `@zelavis/dokuwiki` is a second managed recipe (Nginx and PHP-FPM, no database) on the same path, and WordPress now declares its site and database directories by name.
+  
+  Recipes can declare `setup` values (templates over the Project's ports, directories, sockets, account and generated secrets) for an application's own installer: `projects setup <id> [--reveal]`, `client.projects.setup|revealSetup` and `GET|POST /projects/:id/setup[/reveal]`; revealing needs `project.setup.reveal` and is audited. `@zelavis/joomla` is the first recipe to use them. Host package sets `php-stack` and `mariadb-server` join `wordpress-stack`; `@zelavis/dokuwiki` uses `php-stack` alone.
+  
+  The dashboard has a Setup page for managed Projects (values, a Reveal secrets button and recent reveals), and the reveal trail is readable through HTTP, SDK and CLI (`projects setup-audit`). `@zelavis/wordpress` now needs the `php-stack` and `mariadb-server` sets; `@zelavis/typo3` is a fourth managed recipe.
+  
+  Recipes bring their own PHP: manifest `runtimes` pin a build per platform (address, SHA-256, size), unpacked once into `<data>/runtimes/<sha256>/` and offered as commands. WordPress, DokuWiki, Joomla and TYPO3 no longer need PHP on the host, run the PHP version they pin, and an upgrade can switch builds. The host package sets are now `nginx` and `mariadb-server`.
+  
+  Recipes bring their own web server too: all five managed recipes (WordPress, DokuWiki, Joomla, TYPO3, new `@zelavis/prestashop`) pin Caddy next to their PHP, so only MariaDB is still taken from the host (`mariadb-server`), and DokuWiki needs nothing from it. The recipe host unpacks `.zip` archives with plain Node, retries downloads that stumble, and the Platform prunes runtime builds no Project names.
+  
+  New `@zelavis/drupal` (Drupal 11.4.9 from drupal.org, pinned): the sixth managed recipe, on its own PHP 8.4 and Caddy, with Drupal's web installer fed from the Project's setup values. A runtime download may list up to three `mirrors` (other places holding the same archive, tried in order; the digest is the only trust).
+  
+  Recipes bring their own MariaDB on Linux x86_64 (pinned official 11.4.9 build as the `mariadbd`, `mariadb-install-db` and `mariadb` runtimes); a runtime's `hostRequirement` names the host requirement used on platforms without a build. WordPress, Joomla, TYPO3, PrestaShop and the new Drupal no longer need the `mariadb-server` host package there.
+  
+  WordPress, Joomla, TYPO3, PrestaShop and Drupal offer a second install method, `container`, that runs MariaDB from the official image (pinned by digest) through the operator's own Docker; the database code of all five is now one shared helper in `zelavis/recipe`. A process can be ready on its server's greeting (`readiness.greeting`), and `RecipeContext.account` carries numeric `uid`/`gid`.
+- Updated dependencies [7c7dab2]
+  - zelavis@2.0.0-alpha.26
+
 ## 7.1.3-alpha.2
 
 ### Patch Changes

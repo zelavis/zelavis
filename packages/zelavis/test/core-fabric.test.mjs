@@ -118,7 +118,7 @@ test("Fabric mounts a single-node endpoint group with project placement inventor
       multiNode: "planned",
       automaticBalancing: "planned",
       projectMigration: "planned",
-      zelavisAppDataPlacement: "planned",
+      zelavisAppDataPlacement: "available",
       replication: "planned",
       infrastructureAutoscaling: "planned",
     },
@@ -513,4 +513,19 @@ test("planning stays deterministic with ownership in the mix", () => {
     [...first.replicas].sort((l, r) => l.replicaId.localeCompare(r.replicaId)),
     [...second.replicas].sort((l, r) => l.replicaId.localeCompare(r.replicaId)),
   );
+});
+
+test("a runtime that holds a database is never planned more than one replica", () => {
+  const nodes = [
+    { id: "node-a", status: "ready", roles: ["worker"] },
+    { id: "node-b", status: "ready", roles: ["worker"] },
+    { id: "node-c", status: "ready", roles: ["worker"] },
+  ];
+  const replicas = (capabilities) => planFabricProjectPlacements(nodes, [
+    placementRequest("app", { capabilities, replicaPolicy: { mode: "fixed", replicas: 3 } }),
+  ]).replicas.length;
+  assert.equal(replicas({ statelessRuntimeReplicas: true }), 3, "without a database the fixed target holds");
+  assert.equal(replicas({ statelessRuntimeReplicas: true, managedDatabase: false }), 3);
+  assert.equal(replicas({ statelessRuntimeReplicas: true, managedDatabase: true }), 1,
+    "singleton duties follow the database's one writer, so a second replica is not planned");
 });

@@ -2,7 +2,7 @@ import type { ZelavisProjectDriverCapabilities } from "../core/workload/index.js
 import {
   objectFields, optional, arrayOf, literal, isString, isFiniteNumber, isBoolean, isTimestamp,
 } from "../core/json-validation.js";
-import type { ZelavisProjectDescriptor, ZelavisProjectRecipeLock, ZelavisProjectRecord } from "../project.js";
+import type { ZelavisProjectDescriptor, ZelavisProjectInstallLock, ZelavisProjectRecipeLock, ZelavisProjectRecord } from "../project.js";
 import type {
   ZelavisProjectIsolationIntent, ZelavisResourceLimitIntent, ZelavisProjectResourceIntent,
 } from "../project-isolation.js";
@@ -18,6 +18,8 @@ const recipe = objectFields<ZelavisProjectRecipeLock>({ name: isString, title: i
   specifier: isString, runtimeKinds: arrayOf(isString), hostPackages: optional(arrayOf(isString)),
   isolation: optional(isolation), managed: optional(objectFields<{ adminTitle?: string; adminPath?: string }>({
     adminTitle: optional(isString), adminPath: optional(isString) })),
+  install: optional(objectFields<ZelavisProjectInstallLock>({
+    method: isString, driver: literal("js", "oci"), requires: arrayOf(isString), software: isString })),
   artifact: optional(objectFields<{ digest: string }>({ digest: runtimeReleaseRecordDigest })),
 });
 function runtimeReleaseRecordDigest(value: unknown): value is string {

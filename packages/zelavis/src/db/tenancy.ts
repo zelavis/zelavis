@@ -1,67 +1,66 @@
-import type { TenantId } from "./topology.js";
-
-export const COLLECTION_NAMESPACE_PREFIX = "zv.collection/";
+/**
+ * The names records are filed under inside a partition.
+ *
+ * A partition is one tenant — or one part of a divided tenant, or one of the
+ * reserved partitions — and everything it stores lives in that partition's
+ * own key range. So none of these names carries the tenant: two tenants'
+ * `posts` are different collections because they are in different partitions,
+ * not because their names differ.
+ */
+export const COLLECTION_NAMESPACE = "zv.collection";
 export const DOCUMENT_NAMESPACE_PREFIX = "doc/";
 export const SCHEMA_NAMESPACE = "zv.schema";
 export const ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
 export const CHECKPOINT_NAMESPACE = "zv.checkpoint";
 
 /**
- * Records what a completed write with an idempotency key did.
- *
- * Tenant-scoped like everything else, because the keys are the caller's own
- * strings and two tenants picking the same one is ordinary rather than an
- * error.
+ * Where each time series keeps its generation and how far into the log it has
+ * read: a cursor too, so derived like a checkpoint, and rebuilt by the next
+ * ingest after a restore rather than carried into a log it does not describe.
  */
-export const IDEMPOTENCY_NAMESPACE_PREFIX = "zv.idempotency/";
+export const TIME_SERIES_STATE_NAMESPACE = "zv.timeseries.state";
+
+/** Where one collection's documents are named. */
+export const documentNamespace = (collection: string): string => `${DOCUMENT_NAMESPACE_PREFIX}${collection}`;
+
+/** Records what a completed write with an idempotency key did. */
+export const IDEMPOTENCY_NAMESPACE = "zv.idempotency";
 
 /**
- * Marks a tenant on this shard as being relocated off it.
- *
- * Lives on the shard being left rather than in the topology, because the check
- * that has to see it is the write path, and the write path already has the
- * store in its hand.
+ * Collections whose documents are being written back under declarations a schema activation recorded, keyed by
+ * collection: the mark stands from the commit that records the declarations until the backfill is done.
  */
-export const MOVE_FENCE_NAMESPACE = "zv.moving";
+export const REDERIVING_NAMESPACE = "zv.schema.rederiving";
 
-/** Records that a tenant holds data on this shard, so a shard can name its occupants. */
-export const TENANT_NAMESPACE = "zv.tenant";
-export const TENANT_COLUMN = "zv.tenant";
-export const TENANT_MARKER = "\u0000tenant";
+/** The tenant's outbox: one record per message, keyed by the message's id. */
+export const OUTBOX_NAMESPACE = "zv.outbox";
 
 /**
- * Which tenant a stored record belongs to, from where it was written.
- *
- * Tenancy is carried by the namespace rather than a field, so this is the one
- * place that knows how to read it back. Records with no owner are either
- * derived — points, checkpoints — or not tenant data at all.
+ * Durable entities (`entities.ts`): each message sent to one, keyed by entity and message key; the messages still
+ * owed, in arrival order per entity; each entity's own state and counts; and the finished messages in the order
+ * they finished, which is what retention removes them by.
  */
-export const tenantOf = (namespace: string, key: string): TenantId | undefined => {
-  if (namespace.startsWith(COLLECTION_NAMESPACE_PREFIX)) {
-    return namespace.slice(COLLECTION_NAMESPACE_PREFIX.length);
-  }
-  if (namespace.startsWith(IDEMPOTENCY_NAMESPACE_PREFIX)) {
-    return namespace.slice(IDEMPOTENCY_NAMESPACE_PREFIX.length);
-  }
-  if (namespace.startsWith(DOCUMENT_NAMESPACE_PREFIX)) {
-    const rest = namespace.slice(DOCUMENT_NAMESPACE_PREFIX.length);
-    const split = rest.indexOf("/");
-    return split < 0 ? undefined : rest.slice(0, split);
-  }
-  if (namespace === SCHEMA_NAMESPACE || namespace === ACTIVE_SCHEMA_NAMESPACE) {
-    const split = key.indexOf("/");
-    return split < 0 ? undefined : key.slice(0, split);
-  }
-  return undefined;
-};
+export const ENTITY_MESSAGE_NAMESPACE = "zv.entity.message";
+export const ENTITY_PENDING_NAMESPACE = "zv.entity.pending";
+export const ENTITY_STATE_NAMESPACE = "zv.entity.state";
+export const ENTITY_DONE_NAMESPACE = "zv.entity.done";
+
+
+/** The collection a record's name belongs to, for collections and their documents alike. */
+export const collectionOfIdentity = (namespace: string, key: string): string | undefined =>
+  namespace === COLLECTION_NAMESPACE
+    ? key
+    : namespace.startsWith(DOCUMENT_NAMESPACE_PREFIX)
+      ? namespace.slice(DOCUMENT_NAMESPACE_PREFIX.length)
+      : undefined;
 
 /**
- * State that is rebuilt rather than carried.
+ * State that is rebuilt rather than carried by a backup.
  *
- * A checkpoint is a position in one shard's log and means nothing against
- * another, so moving one would point a projection at an unrelated offset. Time
- * series points are written without identity and are replayable from the events
- * that produced them.
+ * A checkpoint is a position in its partition's log. A move keeps those
+ * positions, so it carries checkpoints with everything else; a restore starts a
+ * new log, where an old position would point a projection at an unrelated
+ * entry.
  */
 export const isDerivedNamespace = (namespace: string): boolean =>
-  namespace === CHECKPOINT_NAMESPACE;
+  namespace === CHECKPOINT_NAMESPACE || namespace === TIME_SERIES_STATE_NAMESPACE;

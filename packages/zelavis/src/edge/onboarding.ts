@@ -1,4 +1,6 @@
 import { lookup } from "node:dns/promises";
+import { Effect } from "effect";
+import { integration, integrationValue, present, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisEdgeRouteStore, ZelavisEdgeHostname } from "./routes.js";
 import { toPublicationSummary } from "./routes.js";
 import type { ZelavisEdgeManager, ZelavisEdgePublication } from "./index.js";
@@ -36,9 +38,10 @@ const HOSTNAME_PATTERN =
 /**
  * Validate hostname format and check DNS resolution before onboarding.
  */
-export async function preflightHostname(
+export function preflightHostname(
   rawHostname: string,
 ): Promise<ZelavisEdgeOnboardingPreflightResult> {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeOnboardingPreflightResult> {
   const hostname = rawHostname.trim().toLowerCase().replace(/\.+$/, "");
 
   if (!hostname || !HOSTNAME_PATTERN.test(hostname)) {
@@ -51,23 +54,27 @@ export async function preflightHostname(
   }
 
   // Check DNS resolution
-  try {
-    const results = await lookup(hostname, { all: true });
-    const addresses = results.map((r) => r.address);
-    return {
-      hostname,
-      valid: true,
-      dnsResolved: addresses.length > 0,
-      addresses,
-    };
-  } catch (error) {
-    return {
-      hostname,
-      valid: true,
-      dnsResolved: false,
-      error: `DNS lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+  return yield* integration(() => lookup(hostname, { all: true })).pipe(
+    Effect.map((results): ZelavisEdgeOnboardingPreflightResult => {
+      const addresses = results.map((r) => r.address);
+      return {
+        hostname,
+        valid: true,
+        dnsResolved: addresses.length > 0,
+        addresses,
+      };
+    }),
+    Effect.catch((failure) => {
+      const error = unwrapFailure(failure);
+      return Effect.succeed<ZelavisEdgeOnboardingPreflightResult>({
+        hostname,
+        valid: true,
+        dnsResolved: false,
+        error: `DNS lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }),
+  );
+  }));
 }
 
 import type { ZelavisCertificateController } from "./certificates.js";
@@ -86,10 +93,11 @@ export interface PerformOnboardingContext {
  * - "external": Configures external TLS hostname + Platform root route.
  * - "managed": Configures managed TLS hostname + Platform root route and switches Edge.
  */
-export async function performEdgeOnboarding(
+export function performEdgeOnboarding(
   context: PerformOnboardingContext,
   request: ZelavisEdgeOnboardingRequest,
 ): Promise<ZelavisEdgeOnboardingResult> {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeOnboardingResult, IntegrationFailure> {
   const { routeStore, edgeManager } = context;
   const localTargetUrl = request.localTargetUrl ?? "http://127.0.0.1:3000";
 
@@ -130,26 +138,30 @@ export async function performEdgeOnboarding(
   };
 
   // 1. Put Hostname
-  await routeStore.putHostname(hostnameEntry);
+  yield* integrationValue(routeStore.putHostname(hostnameEntry));
 
   // 2. Issue or verify certificate if certificate controller is provided
-  if (tlsMode === "managed" && context.certificateController) {
-    try {
-      await context.certificateController.orderCertificate({
-        hostname,
-      });
-    } catch (certError) {
-      return {
-        mode: request.mode,
-        status: "failed",
-        hostname,
-        error: `Certificate issuance failed: ${certError instanceof Error ? certError.message : String(certError)}`,
-      };
-    }
+  const certificateController = context.certificateController;
+  if (tlsMode === "managed" && certificateController) {
+    const issued = yield* integration(() => certificateController.orderCertificate({
+      hostname,
+    })).pipe(
+      Effect.as(undefined),
+      Effect.catch((failure) => {
+        const certError = unwrapFailure(failure);
+        return Effect.succeed<ZelavisEdgeOnboardingResult>({
+          mode: request.mode,
+          status: "failed",
+          hostname,
+          error: `Certificate issuance failed: ${certError instanceof Error ? certError.message : String(certError)}`,
+        });
+      }),
+    );
+    if (issued) return issued;
   }
 
   // 3. Put Platform Root Route
-  await routeStore.putRoute({
+  yield* integrationValue(routeStore.putRoute({
     id: "platform:root",
     scope: "platform",
     hostname,
@@ -160,25 +172,28 @@ export async function performEdgeOnboarding(
     priority: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  });
+  }));
 
   // 3. Compile publication
-  const compiled = await routeStore.compile();
+  const compiled = yield* integrationValue(routeStore.compile());
   const pubSummary = toPublicationSummary(compiled);
 
   // 4. Switch edge adapter if Edge manager is active
   if (edgeManager) {
-    try {
-      await edgeManager.switchAdapter("traefik", pubSummary);
-    } catch (switchError) {
-      return {
-        mode: request.mode,
-        status: "failed",
-        hostname,
-        publication: pubSummary,
-        error: `Edge switch failed: ${switchError instanceof Error ? switchError.message : String(switchError)}`,
-      };
-    }
+    const switched = yield* integration(() => edgeManager.switchAdapter("traefik", pubSummary)).pipe(
+      Effect.as(undefined),
+      Effect.catch((failure) => {
+        const switchError = unwrapFailure(failure);
+        return Effect.succeed<ZelavisEdgeOnboardingResult>({
+          mode: request.mode,
+          status: "failed",
+          hostname,
+          publication: pubSummary,
+          error: `Edge switch failed: ${switchError instanceof Error ? switchError.message : String(switchError)}`,
+        });
+      }),
+    );
+    if (switched) return switched;
   }
 
   return {
@@ -188,4 +203,5 @@ export async function performEdgeOnboarding(
     canonicalUrl: `https://${hostname}`,
     publication: pubSummary,
   };
+  }));
 }

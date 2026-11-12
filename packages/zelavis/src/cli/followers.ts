@@ -1,0 +1,123 @@
+import { integerFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
+
+const usage =
+  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions|declarations> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--declarations N] [--url URL] [--token TOKEN] [--json]";
+
+const followers = (input: CliInput) =>
+  input.client.followers(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "followers commands need --project"));
+const partition = (input: CliInput) => required(input, 0, "A partition (a Tenant, or a divided Tenant's part key)");
+const needed = (input: CliInput, flag: string) => {
+  const value = integerFlag(input, flag);
+  if (value === undefined) throw new Error(`${flag} is required.`);
+  return value;
+};
+
+const table: CliTable = {
+  name: "followers",
+  usage,
+  switches: ["--allow-data-loss"],
+  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--cursor", "--partitions", "--timeout-millis", "--declarations"],
+  actions: {
+    stats: {
+      run: (input) => followers(input).stats(partition(input)),
+      text: (stats: { records: number; head: number; compactedTo: number; seeding: boolean }) =>
+        `${stats.records} records, head ${stats.head}, compacted to ${stats.compactedTo}${stats.seeding ? ", seed unfinished" : ""}`,
+    },
+    records: {
+      run: (input) => {
+        const after = integerFlag(input, "--after");
+        return followers(input).records(partition(input), { ...(after === undefined ? {} : { after }), limit: integerFlag(input, "--limit") ?? 256 });
+      },
+    },
+    log: {
+      run: (input) => followers(input).log(partition(input), {
+        ...(input.flags.has("--after") ? { after: input.flags.get("--after")! } : {}),
+        ...(input.flags.has("--from") ? { from: input.flags.get("--from")! } : {}),
+        limit: integerFlag(input, "--limit") ?? 256,
+      }),
+    },
+    hold: {
+      run: (input) => followers(input).hold(partition(input), {
+        id: required({ ...input, positional: [input.flags.get("--id") ?? ""] }, 0, "--id"),
+        position: needed(input, "--position"),
+        ttlMillis: needed(input, "--ttl-millis"),
+      }),
+      text: (result: { position: number }) => `Held at ${result.position}.`,
+    },
+    release: {
+      run: (input) => followers(input).release(partition(input), required({ ...input, positional: [input.flags.get("--id") ?? ""] }, 0, "--id")),
+      text: () => "Released.",
+    },
+    acknowledge: {
+      run: (input) => followers(input).acknowledge(partition(input), {
+        follower: required({ ...input, positional: [input.flags.get("--follower") ?? ""] }, 0, "--follower"),
+        position: needed(input, "--position"),
+      }),
+      text: (result: { follower: string; position: number }) => `${result.follower} holds through ${result.position}.`,
+    },
+    acknowledgments: {
+      run: (input) => followers(input).acknowledgments(partition(input)),
+      text: (result: { followers: ReadonlyArray<{ name: string; position: number }> }) =>
+        result.followers.map((follower) => `${follower.name}\t${follower.position}`).join("\n") || "No follower has reported.",
+    },
+    lease: {
+      run: (input) => followers(input).lease(partition(input)),
+      text: (status: { partition: string; held: boolean; expired?: boolean; lease?: { owner: string; epoch: number; expiresAt: number; acknowledgedHead: number } }) =>
+        status.lease === undefined
+          ? `${status.partition} has never had a writer lease.`
+          : `${status.partition}: ${status.lease.owner} at epoch ${status.lease.epoch}, ${status.expired ? "expired" : `until ${new Date(status.lease.expiresAt).toISOString()}`}, acknowledged through ${status.lease.acknowledgedHead}${status.held ? " (held here)" : ""}`,
+    },
+    promote: {
+      run: (input) => followers(input).promote(partition(input), {
+        owner: required({ ...input, positional: [input.flags.get("--owner") ?? ""] }, 0, "--owner"),
+        ttlMillis: needed(input, "--ttl-millis"),
+        ...(input.switches.has("--allow-data-loss") ? { allowDataLoss: true } : {}),
+      }),
+      text: (result: { lease: { owner: string; epoch: number }; lostPositions: number }) =>
+        `Promoted: ${result.lease.owner} is the writer at epoch ${result.lease.epoch}${result.lostPositions > 0 ? `; up to ${result.lostPositions} acknowledged positions may be lost` : ""}.`,
+    },
+    demote: {
+      run: (input) => followers(input).demote(partition(input)),
+      text: (result: { released: boolean }) => (result.released ? "Released." : "This database held no lease for the partition."),
+    },
+    feed: {
+      run: (input) => {
+        const partitions = input.flags.get("--partitions");
+        const timeoutMillis = integerFlag(input, "--timeout-millis");
+        const declarations = integerFlag(input, "--declarations");
+        return followers(input).feed({
+          ...(input.flags.has("--cursor") ? { cursor: input.flags.get("--cursor")! } : {}),
+          ...(partitions === undefined ? {} : { partitions: partitions.split(",").filter((name) => name.length > 0) }),
+          ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
+          ...(declarations === undefined ? {} : { declarations }),
+        });
+      },
+      text: (result: { cursor: string; partitions: string[]; resync: boolean; more: boolean; declarations: number }) =>
+        [...result.partitions, ...(result.resync ? ["resync: list the partitions"] : []), ...(result.more ? ["more: ask again"] : []), `cursor ${result.cursor}`, `declarations ${result.declarations}`].join("\n"),
+    },
+    partitions: {
+      run: (input) => followers(input).partitions({
+        ...(input.flags.has("--after") ? { after: input.flags.get("--after")! } : {}),
+        ...(integerFlag(input, "--limit") === undefined ? {} : { limit: integerFlag(input, "--limit")! }),
+      }),
+      text: (result: { partitions: ReadonlyArray<{ partition: string; head: number }>; next?: string }) =>
+        [...result.partitions.map((entry) => `${entry.partition}\t${entry.head}`), ...(result.next === undefined ? [] : [`next ${result.next}`])].join("\n") || "No partitions.",
+    },
+    declarations: {
+      run: (input) => followers(input).declarations(),
+      text: (result: { placements: { collections: Record<string, string> }; subdivisions: { tenants: Record<string, ReadonlyArray<string>> } }) =>
+        [
+          ...Object.entries(result.placements.collections).map(([collection, placement]) => `${collection}\t${placement}`),
+          ...Object.entries(result.subdivisions.tenants).map(([tenant, parts]) => `${tenant}\t${parts.join(",")}`),
+        ].join("\n") || "No declarations.",
+    },
+  },
+};
+
+/**
+ * `zelavis followers` — the leader side of an App Project's database for followers on other hosts, through the SDK
+ * client, so the CLI cannot drift from `client.followers(projectId)`.
+ */
+export function runFollowersCommand(args: readonly string[]): Promise<void> {
+  return runTable(table, args);
+}

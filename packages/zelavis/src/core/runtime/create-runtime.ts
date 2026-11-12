@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "./effect-boundary.js";
 import type {
   ZelavisEndpointGroup,
   ZelavisEndpointGroupInput,
@@ -30,11 +32,11 @@ async function resolveServiceInput<TService = unknown>(
 async function resolveServiceInput(
   input: ZelavisAnyRuntimeServiceInput,
 ): Promise<ZelavisRuntimeService<any>>;
-async function resolveServiceInput(
+function resolveServiceInput(
   input: ZelavisAnyRuntimeServiceInput,
 ): Promise<ZelavisRuntimeService<any>> {
-  return input;
-}
+    return present(integration(() => input));
+  }
 
 function toServiceMap<TService = unknown>(
   services: readonly ZelavisRuntimeService<TService>[],
@@ -63,11 +65,11 @@ function toEndpointGroupMap(
   return result;
 }
 
-async function resolveEndpointGroupInput(
+function resolveEndpointGroupInput(
   input: ZelavisEndpointGroupInput<any>,
 ): Promise<ZelavisEndpointGroup<any>> {
-  return input;
-}
+    return present(integration(() => input));
+  }
 
 function collectAuthenticators(
   endpointGroups: readonly ZelavisEndpointGroup<any>[],
@@ -77,31 +79,31 @@ function collectAuthenticators(
   );
 }
 
-async function runFinalizers(
+function runFinalizers(
   finalizers: ReadonlyArray<() => void | Promise<void>>,
 ): Promise<void> {
-  const errors: unknown[] = [];
+  return present(Effect.gen(function* () {
+    const errors: unknown[] = [];
 
-  for (const finalize of finalizers) {
-    try {
-      await finalize();
-    } catch (error) {
-      errors.push(error);
+    for (const finalize of finalizers) {
+      yield* integration(() => finalize()).pipe(
+        Effect.catch((failure) => Effect.sync(() => { errors.push(unwrapFailure(failure)); })),
+      );
     }
-  }
 
-  if (errors.length === 1) {
-    throw errors[0];
-  }
-  if (errors.length > 1) {
-    throw new AggregateError(
-      errors,
-      "Multiple Zelavis server finalizers failed.",
-    );
-  }
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        "Multiple Zelavis server finalizers failed.",
+      );
+    }
+  }));
 }
 
-export async function createServiceRuntime<TService = unknown>(
+export function createServiceRuntime<TService = unknown>(
   options: ZelavisServerOptions<TService>,
 ): Promise<ZelavisServerRuntime<TService>> {
   const compatibilityDate = options.compatibilityDate
@@ -110,24 +112,28 @@ export async function createServiceRuntime<TService = unknown>(
   const lifecycle = createServerLifecycle<TService>();
   const cleanups = [] as Array<() => void | Promise<void>>;
 
-  try {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisServerRuntime<TService>, IntegrationFailure> {
     for (const plugin of options.plugins ?? []) {
-      const cleanup = await plugin({
+      const cleanup = yield* integration(() => plugin({
         hooks: lifecycle,
         compatibilityDate,
-      });
+      }));
       if (typeof cleanup === "function") {
         cleanups.push(cleanup);
       }
     }
 
-    const services = await Promise.all(
-      (options.services ?? []).map(resolveServiceInput),
+    const services = yield* Effect.forEach(
+      options.services ?? [],
+      (input) => integration(() => resolveServiceInput(input)),
+      { concurrency: Math.max(1, options.services?.length ?? 1) },
     );
     const endpointGroups = [
       ...services.map(endpointGroupFromService),
-      ...(await Promise.all(
-        (options.endpointGroups ?? []).map(resolveEndpointGroupInput),
+      ...(yield* Effect.forEach(
+        options.endpointGroups ?? [],
+        (input) => integration(() => resolveEndpointGroupInput(input)),
+        { concurrency: Math.max(1, options.endpointGroups?.length ?? 1) },
       )),
     ];
     const resolvedRoutes = resolveMountedEndpoints(endpointGroups, {
@@ -147,43 +153,39 @@ export async function createServiceRuntime<TService = unknown>(
     ]);
     const baseDispatch = createZelavisDispatcher(resolvedRoutes, {
       authorize: options.authorize,
-      onError: async ({ error, request, executionContext, resolvedRoute }) => {
+      onError: ({ error, request, executionContext, resolvedRoute }) => present(Effect.gen(function* () {
         // Generated before the event so the logged cause and the client's
         // generic response carry the same id.
         const correlationId = createErrorCorrelationId();
-        await lifecycle.emit("error", {
+        (yield* integrationValue(lifecycle.emit("error", {
           error,
           request,
           context: executionContext,
           resolvedRoute,
           correlationId,
-        });
+        })));
         return (
-          (await options.onError?.({
+          ((yield* integrationValue(options.onError?.({
             error,
             request,
             executionContext,
             resolvedRoute,
             correlationId,
-          })) ?? toDefaultErrorResponse(error, correlationId)
+          })))) ?? toDefaultErrorResponse(error, correlationId)
         );
-      },
+      })),
       resolvePrincipal,
     }) as ZelavisServerDispatchHandler<TService>;
-    const dispatch: ZelavisServerDispatchHandler<TService> = async (
+    const dispatch: ZelavisServerDispatchHandler<TService> = (
       request,
       context,
-    ) => {
-      await lifecycle.emit("request", { request, context });
-      try {
-        const result = await baseDispatch(request, context);
-        await lifecycle.emit("response", { request, context, result });
-        return result;
-      } catch (error) {
-        await lifecycle.emit("error", { error, request, context });
-        throw error;
-      }
-    };
+    ) => present(Effect.gen(function* () {
+      yield* integration(() => lifecycle.emit("request", { request, context }));
+      return yield* integration(() => baseDispatch(request, context)).pipe(
+        Effect.tap((result) => integration(() => lifecycle.emit("response", { request, context, result }))),
+        Effect.tapError((failure) => integration(() => lifecycle.emit("error", { error: unwrapFailure(failure), request, context }))),
+      );
+    }));
     const fetch = createZelavisFetchHandler(
       dispatch,
     ) as ZelavisServerFetchHandler<TService>;
@@ -192,12 +194,12 @@ export async function createServiceRuntime<TService = unknown>(
     ) as ZelavisServerPlainHandler<TService>;
     let closePromise: Promise<void> | undefined;
 
-    await lifecycle.emit("start", {
+    yield* integration(() => lifecycle.emit("start", {
       services: serviceMap,
       endpointGroups: endpointGroupMap,
       routes: resolvedRoutes,
       compatibilityDate,
-    });
+    }));
 
     return {
       services: serviceMap,
@@ -209,24 +211,25 @@ export async function createServiceRuntime<TService = unknown>(
       fetch,
       plain,
       close() {
-        closePromise ??= (async () => {
-          await runFinalizers([
-            () => lifecycle.emit("close", { compatibilityDate }),
-            ...[...cleanups].reverse(),
-          ]);
-        })();
+        closePromise ??= runFinalizers([
+          () => lifecycle.emit("close", { compatibilityDate }),
+          ...[...cleanups].reverse(),
+        ]);
         return closePromise;
       },
     };
-  } catch (error) {
-    try {
-      await runFinalizers([...cleanups].reverse());
-    } catch (cleanupError) {
+  }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+    const error = unwrapFailure(Cause.squash(cause));
+    const cleanup = yield* integration(() => runFinalizers([...cleanups].reverse())).pipe(
+      Effect.as(undefined),
+      Effect.catch((failure) => Effect.succeed({ error: unwrapFailure(failure) })),
+    );
+    if (cleanup) {
       throw new AggregateError(
-        [error, cleanupError],
+        [error, cleanup.error],
         "Zelavis server startup and plugin cleanup both failed.",
       );
     }
     throw error;
-  }
+  }))));
 }

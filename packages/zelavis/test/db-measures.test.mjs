@@ -40,14 +40,16 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-measure-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({
         name: "items",
         ...(measures === undefined ? {} : { measures }),
       });
       for (const [id, data] of rows) yield* docs.insert({ collection: "items", id, data });
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
   const sum = (docs, input) => docs.summarize({ collection: "items", measure: "price", ...input });
@@ -62,6 +64,16 @@ for (const [engine, open] of engines) {
       assert.deepEqual(yield* sum(docs, { op: "min" }), { value: 0, documents: 4 });
       assert.deepEqual(yield* sum(docs, { op: "max" }), { value: 30, documents: 4 });
     })));
+
+  test(`${engine}: a document without a value is never read as zero, wherever it sits`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // The unpriced document is written between two priced ones, so its
+      // identifier falls inside the range the priced ones span. A measure read
+      // as an array indexed by identifier would hand back a zero for it.
+      assert.deepEqual(yield* sum(docs, { op: "count" }), { value: 2, documents: 2 });
+      assert.deepEqual(yield* sum(docs, { op: "avg" }), { value: 15, documents: 2 });
+      assert.deepEqual(yield* sum(docs, { op: "min" }), { value: 10, documents: 2 });
+    }), { rows: [["a", { price: 10 }], ["b", { region: "eu" }], ["c", { price: 20 }]] }));
 
   test(`${engine}: a filter narrows before the measure is read`, (t) =>
     setup(t, (docs) => Effect.gen(function* () {

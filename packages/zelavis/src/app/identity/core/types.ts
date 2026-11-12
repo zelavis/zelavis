@@ -2,6 +2,7 @@ import type { IdentityRepositories } from "../contracts/repositories.js";
 import type { AccountService } from "../services/account-service.js";
 import type { AuthenticationService } from "../services/authentication-service.js";
 import type { CredentialService } from "../services/credential-service.js";
+import type { RegistrationService } from "../services/registration-service.js";
 import type { SessionService } from "../services/session-service.js";
 import type { AuthSecurityService } from "../services/security-service.js";
 import type { ZelavisRequestAuthenticator } from "../../../core/index.js";
@@ -37,6 +38,7 @@ export interface IdentityMethodPlugin {
 }
 
 export interface IdentityContext {
+  sessionCookieName?: string | false;
   /** Explicit Project authority for this auth instance, when it is Project-owned. */
   projectId?: string;
   config: Record<string, unknown>;
@@ -51,6 +53,7 @@ export interface IdentityApi {
   sessions: SessionService;
   authentication: AuthenticationService;
   security: AuthSecurityService;
+  registration: RegistrationService;
   requestAuthenticator: ZelavisRequestAuthenticator;
 }
 
@@ -76,6 +79,7 @@ export interface IdentityBootstrapResult {
 }
 
 export interface IdentityBootstrapCapability {
+  isComplete(): Promise<boolean>;
   status(): Promise<IdentityBootstrapStatus>;
   bootstrap(input: IdentityBootstrapInput): Promise<IdentityBootstrapResult>;
 }

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -13,8 +13,10 @@ assert.ok(['local', 'npm'].includes(mode));
 const previous = await realpath('/opt/zelavis/current');
 const from = JSON.parse(await readFile(join(previous, 'manifest.json'), 'utf8')).version;
 assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
-const to = JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
+let to = process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION || JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
+import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
+import { updateToLocalCandidate } from './lib/candidate-update.mjs';
 const load = (root, file) => import(pathToFileURL(join(root, 'platform/dist', file)));
 let { createZelavisClient } = await load(previous, 'sdk/fetch.js');
 const baseUrl = 'http://127.0.0.1:3000';
@@ -51,6 +53,7 @@ const executingVersion = () => projectClient(id).plugins.engineproof.engine.get(
 assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
 // A genuine npm catalogue Project stays untouched by the historical fixture.
 // This is the path behind Open that development-only manifests failed to test.
+await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/wordpress');
 const catalogueApp = await client.projects.create({ id: 'catalogue-wordpress', name: 'Catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
 const catalogueDescriptor = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
 const catalogueControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${catalogueApp.id}/proxy/zelavis/api/v1/runtime/config`;
@@ -59,25 +62,53 @@ const catalogueBeforeStatus = initialCatalogueResponse.status;
 await initialCatalogueResponse.arrayBuffer();
 const wp = await client.projects.get('qualification-wordpress');
 assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
-const wpData = '/var/lib/zelavis/projects/qualification-wordpress/.zelavis';
-await writeFile(join(wpData, 'wordpress/integration-preserved.txt'), 'Application content stays outside recipe updates.');
-const wpFiles = ['wordpress-native.json', 'nginx.conf', 'php-fpm.conf', 'wordpress/wp-config.php', 'wordpress/wp-includes/version.php', 'wordpress/integration-preserved.txt'];
-const fingerprints = async () => Object.fromEntries(await Promise.all(wpFiles.map(async file => {
-  const path = join(wpData, file), metadata = await stat(path);
+// Where WordPress lives: its software, configuration and content are never touched by a recipe update.
+const wpProject = '/var/lib/zelavis/projects/qualification-wordpress';
+const wpData = join(wpProject, 'app');
+/**
+ * The layout contract of the recipe the Project runs: 0 for the hand-written runtime of releases before
+ * alpha.26 (no install manifest), 1 keeps the server's files in app/, 2 in .zelavis/server.
+ */
+const wpContract = async () => JSON.parse(await readFile(join(wpProject, '.zelavis/recipe/package/package.json'), 'utf8')).zelavis.project.install?.contract ?? 0;
+// The hand-written runtime kept the site in .zelavis/wordpress; taking it over renames it into app/site, so
+// the same files keep their inode and modification time across the move.
+const wpSite = async () => (await wpContract()) === 0 ? join(wpProject, '.zelavis/wordpress') : join(wpData, 'site');
+await writeFile(join(await wpSite(), 'integration-preserved.txt'), 'Application content stays outside recipe updates.');
+const wpFiles = ['wp-config.php', 'wp-includes/version.php', 'integration-preserved.txt'];
+const fingerprints = async () => { const site = await wpSite(); return Object.fromEntries(await Promise.all(wpFiles.map(async file => {
+  const path = join(site, file), metadata = await stat(path);
   return [file, { digest: createHash('sha256').update(await readFile(path)).digest('hex'),
     uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
-})));
+}))); };
 const appFilesBefore = await fingerprints();
-const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).map(async file => {
-  const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
-  return `${value.workloadId}:${value.pid}`;
+const processRecords = async () => Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).filter(file => file.endsWith('.json')).map(async file =>
+  JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'))));
+// The bound integration host is the Platform's own process for the Project; the app's processes (database, PHP, web server) are the application's.
+const isBoundHost = value => value.args?.includes('--integration') && value.args.some(argument => String(argument).endsWith('_node-project-runner.js'));
+const identities = async (keep = () => true) => (await Promise.all((await processRecords()).filter(keep).map(async value => {
+  const source = await readFile(`/proc/${value.pid}/stat`, 'utf8');
+  const startTicks = source.slice(source.lastIndexOf(')') + 2).split(' ')[19];
+  assert.match(startTicks, /^\d+$/);
+  return `${value.workloadId}:${value.pid}:${startTicks}`;
 }))).sort();
+const diagnosticIdentities = async () => {
+  const report = await client.debug.processes();
+  assert.equal(report.truncated, false);
+  assert.deepEqual(report.duplicates, [], 'Process diagnostics must show no duplicate workloads');
+  return (await processRecords()).map(value => {
+    const process = report.processes.find(entry => entry.pid === value.pid);
+    assert.ok(process, `Diagnostics must include supervised process ${value.pid}`);
+    return `${value.workloadId}:${process.pid}:${process.startedAt}`;
+  }).sort();
+};
 const wpClient = projectClient(wp.id);
 const initialBound = await wpClient.runtime.config();
 assert.equal(initialBound.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
 const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
 const before = await identities();
+const agentDescriptor = async () => JSON.parse(await readFile('/var/lib/zelavis/agent/agent.json', 'utf8'));
+const agentBefore = await agentDescriptor().catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
 const hostPid = () => execFileSync('systemctl', ['show', 'zelavis.service', '-p', 'MainPID', '--value'], { encoding: 'utf8' }).trim();
 const initialPid = hostPid();
 // A changed installed template must be replaced by the selected release,
@@ -86,12 +117,13 @@ const unitFile = '/etc/systemd/system/zelavis.service';
 await writeFile(unitFile, `# Qualification marker: refresh during live root commit\n${await readFile(unitFile, 'utf8')}`);
 const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
 urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`, wpControl);
+let trafficTimeoutMs = agentBefore?.survivable ? 30_000 : 120_000;
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
 async function underTraffic(operation, label = "live operation") {
   let finished = false; const started = Date.now();
   const traffic = Promise.all(urls.map(async url => {
     do {
-      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(30_000) })
+      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(trafficTimeoutMs) })
         .catch(error => { throw Error(`${label}: ${url} failed after ${Date.now() - started}ms`, { cause: error }); });
       assert.ok([200, 302].includes(response.status), `${url}: ${response.status}`);
       await response.arrayBuffer(); counts[url]++;
@@ -108,6 +140,14 @@ async function run(command, args) {
   try { const result = await execute(command, args, { maxBuffer: 16 * 1024 * 1024, timeout: 300_000 }); return { code: 0, output: result.stdout + result.stderr }; }
   catch (error) { return { code: typeof error.code === 'number' ? error.code : 1, output: String(error.stdout ?? '') + String(error.stderr ?? '') + error.message }; }
 }
+// An older Debian ARM install may have the database server without the dump client the candidate recipe needs (x64 recipes bring
+// their own MariaDB). A Platform update that converts an earlier Agent restarts the WordPress app processes, and the candidate recipe
+// refuses to start them without it. The earlier release's own package set does not include the client, so this disposable guest gets
+// it from Debian directly, before the update, the way an operator would before updating such a host.
+if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() => true, () => false))) {
+  await promisify(execFile)('apt-get', ['install', '-y', '--no-install-recommends', 'mariadb-client'], { env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' }, maxBuffer: 16 * 1024 * 1024, timeout: 300_000 });
+  await access('/usr/bin/mariadb-dump');
+}
 await underTraffic(async () => {
   if (mode === 'npm') {
     const checked = await client.updates.check();
@@ -122,58 +162,55 @@ await underTraffic(async () => {
     }
     throw Error('Update action did not complete');
   }
-  // Before publication, substitute only the unavailable registry acquisition.
-  // Request coordination and execution come from the actual installed previous release.
-  execFileSync('systemctl', ['stop', 'zelavis-update.path']);
-  const { createNodeUpdateControl } = await load(previous, 'adapters/_node-updates.js');
-  const control = createNodeUpdateControl({ dataDirectory: '/var/lib/zelavis', schedule: false,
-    fetch: async () => Response.json({ alpha: to }) });
-  await control.check(); await control.apply("qualification-owner");
-  const { runUpdate } = await load(previous, 'adapters/_update-runner.js');
-  const result = await runUpdate({ prefix: '/opt/zelavis', dataDirectory: '/var/lib/zelavis', channelVersion: async () => to,
-    healthy: async () => (await fetch(`${baseUrl}/zelavis/api/v1/auth/bootstrap`)).ok,
-    sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
-    run: async (command, args) => {
-      if (command !== 'sh') return run(command, args);
-      assert.deepEqual(args, [join(previous, 'platform/dist/installation-assets/install.sh'), '--version', to, '--stage-only']);
-      const tree = '/opt/update-candidate';
-      const npmRoot = '/opt/update-npm';
-      await mkdir(join(tree, 'runtime'), { recursive: true }); await mkdir(npmRoot);
-      await writeFile(join(npmRoot, 'package.json'), '{"private":true}');
-      await cp(join(previous, 'runtime/node'), join(tree, 'runtime/node'), { recursive: true, verbatimSymlinks: true });
-      const node = join(tree, 'runtime/node/bin/node');
-      const installed = await run(node, [join(tree, 'runtime/node/lib/node_modules/npm/bin/npm-cli.js'), 'install', '--prefix', npmRoot,
-        '--registry=https://registry.npmjs.org', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund', '/input/zelavis.tgz']);
-      if (installed.code) return installed;
-      await rename(join(npmRoot, 'node_modules/zelavis'), join(tree, 'platform'));
-      await rename(join(npmRoot, 'node_modules'), join(tree, 'platform/node_modules'));
-      execFileSync('ln', ['-s', '..', join(tree, 'platform/node_modules/zelavis')]);
-      const pin = JSON.parse(await readFile(join(tree, 'platform/dist/installation-assets/release.json'), 'utf8')).nodeVersion;
-      assert.match(pin, /^\d+\.\d+\.\d+$/);
-      if (`v${pin}` !== execFileSync(node, ['--version'], { encoding: 'utf8' }).trim()) {
-        const name = `node-v${pin}-linux-${process.arch}`;
-        const archive = `/opt/${name}.tar.gz`, checksums = `/opt/${name}.checksums`;
-        for (const [remote, destination, bound] of [[`${name}.tar.gz`, archive, '268435456'], ['SHASUMS256.txt', checksums, '1048576']]) {
-          const fetched = await run('curl', ['--proto', '=https', '--fail', '--silent', '--show-error', '--max-time', '600', '--max-filesize', bound,
-            `https://nodejs.org/dist/v${pin}/${remote}`, '-o', destination]);
-          assert.equal(fetched.code, 0, fetched.output);
-        }
-        const expected = (await readFile(checksums, 'utf8')).split('\n').find(line => line.endsWith(`  ${name}.tar.gz`))?.split(' ')[0];
-        assert.match(expected ?? '', /^[a-f0-9]{64}$/);
-        assert.equal(createHash('sha256').update(await readFile(archive)).digest('hex'), expected);
-        const members = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim().split('\n');
-        assert.ok(members.every(member => (member === name || member.startsWith(`${name}/`)) && !member.split('/').includes('..')));
-        await rm(join(tree, 'runtime/node'), { recursive: true });
-        execFileSync('tar', ['--no-same-owner', '-xzf', archive, '-C', join(tree, 'runtime')]);
-        await rename(join(tree, 'runtime', name), join(tree, 'runtime/node'));
-      }
-      return run(node, [join(tree, 'platform/dist/cli.js'), 'install', '--from-npm', tree, '--stage-only']);
-    } });
-  assert.equal(result.state, 'succeeded', JSON.stringify(result));
-  execFileSync('systemctl', ['start', 'zelavis-update.path']);
+  await updateToLocalCandidate({ previous, to, baseUrl });
 });
+trafficTimeoutMs = 30_000;
 assert.equal(hostPid(), initialPid, 'Platform host must remain the same process');
-assert.deepEqual(await identities(), before, 'Project supervision must survive the update');
+const agentAfter = await agentDescriptor();
+assert.equal(agentAfter.release, to, 'Project Agent must execute the selected candidate');
+assert.equal(agentAfter.survivable, true);
+if (agentBefore?.survivable) assert.deepEqual(await identities(), before, 'Survivable Agent updates must preserve every Project PID');
+else {
+  assert.notDeepEqual(await identities(), before, 'The explicit pre-handover conversion restarts old piped workloads once');
+  const updated = await client.updates.status();
+  assert.match(updated.run.message, /Projects restarted once/);
+}
+const catalogueAfterConversion = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
+if (agentBefore?.survivable) assert.equal(catalogueAfterConversion, catalogueDescriptor);
+else {
+  // A deliberate restart prepares the same frozen recipe again with the
+  // restored Project's current timestamp. Every other descriptor field stays.
+  // `recipeStatus` is derived from the Marketplace listing the Platform now holds, not part of the lock: the candidate lists a newer
+  // recipe, so the Project reads as upgradeable, and the Platform never upgrades a Project on its own (the lock below is unchanged).
+  const { updatedAt: beforeTimestamp, recipeStatus: beforeStatus, ...beforeDescriptor } = JSON.parse(catalogueDescriptor);
+  const { updatedAt: afterTimestamp, recipeStatus: afterStatus, ...afterDescriptor } = JSON.parse(catalogueAfterConversion);
+  assert.deepEqual(afterDescriptor, beforeDescriptor, 'Conversion must preserve the frozen recipe and runtime configuration');
+  assert.equal(beforeStatus.state, 'current');
+  assert.equal(afterStatus.state, 'upgradeAvailable', 'The candidate lists a newer recipe, which the Project is offered but not moved to');
+  assert.ok(Date.parse(afterTimestamp) > Date.parse(beforeTimestamp), 'Conversion records its deliberate restart');
+}
+// The published previous Agent cannot preserve processes on its first
+// conversion. A second explicitly versioned local hop proves the survivable
+// production updater, client rebind and real systemd unit under continuous traffic.
+if (process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION) {
+  assert.equal(mode, 'local');
+  assert.ok(process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION);
+  const selected = await realpath('/opt/zelavis/current'), processes = await identities();
+  const diagnostics = await diagnosticIdentities();
+  const firstAgent = await agentDescriptor();
+  to = process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION;
+  process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION = to;
+  await underTraffic(() => updateToLocalCandidate({ previous: selected, to, baseUrl }), 'survivable Agent forward update');
+  const nextAgent = await agentDescriptor();
+  assert.equal(nextAgent.release, to); assert.notEqual(nextAgent.pid, firstAgent.pid);
+  assert.deepEqual(await identities(), processes, 'Forward Agent handover must preserve every Project process');
+  assert.deepEqual(await diagnosticIdentities(), diagnostics, 'Diagnostics must retain each supervised PID and start time');
+  assert.equal(hostPid(), initialPid);
+  const status = await client.updates.status();
+  assert.equal(status.run.state, 'succeeded', JSON.stringify(status));
+  assert.match(status.run.message, /without restarting Projects/);
+  console.log('PASS: converted Agent updated again with every Project PID and all traffic preserved.');
+}
 assert.equal(JSON.parse(await readFile('/opt/zelavis/installation.json', 'utf8')).version, to);
 assert.ok(!(await readFile(unitFile, 'utf8')).includes('Qualification marker'), 'Live root commit must refresh installed unit templates');
 assert.equal((await descriptor(id)).engine.runtime.version, from, 'Parent update preserves App engine');
@@ -223,10 +260,20 @@ assert.equal(catalogueAfter.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(catalogueAfter.recipe.version, catalogueApp.recipe.version);
 assert.equal(catalogueAfter.runtime.url, catalogueApp.runtime.url);
 assert.equal(catalogueAfter.preview.port, catalogueApp.preview.port);
-assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueDescriptor, 'Fixing Open never rewrites the frozen host descriptor');
+assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueAfterConversion, 'Forward updates and Open never rewrite the frozen host descriptor');
 const catalogueConfig = await projectClient(catalogueApp.id).runtime.config();
 assert.equal(catalogueConfig.services.find(service => service.name === '@zelavis/wordpress').kind, 'app');
 for (const capability of ['database', 'identity', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
+// Keep sending Gateway requests while the bound App remains on its old engine.
+// The Project host's replay cache holds 128 commands. A layout hold should not
+// issue a new private command for every public request.
+for (let batch = 0; batch < 17; batch++) {
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    const response = await fetch(catalogueControl, { headers: { cookie }, signal: AbortSignal.timeout(30_000) });
+    assert.equal(response.status, 200, 'The adopted WordPress Gateway remains available during the layout hold');
+    await response.arrayBuffer();
+  }));
+}
 urls.push(catalogueControl);
 counts[catalogueControl] = 0;
 const beforeIntegration = await wpClient.runtime.config();
@@ -239,14 +286,60 @@ for (const capability of ['database', 'identity', 'storage', 'workloads']) {
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
 const integrationBefore = await identities();
+const appIdentitiesBefore = identities(value => !isBoundHost(value));
+const hostIdentitiesBefore = await identities(isBoundHost);
+const contractBefore = await wpContract();
 
+const upgradeStarted = Date.now();
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
+const upgradeMillis = Date.now() - upgradeStarted;
+// Where the combined upgrade spent its time, from the Project log (each phase is logged with its duration).
+const upgradeLog = await client.projects.logs(wp.id);
+for (const entry of upgradeLog) {
+  if (Date.parse(entry.timestamp) >= upgradeStarted - 1_000 || /Staying on Zelavis/.test(entry.message)) console.log(`UPGRADE LOG ${entry.timestamp} ${entry.stream} ${entry.message.slice(0, 400)}`);
+}
+console.log(`UPGRADE: the combined data migration and recipe upgrade took ${upgradeMillis}ms (${new Date(upgradeStarted).toISOString()} to ${new Date(upgradeStarted + upgradeMillis).toISOString()})`);
+// A regression bound tighter than the request deadline above, which stays 90 s. Verifying the two engines the migration runs is
+// most of the upgrade (the Project log says how long it took). It runs on a worker thread; on the main event loop under this
+// traffic it took 52 to 89 s and the whole upgrade 75 to 89 s, which this bound refuses.
+assert.ok(upgradeMillis < 70_000, `The combined data migration and recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
 assert.equal(integration.runtime.status, 'running');
+// One normal request did both: the bound App's data is in the Platform's layout (migrated, with the earlier layout retained beside
+// it, when the two releases write different layouts), and the recipe moved.
+assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
+const boundRoot = join(wpProject, '.zelavis/integration');
+// The layout a release writes, from its runtime artifact; a release that declares none wrote layout 2.
+const releaseFormat = async version => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
+const [formatFrom, formatTo] = [await releaseFormat(from), await releaseFormat(to)];
+if (formatFrom !== formatTo) {
+  assert.deepEqual([integration.dataMigration?.from, integration.dataMigration?.to], [formatFrom, formatTo], 'The upgrade migrates the bound App data across the layout change');
+  assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `The same request brings the bound App data to layout ${formatTo}`);
+  assert.ok((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), 'The earlier data layout is retained beside the migrated data');
+} else {
+  assert.equal(integration.dataMigration, undefined, `Both releases write layout ${formatTo}: the upgrade migrates nothing`);
+}
 assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
 assert.equal(integration.runtimeUpdate, undefined);
-assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+const contractAfter = await wpContract();
+if (contractAfter === contractBefore && integration.dataMigration === undefined) {
+  assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+} else if (contractAfter === contractBefore) {
+  // The data migration stopped the bound host to move its database to the Platform's layout and started it again on the Platform's
+  // engine, so that one process is replaced. The application itself is untouched: every other process keeps its identity.
+  const keepsApp = value => !isBoundHost(value);
+  assert.deepEqual(await identities(keepsApp), await appIdentitiesBefore, 'The migration replaces only the bound host; app processes keep their identities');
+  assert.notDeepEqual(await identities(isBoundHost), hostIdentitiesBefore, 'The bound host was replaced by the migration');
+  console.log('PASS: the combined migration and recipe upgrade replaced only the bound integration host and kept every app process.');
+} else {
+  // Moving to the layout where app/ is the application alone changes where the servers read their configuration,
+  // so their processes are replaced while requests wait (the traffic above proves none failed).
+  assert.equal(contractAfter, 2);
+  assert.deepEqual((await readdir(wpData)).sort(), ['db', 'site'], 'app/ holds WordPress and its database alone');
+  await stat(join(wpProject, '.zelavis/server/Caddyfile'));
+  console.log(`PASS: WordPress moved from recipe contract ${contractBefore} to 2 under traffic; app/ holds the application alone.`);
+}
 assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
 await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
 assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
@@ -255,8 +348,8 @@ const choices = await client.projects.versions(id);
 assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
 assert.ok(choices.versions.some(entry => entry.version === to && entry.status === 'available'));
-for (const version of [to, from]) {
-  const switched = await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`);
+const dataFormatOf = version => choices.versions.find(entry => entry.version === version).dataFormat;
+const verifySelected = async (switched, version, label) => {
   assert.equal(switched.runtime.status, 'running');
   assert.equal(switched.preview.port, app.preview.port);
   const selected = await descriptor(id);
@@ -266,7 +359,23 @@ for (const version of [to, from]) {
   const recipe = JSON.parse(await readFile(join(engineRoot, 'platform/services/zelavis-app/package.json'), 'utf8'));
   assert.equal(switched.recipe.version, recipe.version);
   assert.deepEqual((await data().documents.get('continuity', 'stable')).data, { value: 'retained across real engine versions' });
-  console.log(`PASS: live App selection ${version} with matching recipe, same preview and retained database record.`);
+  console.log(`PASS: ${label} ${version} with matching recipe, same preview and retained database record.`);
+};
+if (dataFormatOf(from) === dataFormatOf(to)) {
+  for (const version of [to, from]) {
+    await verifySelected(await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`), version, 'live App selection');
+  }
+} else {
+  // The two engines write different data layouts, so a running App is never switched in place: the plain request is refused and
+  // the explicit restart stops the App, migrates its data (the earlier layout stays beside it) and starts it on the new engine.
+  // That has downtime by design, so it is not run under traffic; it must still finish within the same deadline.
+  await assert.rejects(client.projects.switchVersion(id, to), { status: 409 }, 'A running App is not switched across a data layout');
+  assert.equal((await descriptor(id)).engine.runtime.version, from, 'The refused switch changed nothing');
+  const crossingStarted = Date.now();
+  const crossed = await client.projects.upgrade(id, { engineVersion: to, restart: true });
+  assert.ok(Date.now() - crossingStarted < 90_000, 'The restarting layout switch finishes within the deadline');
+  assert.deepEqual([crossed.dataMigration?.from, crossed.dataMigration?.to], [dataFormatOf(from), dataFormatOf(to)], 'The migration is reported');
+  await verifySelected(crossed, to, 'App selection across a data layout change (stop, migrate, start)');
 }
 for (const version of ['latest', '^2.0.0', '99.0.0']) await assert.rejects(client.projects.switchVersion(id, version), { status: 400 });
 const historical = await client.projects.create({ id: 'explicit-historical', name: 'Historical', engineVersion: from, start: false });
@@ -282,16 +391,33 @@ assert.equal(latest.engineVersion, to); assert.equal((await descriptor(latest.id
 const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpress', name: 'Fresh catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
 assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
-await client.projects.remove(freshManaged.id); await client.projects.remove(catalogueApp.id);
+await client.projects.remove(freshManaged.id);
+// A recipe the Marketplace only lists is acquired through the registry; the Project created from it is locked with the
+// package's install methods, starts and serves. A second Project of the same recipe, created after the first
+// is deleted, must still run: they share one recipe driver, which must not run from the deleted Project's files.
+await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/dokuwiki');
+for (const wikiId of ['installed-catalogue-dokuwiki', 'recreated-catalogue-dokuwiki']) {
+  const wiki = await client.projects.create({ id: wikiId, name: 'Installed catalogue DokuWiki', recipeName: '@zelavis/dokuwiki' });
+  assert.equal(wiki.recipe.install?.method, 'native', 'A Project from an installed catalogue recipe is locked with its install methods');
+  assert.equal(wiki.runtime.status, 'running', `${wikiId} starts: ${JSON.stringify(wiki.runtime)}`);
+  const page = await fetch(`http://127.0.0.1:${wiki.preview.port}/doku.php`);
+  assert.equal(page.status, 200, `${wikiId} serves DokuWiki through its preview`);
+  await page.arrayBuffer();
+  await client.projects.remove(wikiId);
+}
+console.log('PASS: an acquired catalogue recipe runs again for a Project created after the first was deleted.');
+await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
-  platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
+  platformHostPreserved: true, projectProcessesPreserved: agentBefore?.survivable === true,
+  agent: { convertedOnce: agentBefore?.survivable !== true, forwardUpdateProved: Boolean(process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION), release: to },
+  parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
-  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true },
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchangedAfterConversion: true, conversionRefreshedTimestamp: agentBefore?.survivable !== true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
   artifact: JSON.parse(await readFile(`/opt/zelavis/releases/${to}/runtime-artifact.json`, 'utf8')).digest };
 await writeFile('/tmp/zelavis-update-proof.json', JSON.stringify(proof, null, 2));
-console.log(`PASS: published ${from} updates to ${to}; no stopped Projects or refused HTTP requests (${mode}).`);
+console.log(`PASS: published ${from} updates to ${to}; explicit Agent conversion when needed, no refused HTTP requests (${mode}).`);

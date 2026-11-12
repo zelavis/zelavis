@@ -1,4 +1,6 @@
 import * as prompts from "@clack/prompts";
+import { Effect } from "effect";
+import { IntegrationFailure, evaluate, integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import colors from "picocolors";
 
 import {
@@ -35,27 +37,29 @@ function dashboardUrl(url?: string) {
   }
 }
 
-export async function runSetupWizard(
+const messageOf = (failure: IntegrationFailure): string => {
+  const error = unwrapFailure(failure);
+  return error instanceof Error ? error.message : String(error);
+};
+
+export function runSetupWizard(
   options: SetupWizardOptions = {},
 ): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error(
+    return yield* Effect.fail(new IntegrationFailure(new Error(
       "zelavis setup is interactive and requires a terminal. For automation, use zelavis bootstrap with --email or --username and --password-stdin.",
-    );
+    )));
   }
 
   prompts.intro(colors.cyan(colors.bold("◉ Zelavis setup")));
   const statusSpinner = prompts.spinner();
   statusSpinner.start("Connecting to the Platform");
 
-  let status;
-  try {
-    status = await readBootstrapStatus(options);
-    statusSpinner.stop("Platform is online");
-  } catch (error) {
-    statusSpinner.error("Could not reach the Platform");
-    throw error;
-  }
+  const status = yield* integration(() => readBootstrapStatus(options)).pipe(
+    Effect.tap(() => Effect.sync(() => statusSpinner.stop("Platform is online"))),
+    Effect.tapError(() => Effect.sync(() => statusSpinner.error("Could not reach the Platform"))),
+  );
 
   if (!status.required) {
     prompts.note(dashboardUrl(options.url), "Dashboard");
@@ -86,52 +90,52 @@ export async function runSetupWizard(
 
   const provider = status.enrollmentProviders.length === 1
     ? status.enrollmentProviders[0]!
-    : await prompts.select({
+    : yield* integration(() => prompts.select({
         message: "Choose the owner credential provider",
         options: status.enrollmentProviders.map((value) => ({ value, label: value })),
-      });
+      }));
   if (cancelled(provider)) return;
 
   const acceptsUsername = provider === "password";
-  const identifier = await prompts.text({
+  const identifier = yield* integration(() => prompts.text({
     message: acceptsUsername ? "Owner email or username" : "Owner email",
     placeholder: "owner@example.com",
     validate: (value) => required(value, acceptsUsername ? "An email or username" : "An email"),
-  });
+  }));
   if (cancelled(identifier)) return;
 
-  const displayName = await prompts.text({
+  const displayName = yield* integration(() => prompts.text({
     message: "Display name",
     placeholder: "Platform Owner (optional)",
-  });
+  }));
   if (cancelled(displayName)) return;
 
-  const password = await prompts.password({
+  const password = yield* integration(() => prompts.password({
     message: "Owner password",
     validate: (value) =>
       !value || value.length < 15 ? "Use at least 15 characters." : undefined,
-  });
+  }));
   if (cancelled(password)) return;
-  const passwordConfirmation = await prompts.password({
+  const passwordConfirmation = yield* integration(() => prompts.password({
     message: "Confirm owner password",
     validate: (value) => value !== password ? "The passwords do not match." : undefined,
-  });
+  }));
   if (cancelled(passwordConfirmation)) return;
 
   let bootstrapToken = options.bootstrapToken ?? process.env.ZELAVIS_BOOTSTRAP_TOKEN;
   if (!bootstrapToken) {
-    const enteredToken = await prompts.password({
+    const enteredToken = yield* integration(() => prompts.password({
       message: "One-time bootstrap token",
       validate: (value) => !value || value.length < 32 ? "The token must contain at least 32 characters." : undefined,
-    });
+    }));
     if (cancelled(enteredToken)) return;
     bootstrapToken = enteredToken;
   }
 
-  const confirmed = await prompts.confirm({
+  const confirmed = yield* integration(() => prompts.confirm({
     message: `Create ${String(identifier)} as the Platform owner?`,
     initialValue: true,
-  });
+  }));
   if (cancelled(confirmed)) return;
   if (!confirmed) {
     prompts.cancel("Setup cancelled. No changes were made.");
@@ -140,11 +144,12 @@ export async function runSetupWizard(
 
   const createSpinner = prompts.spinner();
   createSpinner.start("Creating the Platform owner");
-  try {
+  const ownerToken = bootstrapToken;
+  yield* Effect.gen(function* () {
     const identity = String(identifier).trim();
-    const result = await bootstrapPlatformOwner(
+    const result = yield* integration(() => bootstrapPlatformOwner(
       {
-        bootstrapToken,
+        bootstrapToken: ownerToken,
         provider: String(provider),
         ...(acceptsUsername && !identity.includes("@")
           ? { username: identity }
@@ -153,21 +158,23 @@ export async function runSetupWizard(
         password: String(password),
       },
       options,
-    );
+    ));
     createSpinner.stop("Platform owner created");
 
     const edgeSpinner = prompts.spinner();
     edgeSpinner.start("Checking Zelavis Edge");
     let edgeClient: ReturnType<typeof createZelavisClient>["edge"] | undefined;
-    try {
-      const root = new URL(dashboardUrl(options.url));
-      const client = createZelavisClient({
-        baseUrl: root.origin,
-        rootPath: root.pathname,
-        headers: { authorization: `Bearer ${result.session.token}` },
+    yield* Effect.gen(function* () {
+      const client = yield* evaluate(() => {
+        const root = new URL(dashboardUrl(options.url));
+        return createZelavisClient({
+          baseUrl: root.origin,
+          rootPath: root.pathname,
+          headers: { authorization: `Bearer ${result.session.token}` },
+        });
       });
       edgeClient = client.edge;
-      const edge = await edgeClient.status();
+      const edge = yield* integration(() => client.edge.status());
       const ready = edge.adapters.filter(
         (adapter) => adapter.detection.state === "available",
       );
@@ -178,16 +185,17 @@ export async function runSetupWizard(
             ? `Edge found ${ready.map((adapter) => adapter.id).join(", ")}`
             : "No ready Edge adapter found",
       );
-    } catch (error) {
+    }).pipe(Effect.catch((failure) => Effect.sync(() => {
       edgeSpinner.stop("Edge host integration is not ready yet");
       prompts.note(
-        `${error instanceof Error ? error.message : String(error)}\nThe Platform stays on its private listener; no unverified proxy was made live.`,
+        `${messageOf(failure)}\nThe Platform stays on its private listener; no unverified proxy was made live.`,
         "Reverse proxy",
       );
-    }
+    })));
 
     if (edgeClient) {
-      const mode = await prompts.select({
+      const edge = edgeClient;
+      const mode = yield* integration(() => prompts.select({
         message: "Platform hostname & TLS ingress",
         options: [
           { value: "managed", label: "Zelavis-managed HTTPS (recommended)", hint: "verify DNS and enable automated TLS" },
@@ -195,10 +203,10 @@ export async function runSetupWizard(
           { value: "later", label: "Configure later", hint: "keep private listener, configure Edge later" },
         ],
         initialValue: "later",
-      });
+      }));
 
       if (!prompts.isCancel(mode) && (mode === "managed" || mode === "external")) {
-        const hostnameInput = await prompts.text({
+        const hostnameInput = yield* integration(() => prompts.text({
           message: "Platform Hostname (FQDN)",
           placeholder: "panel.example.com",
           validate: (val) => {
@@ -208,28 +216,30 @@ export async function runSetupWizard(
               return "Must be a valid fully qualified domain name (e.g. panel.example.com)";
             }
           },
-        });
+        }));
 
         if (!prompts.isCancel(hostnameInput) && String(hostnameInput).trim()) {
           const onboardSpinner = prompts.spinner();
           onboardSpinner.start("Configuring Platform ingress");
-          try {
-            const onboardResult = await edgeClient.onboardHostname({
-              mode,
-              hostname: String(hostnameInput).trim(),
-            });
-            if (onboardResult.status === "configured") {
-              onboardSpinner.stop(`Ingress configured: ${onboardResult.canonicalUrl}`);
-            } else {
-              onboardSpinner.stop(`Onboarding: ${onboardResult.status}`);
-              if (onboardResult.error) {
-                prompts.note(onboardResult.error, "Edge Notice");
+          yield* integration(() => edge.onboardHostname({
+            mode,
+            hostname: String(hostnameInput).trim(),
+          })).pipe(
+            Effect.tap((onboardResult) => Effect.sync(() => {
+              if (onboardResult.status === "configured") {
+                onboardSpinner.stop(`Ingress configured: ${onboardResult.canonicalUrl}`);
+              } else {
+                onboardSpinner.stop(`Onboarding: ${onboardResult.status}`);
+                if (onboardResult.error) {
+                  prompts.note(onboardResult.error, "Edge Notice");
+                }
               }
-            }
-          } catch (err) {
-            onboardSpinner.stop("Edge onboarding deferred");
-            prompts.note(err instanceof Error ? err.message : String(err), "Edge Notice");
-          }
+            })),
+            Effect.catch((failure) => Effect.sync(() => {
+              onboardSpinner.stop("Edge onboarding deferred");
+              prompts.note(messageOf(failure), "Edge Notice");
+            })),
+          );
         }
       }
     }
@@ -238,8 +248,6 @@ export async function runSetupWizard(
       "Ready",
     );
     prompts.outro(colors.green(colors.bold("✓ Zelavis is ready.")));
-  } catch (error) {
-    createSpinner.error("Owner creation failed");
-    throw error;
-  }
+  }).pipe(Effect.onError(() => Effect.sync(() => createSpinner.error("Owner creation failed"))));
+  }));
 }

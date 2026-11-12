@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
-import { digestArtifactDirectory, loadRecipeArtifact } from "./_recipe-artifact.js";
+import { digestArtifactDirectory, verifyRecipeArtifact } from "./_recipe-artifact.js";
 import { evaluate, integration, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { ZELAVIS_VERSION } from "../version.js";
@@ -75,7 +75,9 @@ export const verifyNodeProjectRelease = Effect.fn("ProjectRelease.verify")(funct
     if (value.id !== projectId || typeof value.recipe?.name !== "string" || typeof value.recipe?.version !== "string" || typeof value.recipe?.artifact?.digest !== "string") throw new Error("Project release has a mismatched identity or recipe lock.");
     return value;
   });
-  yield* integration(() => loadRecipeArtifact(snapshot, { name: record.recipe.name, version: record.recipe.version, digest: record.recipe.artifact.digest }));
+  // Identity only: this runs in the persistent host, whose code may be older than the recipe. The engine
+  // that loads the snapshot validates it.
+  yield* integration(() => verifyRecipeArtifact(snapshot, { name: record.recipe.name, version: record.recipe.version, digest: record.recipe.artifact.digest }));
   return { snapshot, record };
 });
 

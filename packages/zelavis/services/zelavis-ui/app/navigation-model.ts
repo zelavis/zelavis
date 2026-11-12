@@ -1,0 +1,164 @@
+import { servicePages } from "./service-pages.ts";
+import { object, type Config, type Project } from "./api.ts";
+import { unmounted } from "./mount.ts";
+
+export type PanelItem = { label: string; path: string; branch?: string; /** Shown under the item above it, one step in. */ nested?: true };
+export type Panel = { id: string; label: string; path: string; items: PanelItem[] };
+/**
+ * `flat` is the desktop shell: the content area already shows the Projects overview, so Projects is an ordinary item of the root
+ * slide with the projects listed under it, not a slide of its own. On a narrow screen the sidebar is the whole app and keeps the slide.
+ */
+export function panelsFor(projectId?: string, project?: Project, runtime?: Config, menu?: unknown, projectList: readonly Project[] = [], flat = false): Panel[] {
+  const root: Panel = { id: "platform", label: "Platform", path: "/", items: [
+    { label: "Projects", path: "/", branch: "projects" }, { label: "Marketplace", path: "/marketplace" },
+    { label: "Server", path: "/server", branch: "server" }, { label: "Assistant", path: "/assistant" }, { label: "Settings", path: "/settings", branch: "settings" }
+  ] };
+  const projects: Panel = { id: "projects", label: "Projects", path: "/", items: [{ label: "Overview", path: "/" }, { label: "Create project", path: "/projects?new=1" }] };
+  const server: Panel = { id: "server", label: "Server", path: "/server", items: [{ label: "Overview", path: "/server" }, ...["Nodes", "Domains", "Database", "Backends", "Backups", "Logs"].map(label => ({ label, path: `/server/${label.toLowerCase()}` }))] };
+  const settings: Panel = { id: "settings", label: "Settings", path: "/settings", items: [{ label: "Overview", path: "/settings" }] };
+  for (const entry of projectList) projects.items.push({ label: entry.name, path: `/projects/${encodeURIComponent(entry.id)}`, branch: "project" });
+  if (flat) root.items.splice(0, 1, { label: "Projects", path: "/projects" }, ...projectList.map((entry): PanelItem => ({ label: entry.name, path: `/projects/${encodeURIComponent(entry.id)}`, branch: "project", nested: true })));
+  if (!projectId) {
+    if (runtime) for (const page of servicePages(runtime)) {
+      if (page.src && !root.items.some(item => item.path === page.path)) root.items.push({ label: page.title, path: page.path + (Object.keys(page.search).length ? `?${new URLSearchParams(page.search)}` : "") });
+    }
+    return [root, projects, server, settings];
+  }
+  const path = `/projects/${encodeURIComponent(projectId)}`;
+  if (!projects.items.some(item => item.path === path)) projects.items.push({ label: project?.name ?? "Project", path, branch: "project" });
+  const tabs = project ? ["Database", "Auth", "Content", "Storage", "Workloads"].filter(label => !object(project.recipe).managed || object(object(runtime?.capabilities)[label === "Content" ? "database" : label.toLowerCase()]).used === true) : [];
+  const projectPanel: Panel = { id: "project", label: project?.name ?? "Project", path, items: [{ label: "Overview", path }, ...tabs.map(label => ({ label, path: `${path}/${label.toLowerCase()}`, branch: label.toLowerCase() })), { label: "Marketplace", path: `${path}/marketplace`, branch: "marketplace" }] };
+  if (runtime) for (const page of servicePages(runtime, runtime.serviceRegistry, projectId)) {
+    if (page.src && !projectPanel.items.some(item => item.path === page.path)) projectPanel.items.push({ label: page.title, path: page.path + (Object.keys(page.search).length ? `?${new URLSearchParams(page.search)}` : "") });
+  }
+  const domains: Panel[] = [...tabs, "Marketplace"].map(label => ({ id: label.toLowerCase(), label, path: `${path}/${label.toLowerCase()}`, items: [{ label: label === "Auth" ? "Users" : label === "Storage" ? "Files" : label === "Database" ? "Tables" : label === "Content" ? "Collections" : label === "Marketplace" ? "Project services" : "Overview", path: `${path}/${label.toLowerCase()}` }] }));
+  const database = domains.find(panel => panel.id === "database");
+  const groups: Panel[] = [];
+  if (database && menu) {
+    const system: Panel = { id: "system-tables", label: "System Tables", path: database.path, items: [] };
+    for (const value of Array.isArray(object(menu).items) ? object(menu).items as unknown[] : []) {
+      const entry = object(value);
+      if (typeof entry.title !== "string") continue;
+      const search = new URLSearchParams();
+      for (const key of ["databaseTenant", "databaseTable", "databaseSystemView"]) { const value = object(entry.search)[key]; if (typeof value === "string" && !(key === "databaseTenant" && typeof object(entry.search).databaseSystemView === "string")) search.set(key, value); }
+      const item = { label: entry.title, path: `${database.path}?${search}` };
+      if (search.has("databaseSystemView")) system.items.push(item); else database.items.push(item);
+    }
+    if (system.items.length) { system.path = system.items[0].path; database.items.push({ label: "System Tables", path: system.path, branch: system.id }); groups.push(system); }
+  }
+  return [root, projects, projectPanel, ...domains, ...groups, server, settings];
+}
+export function resolveTrail(panels: readonly Panel[], fallback: readonly string[], explicit: string | null): Panel[] {
+  const ids = explicit === null ? fallback : explicit.split("/").filter(Boolean);
+  const trail = [panels[0]];
+  for (const id of ids) {
+    const panel = panels.find(panel => panel.id === id);
+    if (!panel || !trail.at(-1)!.items.some(item => item.branch === id)) break;
+    trail.push(panel);
+  }
+  return trail;
+}
+
+
+/** Use the same permission-filtered menu contributions as the current workspace. */
+export function workspacePanels(base: readonly Panel[], values: unknown, projectId?: string): Panel[] {
+  if (!Array.isArray(values)) return [...base];
+  const root = { ...base[0], items: [...base[0].items] };
+  if (!projectId) root.items = root.items.filter(item => item.nested || item.branch === "projects" || item.label === "Projects");
+  const projects = base.find(panel => panel.id === "projects")!;
+  const replaced = projectId ? ["platform", "projects", "project"] : ["platform", "projects"];
+  const result: Panel[] = [root, projects, ...base.filter(panel => !replaced.includes(panel.id)).map(panel => ({ ...panel, items: [...panel.items] }))];
+  const parent = projectId ? { ...base.find(panel => panel.id === "project")!, items: [] as Panel["items"] } : root;
+  if (projectId) result.push(parent);
+  const append = (panel: Panel, entries: unknown[], prefix: string) => {
+    for (const raw of entries) {
+      const entry = object(raw);
+      if (typeof entry.title !== "string" || typeof entry.path !== "string" || !entry.path.startsWith("/") || entry.path.startsWith("//")) continue;
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(object(entry.search))) if (typeof value === "string") query.set(key, value);
+      const path = entry.path + (query.size ? `?${query}` : "");
+      const children = Array.isArray(entry.items) ? entry.items : [];
+      const id = entry.path === "/server" ? "server" : `${prefix}-${entry.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+      const item = { label: entry.title, path, ...(children.length ? { branch: id } : {}) };
+      const existing = panel.items.findIndex(value => value.label === item.label || value.path === item.path && !query.size);
+      if (existing >= 0) { if (!children.length && panel.items[existing].branch) Object.assign(item, { branch: panel.items[existing].branch }); panel.items.splice(existing, 1, item); } else panel.items.push(item);
+      if (children.length) { const child: Panel = { id, label: entry.title, path, items: [] }; const previous = result.findIndex(panel => panel.id === id); if (previous >= 0) result.splice(previous, 1, child); else result.push(child); append(child, children, id); }
+    }
+  };
+  append(parent, values, projectId ? "project-menu" : "platform-menu");
+  return result;
+}
+
+/**
+ * The menus the Platform reported, one per scope: the Platform's own (`undefined`) and each Project's.
+ *
+ * A single slot is not enough. The dashboard loads a menu beside each page and leaves an unchanged one alone, so after
+ * the Platform's menu replaced a Project's in one slot, coming back found the Project's menu "unchanged", did not set it
+ * again, and the sidebar fell back to the basic menu with no Backend, Tenants or Plugin Tables.
+ */
+export function createMenuStore() {
+  const menus = new Map<string, unknown>();
+  const key = (projectId?: string) => projectId ?? "";
+  return {
+    set(projectId: string | undefined, items: unknown) { menus.set(key(projectId), items); },
+    get(projectId?: string): unknown { return menus.get(key(projectId)); },
+    clear() { menus.clear(); },
+  };
+}
+
+const NAVIGATION_PARAMS = new Set(["sidebar", "sidebarView", "sidebarUtility", "sidebarUtilityPanel"]);
+/** "/" and "/projects" are the same page. */
+export const canonicalPath = (path: string) => { const clean = path.replace(/\/+$/, "") || "/"; return clean === "/" ? "/projects" : clean; };
+
+/**
+ * Which item of a slide is the active one: exactly one, or none. Never more.
+ *
+ * Two things make an item active, and they are decided in this order:
+ *
+ * 1. It opens a slide the page is inside (its `branch` is on the open trail). The trail, not the item's path being a prefix of the
+ *    page's, decides this. When several items name the same branch (every project opens the one `project` slide) the one for the
+ *    page's own project is the active one.
+ * 2. It is the page itself: same path, and every query parameter the item declares has that value in the URL. Parameters the item
+ *    does not declare (a dialog, a filter, the open table) are the page's and are ignored. Where several items match, the one that
+ *    declares the most parameters wins, so a slide's Overview (no parameters) is active only while none of its siblings
+ *    (`?resourceView=storage`) is, and equal ties go to the first.
+ *
+ * An item that matches only because its siblings' differences were never compared is the bug this replaces: a slide with
+ * Overview, Processes, Storage and Limits at one path, told apart by a query parameter, lit all four.
+ */
+export function activeItemIndex(items: readonly { readonly path: string; readonly branch?: string }[], input: { readonly current: string; readonly search: URLSearchParams; readonly trail: readonly string[] }): number {
+  const current = canonicalPath(input.current);
+  const onTrail = items.flatMap((item, index) => item.branch !== undefined && input.trail.includes(item.branch) ? [index] : []);
+  if (onTrail.length === 1) return onTrail[0]!;
+  if (onTrail.length > 1) {
+    const own = onTrail.filter(index => { const path = canonicalPath(new URL(items[index]!.path, "http://item").pathname); return current === path || current.startsWith(`${path}/`); });
+    return own[0] ?? -1;
+  }
+  let best = -1, bestCount = -1;
+  items.forEach((item, index) => {
+    const target = new URL(item.path, "http://item");
+    if (canonicalPath(target.pathname) !== current) return;
+    const declared = [...target.searchParams].filter(([key]) => !NAVIGATION_PARAMS.has(key));
+    if (!declared.every(([key, value]) => input.search.get(key) === value)) return;
+    if (declared.length > bestCount) { best = index; bestCount = declared.length; }
+  });
+  return best;
+}
+
+export function trailForLocation(panels: readonly Panel[], url: URL): string[] {
+  let best: { score: number; ids: string[] } = { score: -1, ids: [] };
+  const pathname = unmounted(url.pathname);
+  // Home is the root menu. The Projects item explicitly opens its slide, even though it shares this landing page.
+  if (pathname === "/") return [];
+  const visit = (panel: Panel, ids: string[]) => {
+    for (const item of panel.items) {
+      const target = new URL(item.path, url.origin);
+      const match = (target.pathname.replace(/\/+$/, "") || "/") === pathname && [...target.searchParams].every(([key, value]) => url.searchParams.get(key) === value);
+      const trail = item.branch ? [...ids, item.branch] : ids;
+      if (match && trail.length * 10 + target.searchParams.size > best.score) best = { score: trail.length * 10 + target.searchParams.size, ids: trail };
+      if (item.branch) { const child = panels.find(value => value.id === item.branch); if (child && !ids.includes(child.id)) visit(child, trail); }
+    }
+  };
+  visit(panels[0], []);
+  return best.ids;
+}

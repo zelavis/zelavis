@@ -1,4 +1,4 @@
-import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, presentProtocol, present, integration, unwrapFailure, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Dashboard settings and service-registry persistence.
  *
@@ -35,7 +35,7 @@ import {
   requireFileStorageGuarantees, invalidateFileStorageGuarantees,
   ZelavisStorageConditionError, ZelavisStorageGuaranteeError,
 } from "../storage/conditions.js";
-import { Effect, Schedule } from "effect";
+import { Cause, Effect, Schedule } from "effect";
 import { RegistryContended, RegistryUnavailable } from "./service-lifecycle-errors.js";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
@@ -422,15 +422,15 @@ export const mutateServiceRegistryEffect = (
 > => {
   const attempt = Effect.gen(function* () {
     const snapshot = yield* Effect.tryPromise({
-      try: async () => store.readSnapshot(),
+      try: () => present(integration(() => store.readSnapshot())),
       catch: (cause) => new RegistryUnavailable({ cause }),
     });
     const entries = yield* Effect.tryPromise({
-      try: async () => mutation(snapshot.entries),
+      try: () => present(integration(() => mutation(snapshot.entries))),
       catch: (cause) => new RegistryUnavailable({ cause }),
     });
     const won = yield* Effect.tryPromise({
-      try: async () => store.compareAndSet(snapshot.revision, entries),
+      try: () => present(integration(() => store.compareAndSet(snapshot.revision, entries))),
       catch: (cause) => new RegistryUnavailable({ cause }),
     });
     // Losing the race is the retryable failure; everything else is not.
@@ -448,12 +448,12 @@ export const mutateServiceRegistryEffect = (
 };
 
 /** Promise-facing wrapper, for callers that are not themselves Effects. */
-export async function mutateServiceRegistry(
+export function mutateServiceRegistry(
   store: ZelavisServiceRegistryStore,
   mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
     readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
 ): Promise<readonly ZelavisServiceRegistryStateEntry[]> {
-  return Effect.runPromise(
+    return present(integration(() => Effect.runPromise(
     mutateServiceRegistryEffect(store, mutation).pipe(
       Effect.catchTag("RegistryContended", (error) =>
         Effect.die(
@@ -463,8 +463,8 @@ export async function mutateServiceRegistry(
         )),
       Effect.catchTag("RegistryUnavailable", (error) => Effect.die(error.cause)),
     ),
-  );
-}
+  )));
+  }
 
 export function createMemoryServiceRegistryStore(
   initialEntries: readonly ZelavisServiceRegistryStateEntry[],
@@ -498,14 +498,17 @@ export function createKeyValueDashboardSettingsStore(
         readBodyObject(JSON.parse(value)),
       )));
     }).pipe(Effect.withSpan("createKeyValueDashboardSettingsStore/read"))); },
-    async write(update) {
+    write(update) {
+    const self = this;
+    return present(Effect.gen(function* () {
       const normalized = mergeDashboardSettingsUpdate(
-        (await this.read()) ?? {},
+        ((yield* integrationValue(self.read()))) ?? {},
         parseStoredDashboardSettingsUpdate(readBodyObject(update)),
       );
-      await store.set(key, JSON.stringify(normalized));
+      (yield* integrationValue(store.set(key, JSON.stringify(normalized))));
       return normalized;
-    },
+    }));
+  },
   };
 }
 
@@ -513,27 +516,32 @@ export function createSystemStoreDashboardSettingsStore(
   store: ZelavisSystemStore,
 ): ZelavisDashboardSettingsStore {
   return {
-    async read() {
-      const record = await store.get(
+    read() {
+    return present(Effect.gen(function* () {
+      const record = (yield* integrationValue(store.get(
         SYSTEM_STORE_DASHBOARD_NAMESPACE,
         SYSTEM_STORE_DASHBOARD_SETTINGS_KEY,
-      );
+      )));
       return record
         ? parseStoredDashboardSettingsUpdate(readBodyObject(record.value))
         : undefined;
-    },
-    async write(update) {
+    }));
+  },
+    write(update) {
+    const self = this;
+    return present(Effect.gen(function* () {
       const normalized = mergeDashboardSettingsUpdate(
-        (await this.read()) ?? {},
+        ((yield* integrationValue(self.read()))) ?? {},
         parseStoredDashboardSettingsUpdate(readBodyObject(update)),
       );
-      await store.set(
+      (yield* integrationValue(store.set(
         SYSTEM_STORE_DASHBOARD_NAMESPACE,
         SYSTEM_STORE_DASHBOARD_SETTINGS_KEY,
         toSystemStoreValue(normalized),
-      );
+      )));
       return normalized;
-    },
+    }));
+  },
   };
 }
 
@@ -542,11 +550,16 @@ export function createKeyValueServiceRegistryStore(
   key = DEFAULT_PLATFORM_SERVICE_REGISTRY_KEY,
 ): ZelavisServiceRegistryStore {
   return {
-    async read() { return (await this.readSnapshot()).entries; },
-    async readSnapshot() {
-      const value = await store.get(key);
+    read() {
+    const self = this;
+    return present(Effect.gen(function* () { return ((yield* integrationValue(self.readSnapshot()))).entries; }));
+  },
+    readSnapshot() {
+    return present(Effect.gen(function* () {
+      const value = (yield* integrationValue(store.get(key)));
       return { entries: value === undefined ? [] : parseStoredServiceRegistryState(JSON.parse(value)), revision: value ?? null };
-    },
+    }));
+  },
     compareAndSet() {
       throw new ZelavisStorageGuaranteeError("Key-value storage has no atomic conditional write contract; service registry is read-only. Use a System Store or qualified file storage.");
     },
@@ -573,18 +586,25 @@ export function createSystemStoreServiceRegistryStore(
   const revisionOf = (record: NonNullable<Awaited<ReturnType<typeof read>>>) =>
     JSON.stringify([record.updatedAt, record.value]);
   return {
-    async read() { return (await this.readSnapshot()).entries; },
-    async readSnapshot() {
-      const record = await read();
+    read() {
+    const self = this;
+    return present(Effect.gen(function* () { return ((yield* integrationValue(self.readSnapshot()))).entries; }));
+  },
+    readSnapshot() {
+    return present(Effect.gen(function* () {
+      const record = (yield* integrationValue(read()));
       return { entries: record ? parseStoredServiceRegistryState(record.value) : [], revision: record ? revisionOf(record) : null };
-    },
-    async compareAndSet(revision, entries) {
-      const current = await read();
+    }));
+  },
+    compareAndSet(revision, entries) {
+    return present(Effect.gen(function* () {
+      const current = (yield* integrationValue(read()));
       if ((current ? revisionOf(current) : null) !== revision) return false;
       const value = toSystemStoreValue(registryDocument(current?.value, entries));
-      if (!current) return (await store.setIfAbsent(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, value)).created;
-      return Boolean(await store.compareAndSet(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, current.updatedAt, value, current.value));
-    },
+      if (!current) return ((yield* integrationValue(store.setIfAbsent(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, value)))).created;
+      return (yield* integrationValue(Boolean((yield* integrationValue(store.compareAndSet(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, current.updatedAt, value, current.value))))));
+    }));
+  },
   };
 }
 
@@ -595,48 +615,46 @@ export function createFileStorageServiceRegistryStore(
 ): ZelavisServiceRegistryStore {
   const scope = options.scope ?? "distributed";
   const decode = (body: Uint8Array) => JSON.parse(new TextDecoder().decode(body));
-  const read = async () => {
-    await requireFileStorageGuarantees(storage, scope);
-    const file = await storage.get(path);
+  const read = () => present(Effect.gen(function* () {
+    (yield* integrationValue(requireFileStorageGuarantees(storage, scope)));
+    const file = (yield* integrationValue(storage.get(path)));
     if (file && !file.etag) throw new ZelavisStorageGuaranteeError("Service registry storage returned no etag; refusing mutation.");
     return file;
-  };
-  const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
-    try { return await operation(); } catch (error) {
-      if (!(error instanceof ZelavisStorageConditionError)) invalidateFileStorageGuarantees(storage);
-      throw error;
-    }
-  };
+  }));
+  const guarded = <T>(operation: Effect.Effect<T, IntegrationFailure>): Promise<T> => present(operation.pipe(
+    Effect.onError((cause) => Effect.sync(() => {
+      if (!(unwrapFailure(Cause.squash(cause)) instanceof ZelavisStorageConditionError)) invalidateFileStorageGuarantees(storage);
+    })),
+  ));
   return {
-    async read() { return (await this.readSnapshot()).entries; },
+    read() {
+    const self = this;
+    return present(Effect.gen(function* () { return ((yield* integrationValue(self.readSnapshot()))).entries; }));
+  },
     readSnapshot() {
-      return guarded(async (): Promise<ZelavisServiceRegistrySnapshot> => {
-        const file = await read();
+      return guarded(Effect.gen(function* (): Effect.fn.Return<ZelavisServiceRegistrySnapshot, IntegrationFailure> {
+        const file = (yield* integrationValue(read()));
         return { entries: file ? parseStoredServiceRegistryState(decode(file.body)) : [], revision: file?.etag ?? null };
-      });
+      }));
     },
     compareAndSet(revision, entries) {
-      return guarded(async () => {
-        const file = await read();
+      return guarded(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
+        const file = yield* integrationValue(read());
         if ((file?.etag ?? null) !== revision) return false;
         const previous = file ? decode(file.body) : undefined;
         if (previous !== undefined) parseStoredServiceRegistryState(previous);
-        try {
-          const written = await storage.put({
-            path,
-            body: JSON.stringify(registryDocument(previous, entries), null, 2),
-            contentType: "application/json; charset=utf-8",
-            condition: revision === null ? { ifAbsent: true } : { ifMatch: revision },
-          });
-          if (!written.etag || written.etag === revision) {
-            throw new ZelavisStorageGuaranteeError("Registry write returned no fresh etag; outcome is unknown.");
-          }
-          return true;
-        } catch (error) {
-          if (error instanceof ZelavisStorageConditionError) return false;
-          throw error;
-        }
-      });
+        return yield* integration(() => storage.put({
+          path,
+          body: JSON.stringify(registryDocument(previous, entries), null, 2),
+          contentType: "application/json; charset=utf-8",
+          condition: revision === null ? { ifAbsent: true } : { ifMatch: revision },
+        })).pipe(
+          Effect.flatMap((written) => !written.etag || written.etag === revision
+            ? Effect.fail(new IntegrationFailure(new ZelavisStorageGuaranteeError("Registry write returned no fresh etag; outcome is unknown.")))
+            : Effect.succeed(true)),
+          Effect.catchIf((failure) => unwrapFailure(failure) instanceof ZelavisStorageConditionError, () => Effect.succeed(false)),
+        );
+      }));
     },
   };
 }
@@ -661,12 +679,14 @@ export function resolveServiceRegistryStore(
   return option?.store ?? fallbackStore;
 }
 
-export async function readInitialServiceRegistryState(
+export function readInitialServiceRegistryState(
   store: ZelavisServiceRegistryStore,
 ): Promise<readonly ZelavisServiceRegistryStateEntry[] | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly ZelavisServiceRegistryStateEntry[] | undefined, IntegrationFailure> {
   // An outage or malformed persisted registry is not an empty installation.
-  return await store.read();
-}
+  return (yield* integrationValue(store.read()));
+}));
+  }
 
 export function readDashboardSettingsUpdate(
   body: unknown,

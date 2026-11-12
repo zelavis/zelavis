@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "./core/runtime/effect-boundary.js";
 /**
  * TLS provider interface — the seam between zelavis and "where do I get
  * a cert+key for this hostname".
@@ -213,27 +215,31 @@ export function chainTlsProviders(
 ): TlsProvider {
   return {
     name: providers.length === 0 ? "chain" : `chain(${providers.map((p) => p.name).join("→")})`,
-    async getCertificate(hostname) {
+    getCertificate(hostname) {
+    return present(Effect.gen(function* () {
       for (const provider of providers) {
-        const cert = await provider.getCertificate(hostname);
+        const cert = (yield* integrationValue(provider.getCertificate(hostname)));
         if (cert) {
           return cert;
         }
       }
       return undefined;
-    },
-    async listHostnames() {
+    }));
+  },
+    listHostnames() {
+    return present(Effect.gen(function* () {
       const all = new Set<string>();
       for (const provider of providers) {
         if (typeof provider.listHostnames !== "function") {
           continue;
         }
-        const list = await provider.listHostnames();
+        const list = (yield* integrationValue(provider.listHostnames()));
         for (const host of list) {
           all.add(host);
         }
       }
-      return [...all].sort();
-    },
+      return (yield* integrationValue([...all].sort()));
+    }));
+  },
   };
 }

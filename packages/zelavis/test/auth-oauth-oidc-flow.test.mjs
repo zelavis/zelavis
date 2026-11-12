@@ -7,6 +7,7 @@ import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const ISSUER = "https://identity.example";
 const CLIENT_ID = "zelavis-test";
+const BOOTSTRAP_TOKEN = "oidc-fixture-bootstrap-token-long-enough";
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 
 /**
@@ -53,6 +54,7 @@ async function platform() {
   const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
+    bootstrap: { token: BOOTSTRAP_TOKEN },
     serviceRegistry: {
       catalog: [
         {
@@ -64,9 +66,20 @@ async function platform() {
     },
     // The stub fetch goes to the built-in client, so the token exchange is
     // real code against a real signed token rather than a mock of it.
-    subsystems: { auth: { oauth: { fetch: fetchImpl } } },
+    subsystems: { auth: { registration: true, oauth: { fetch: fetchImpl } } },
   });
 
+  const bootstrap = await runtime.plain({
+    method: "POST",
+    url: "/zelavis/api/v1/auth/bootstrap",
+    body: {
+      bootstrapToken: BOOTSTRAP_TOKEN,
+      provider: "password",
+      account: { username: "bootstrap-owner" },
+      credential: { identifier: "bootstrap-owner", password: "bootstrap owner password" },
+    },
+  });
+  assert.equal(bootstrap.status, 201);
   return { runtime, state };
 }
 
@@ -105,6 +118,8 @@ test("an OIDC sign-in verifies the ID token against the issuer's keys", async ()
 
   assert.equal(completed.status, 200);
   assert.equal(completed.body.account.email, "oidc@example.com");
+  assert.deepEqual(completed.body.account.roles, ["customer"]);
+  assert.deepEqual(completed.body.account.grants, []);
   assert.equal(state.tokenRequest.get("code"), "test-code");
   assert.ok(state.tokenRequest.get("code_verifier"));
 });

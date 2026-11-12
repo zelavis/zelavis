@@ -29,3 +29,13 @@ test("the auth settings page is a complete document that styles itself from the 
   assert.match(page, /service-page\.css/);
   assert.match(page, /const OWNER = "zelavis\/identity"/);
 });
+
+test("the registration form uses the mounted Identity settings endpoint and its revision", async () => {
+  const page = await readFile(new URL("../dashboard/auth.html", import.meta.url), "utf8");
+  assert.match(page, /Allow public registration/);
+  assert.match(page, /const registrationPath = "\/auth\/registration\/settings"/);
+  assert.match(page, /showRegistration\(await api\(registrationPath\)/);
+  assert.match(page, /api\(registrationPath, \{\s*method: "PUT"/);
+  assert.match(page, /expectedRevision: registration\.revision/);
+  assert.match(page, /cause\.code === "registration_settings_conflict"[\s\S]*await renderRegistration\(notice\)/);
+});

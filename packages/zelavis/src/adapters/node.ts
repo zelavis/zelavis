@@ -1,8 +1,16 @@
+import { appShardConfiguration, appShardEnvironment } from "./_app-shard-environment.js";
+import { projectLeaseConfiguration, projectLeaseEnvironment, projectLeaseEnvironmentAt, type ProjectLeaseRole } from "./_project-lease-environment.js";
+import type { NodeDatabaseLease } from "../db/node-host.js";
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
+import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
+import { InvalidBackup } from "../db/errors.js";
+import { systemStoreComponent } from "../platform/platform-backups.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
-import { readFile } from "node:fs/promises";
 import { createZelavisEdgePreviews } from "../edge/previews.js";
+import { createNodeDnsTxtResolver } from "../domain-verifier.js";
+import { preflightHostname } from "../edge/onboarding.js";
+import { isProjectDomainLoopbackTarget, PROJECT_DOMAIN_PROBE_PATH, type ProjectDomainTlsMode } from "../edge/project-domains.js";
 import { fetchNodeSite } from "./_node-site-fetch.js";
 import { createNodeEdgePreviewHost } from "./_node-edge-previews.js";
 import {
@@ -13,7 +21,19 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
-import { createHttpsProjectDispatcher, probeProjectAgent } from "./_project-dispatch-https.js";
+import { writeFile } from "node:fs/promises";
+import { Cause, Effect, Exit, Option, Scope } from "effect";
+import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import type { AppShardPlacementNode } from "../platform/app-data-placement.js";
+import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
+import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
+import { availableRequirements } from "./_recipe-requirements.js";
+import { runtimePlatform } from "./_recipe-runtimes.js";
+import { provisionableRequirements } from "../project-host-packages.js";
+import { composeCloudCapacity, readCloudPolicy } from "../platform/cloud-engine.js";
+import type { CloudCapacityController } from "../platform/cloud-capacity.js";
+import { loadRemoteNodeSources } from "./_remote-node-sources.js";
+import { createHttpsProjectDispatcher } from "./_project-dispatch-https.js";
 import type { ZelavisProjectDispatcher } from "../project.js";
 import type { FabricNode } from "../core/fabric/index.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
@@ -47,6 +67,9 @@ import { createBuiltinDeploymentBackends } from "../backends/index.js";
 import { createNodeBackendHostProbes } from "./_node-backend-host.js";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
 import { createNodeUpdateControl } from "./_node-updates.js";
+import { createNodeDiagnosticsControl } from "./_node-diagnostics.js";
+import { createNodeTerminalControl } from "./_node-terminal.js";
+import type { ZelavisTerminalControl } from "../terminal.js";
 import { readOrCreatePlatformAuthorityKey } from "./_platform-authority-key.js";
 import {
   createHostOperationBroker,
@@ -89,6 +112,21 @@ export interface NodeAdapterDatabaseOptions {
    */
   shards?: readonly string[];
   virtualRanges?: number;
+  /**
+   * What a returned commit survives: `crash` (default) or `power`, which
+   * flushes every commit to the device. Reported by the database's health.
+   */
+  durability?: "crash" | "power";
+  /**
+   * Take the Project's whole-database writer lease before the database opens, and open nothing when it cannot be taken
+   * (`startWriter`). Absent: the database is not lease-guarded.
+   */
+  lease?: NodeDatabaseLease;
+  /**
+   * How a Project process reaches the Platform for its shards on other Nodes (the Project channel); the engine reads it
+   * from `ZELAVIS_APP_SHARDS_AUTHORITY` and `ZELAVIS_APP_SHARDS_TOKEN`. Absent, shards cannot be placed remotely.
+   */
+  appShards?: { readonly apiRoot: string; readonly token: string; readonly projectId: string };
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
@@ -146,6 +184,11 @@ export interface NodeAdapterProjectOptions {
 }
 
 export interface NodeAdapterOptions {
+  /**
+   * The owner's terminal (a shell inside tmux, behind `server.terminal.use`). On by default for a
+   * Platform; `false` removes it, and a control replaces the tmux-backed one.
+   */
+  terminal?: false | ZelavisTerminalControl;
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
@@ -167,8 +210,23 @@ export interface NodeAdapterOptions {
     kind?: "memory";
   };
   edge?: false;
+  /** Fixed local HTTP listener used by the operator's external TLS terminator. */
+  externalProjectDomainTarget?: string;
   /** Installer-selected host authority, never inferred from an HTTP request. */
   installation?: { prefix: string; instance: string; edge: boolean };
+  /** Where machines enroll and the pin to use; published for operators when the host serves one. */
+  enrollmentEndpoint?: { url: string; fingerprint: string };
+  /**
+   * Cloud capacity: the bundled engine and the operator's policy file (location, image, approved
+   * sizes, ceiling). Needs an enrollment endpoint, because a machine the Platform creates must be
+   * able to join it. Without both, connecting a provider answers 503.
+   */
+  cloud?: { bundlePath: string; policyFile: string };
+  /**
+   * More of what a Project's backups capture, beside its database, runtime store and media: a managed app's
+   * integration runtime adds the app's own data (`app`, see `stageRecipeBackup`).
+   */
+  backupComponents?: ReadonlyArray<BackupComponent>;
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -184,32 +242,41 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
   return defineAdapter({
     name: "node",
-    async close(requester) {
-      if (requester && ownerOptions && requester !== ownerOptions) return;
-      await Promise.all([...stores].map((store) => store.close?.()));
-      stores.clear();
-      const lease = await ownership?.catch(() => undefined);
-      await lease?.release();
-      ownership = undefined;
-      await (await edgeOwnership?.catch(() => undefined))?.release();
-      edgeOwnership = undefined;
-      ownerOptions = undefined;
+    close(requester) {
+      return present(Effect.gen(function* () {
+        if (requester && ownerOptions && requester !== ownerOptions) return;
+        yield* Effect.forEach([...stores], (store) => integration(() => Promise.resolve(store.close?.())), { concurrency: 8 });
+        stores.clear();
+        // A failed acquisition left nothing to release, so it is not a failure to close.
+        const releaseOwnership = (pending: Promise<LocalOwnershipLease> | undefined) => Effect.option(integration(() => Promise.resolve(pending))).pipe(
+          Effect.flatMap((lease) => Option.isSome(lease) && lease.value ? integration(() => lease.value!.release()) : Effect.void),
+        );
+        yield* releaseOwnership(ownership);
+        ownership = undefined;
+        yield* releaseOwnership(edgeOwnership);
+        edgeOwnership = undefined;
+        ownerOptions = undefined;
+      }));
     },
-    async resolve(
+    resolve(
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
+      return present(Effect.gen(function* () {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const isProjectRuntime = options.role === "project";
       if (!isProjectRuntime && options.systemStore !== false) {
         if (ownerOptions && ownerOptions !== _constructorOptions) throw new Error("This adapter already owns a Platform; close it before creating another.");
         ownerOptions = _constructorOptions;
-        ownership ??= acquireLocalDataOwnership(dataDirectory);
-        await ownership;
+        const pendingOwnership = (ownership ??= acquireLocalDataOwnership(dataDirectory));
+        yield* integration(() => pendingOwnership);
         if (options.installation?.edge && options.edge !== false) {
-          edgeOwnership ??= acquireLocalEdgeOwnership({ ...options.installation, dataDirectory });
-          await edgeOwnership;
+          const pendingEdgeOwnership = (edgeOwnership ??= acquireLocalEdgeOwnership({ ...options.installation, dataDirectory }));
+          yield* integration(() => pendingEdgeOwnership);
         }
       }
+      // Only the Platform starts Projects, so only it carries the lease configuration for them.
+      const projectLeases = isProjectRuntime ? undefined : projectLeaseConfiguration();
+      const appShards = isProjectRuntime ? undefined : appShardConfiguration();
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextSubsystems: Record<string, unknown> = isProjectRuntime
@@ -238,6 +305,23 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
       if (systemStore) stores.add(systemStore);
 
+      // The Platform's own backups: its System Store, on the schedules its owner makes. Their loops live in a
+      // scope that closes with the runtime.
+      let platformBackups: DatabaseBackupsHost | undefined;
+      if (!isProjectRuntime && systemStore) {
+        const backupScope = yield* integration(() => Effect.runPromise(Scope.make()));
+        stores.add({ close: () => Effect.runPromise(Scope.close(backupScope, Exit.void)) });
+        const writeLines = (path: string, lines: ReadonlyArray<string>) => Effect.tryPromise({
+          try: () => writeFile(path, lines.length === 0 ? "" : `${lines.join("\n")}\n`, { mode: 0o600 }),
+          catch: (cause) => new InvalidBackup({ reason: `system-store.write: ${String(cause)}` }),
+        });
+        platformBackups = yield* integration(() => Effect.runPromise(backupsHost({
+          directory: join(dataDirectory, "backups"),
+          components: [systemStoreComponent(systemStore, writeLines)],
+          scope: backupScope,
+        })));
+      }
+
       if (databaseOptions !== false) {
         // The topology is no longer resolved here: the partition map lives in
         // the database's own store, versioned and fenced like any other write,
@@ -251,6 +335,20 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(databaseOptions.virtualRanges === undefined
             ? {}
             : { virtualRanges: databaseOptions.virtualRanges }),
+          ...(databaseOptions.durability === undefined
+            ? {}
+            : { engine: { durability: databaseOptions.durability } }),
+          ...(databaseOptions.lease === undefined ? {} : { lease: databaseOptions.lease }),
+          ...(databaseOptions.appShards === undefined ? {} : { appShards: databaseOptions.appShards }),
+          // A Project's backups capture all of it: its database, its runtime store (accounts' sessions, workload
+          // definitions and runs, Project metadata) and its media files.
+          ...(isProjectRuntime ? {
+            backupComponents: [
+              ...(systemStore === undefined ? [] : [sqliteFileComponent("runtime", systemStoreFilename)]),
+              ...(options.files === false ? [] : [directoryComponent("media", options.files?.rootDirectory ? resolve(options.files.rootDirectory) : join(dataDirectory, "files"))]),
+              ...(options.backupComponents ?? []),
+            ],
+          } : {}),
         };
       }
 
@@ -270,7 +368,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
-      const serviceSources = await createLocalServiceSources({
+      const serviceSources = yield* integration(() => createLocalServiceSources({
         dataDirectory,
         services: options.services,
         isProjectRuntime,
@@ -283,25 +381,26 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 : join(dataDirectory, "projects"),
             }
           : {}),
-      });
+      }));
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       let projectDispatcher: ZelavisProjectDispatcher | undefined;
+      let appShardNodes: (() => Promise<readonly AppShardPlacementNode[]>) | undefined;
       let hostAgentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       if (options.hostOperationsEndpoint) {
         if (isProjectRuntime || !systemStore) throw new Error("A host operation endpoint requires a Platform System Store.");
-        platformAuthority = await readOrCreatePlatformAuthorityKey(join(dataDirectory, "system", "agent-authority"));
+        platformAuthority = yield* integration(() => readOrCreatePlatformAuthorityKey(join(dataDirectory, "system", "agent-authority")));
         // systemd starts the restricted Agent first; its journal/socket may still be opening.
         for (let attempt = 0; ; attempt++) {
-          try { hostAgentClient = await createAgentProcessClient({ directory: resolve(options.hostOperationsEndpoint) }); break; }
-          catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (attempt >= 39 || !["ENOENT", "ECONNREFUSED", "ECONNRESET"].includes(code ?? "")) throw error;
-            await new Promise((resolve) => setTimeout(resolve, 250));
-          }
+          const connected = yield* Effect.exit(integration(() => createAgentProcessClient({ directory: resolve(options.hostOperationsEndpoint!) })));
+          if (Exit.isSuccess(connected)) { hostAgentClient = connected.value; break; }
+          const error = unwrapFailure(Cause.squash(connected.cause));
+          const code = (error as NodeJS.ErrnoException).code;
+          if (attempt >= 39 || !["ENOENT", "ECONNREFUSED", "ECONNRESET"].includes(code ?? "")) throw error;
+          yield* Effect.sleep("250 millis");
         }
-        stores.add(hostAgentClient);
+        stores.add(hostAgentClient!);
       }
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
@@ -327,9 +426,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             ...(serviceSources.recipePackageDirectory
               ? { packageDirectory: serviceSources.recipePackageDirectory }
               : {}),
-            trusted: async (name: string) =>
-              projectOptions?.recipeRuntimes?.[name] !== undefined ||
-              ((await serviceSources.recipeRuntimeTrusted?.(name)) ?? false),
+            trusted: (name: string) => present(Effect.gen(function* () {
+              if (projectOptions?.recipeRuntimes?.[name] !== undefined) return true;
+              return (yield* integration(() => Promise.resolve(serviceSources.recipeRuntimeTrusted?.(name)))) ?? false;
+            })),
           },
           ...(projectOptions?.recipeRuntimes
             ? { recipeRuntimeOptions: projectOptions.recipeRuntimes }
@@ -339,6 +439,14 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             : {}),
           ...(serviceSources.marketplace
             ? { handDownAllowlist: (directory: string) => serviceSources.marketplace!.handDown(directory) }
+            : {}),
+          // Lease-guarded Projects, when the operator configured them (`_project-lease-environment.ts`).
+          ...(projectLeases !== undefined && systemStore !== undefined
+            ? { leaseEnvironment: (projectId: string, role: ProjectLeaseRole) => projectLeaseEnvironment(projectLeases, systemStore, projectId, role) }
+            : {}),
+          // Remote App shards, when the operator named where Projects reach the Platform (`_app-shard-environment.ts`).
+          ...(appShards !== undefined && systemStore !== undefined
+            ? { appShardEnvironment: (projectId: string, placement: { readonly nodeId: string; readonly epoch: number }) => appShardEnvironment(appShards, systemStore, projectId, placement.nodeId, placement.epoch) }
             : {}),
           // Without this a frontend Project cannot start at all: the driver
           // refuses rather than falling through to the Zelavis runner and
@@ -360,14 +468,14 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // started first finds the trust file as soon as the Platform starts.
         if (!platformAuthority && (projectOptions?.agentEndpoint || projectOptions?.remoteDispatch) &&
             systemStore && !isProjectRuntime) {
-          platformAuthority = await readOrCreatePlatformAuthorityKey(
+          platformAuthority = yield* integration(() => readOrCreatePlatformAuthorityKey(
             join(dataDirectory, "system", "agent-authority"),
-          );
+          ));
         }
         agentClient = projectOptions?.agentEndpoint
-          ? await createAgentProcessClient({
-              directory: resolve(projectOptions.agentEndpoint),
-            })
+          ? yield* integration(() => createAgentProcessClient({
+              directory: resolve(projectOptions.agentEndpoint!),
+            }))
           : undefined;
         runtimeOptions.agent = agentClient
           ? // Fails rather than falling back to in-process execution: a host
@@ -382,48 +490,39 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
         if (projectOptions?.remoteDispatch && platformAuthority) {
-          const destinations = Object.fromEntries(await Promise.all(
-            Object.entries(projectOptions.remoteDispatch.nodes).map(async ([nodeId, node]) => [
-              nodeId,
-              { url: node.url, agentId: node.agentId,
-                caPem: await readFile(resolve(node.caFile), "utf8") },
-            ] as const),
-          ));
+          const remote = projectOptions.remoteDispatch;
+          // Machines that enroll need the Platform's public keys; publishing them also turns enrollment on.
+          if (systemStore) yield* publishAgentTrust(systemStore, platformAuthority.trust);
+          if (systemStore && options.enrollmentEndpoint) yield* publishEnrollmentEndpoint(systemStore, options.enrollmentEndpoint);
+          const sources = yield* loadRemoteNodeSources({
+            localNodeId: remote.localNodeId,
+            staticNodes: remote.nodes,
+            ...(systemStore ? { registry: createNodeEnrollmentAuthority({ store: systemStore }) } : {}),
+          });
           projectDispatcher = createHttpsProjectDispatcher({
-            localNodeId: projectOptions.remoteDispatch.localNodeId,
+            localNodeId: remote.localNodeId,
             projectsDirectory: runtimeOptions.directory,
-            destinations,
+            destinations: sources.destinations,
+            ...(sources.resolveDestination ? { resolveDestination: sources.resolveDestination } : {}),
             keyId: platformAuthority.signer.keyId,
             privateKey: platformAuthority.signer.privateKey,
           });
-          const localNodeId = projectOptions.remoteDispatch.localNodeId;
-          if (!localNodeId || destinations[localNodeId]) {
-            throw new Error("Remote dispatch needs a distinct local Fabric Node id.");
-          }
+          // Only remote Nodes can host a shard: the local Node has no Agent listener for shard storage.
+          appShardNodes = () => present(sources.inventoryNodes().pipe(Effect.map((nodes) => nodes.flatMap((node): AppShardPlacementNode[] =>
+            node.status === "ready" && node.capacity?.cpuCores && node.capacity.memoryBytes && node.capacity.diskBytes
+              ? [{ id: node.id, ready: true, cpuCores: node.capacity.cpuCores, memoryBytes: node.capacity.memoryBytes, diskBytes: node.capacity.diskBytes }]
+              : []))));
           const localNode = {
-            id: localNodeId, status: "ready" as const,
+            id: remote.localNodeId, status: "ready" as const,
             roles: ["gateway", "control", "worker"] as const,
             runtimeEngine: "node", runtimeDriver: "local-project",
           };
           nextSubsystems.fabric = {
             localNode,
             inventory: {
-              nodes: async () => {
-                const entries = Object.entries(destinations);
-                const nodes: FabricNode[] = [localNode];
-                for (let offset = 0; offset < entries.length; offset += 8) {
-                  const batch = await Promise.all(entries.slice(offset, offset + 8)
-                    .map(async ([nodeId, target]) => ({
-                      id: nodeId,
-                      status: await probeProjectAgent(target, nodeId)
-                        ? "ready" as const : "unavailable" as const,
-                      roles: ["worker"] as const,
-                      runtimeEngine: "node", runtimeDriver: "local-project",
-                    })));
-                  nodes.push(...batch);
-                }
-                return nodes;
-              },
+              nodes: () => present(sources.inventoryNodes().pipe(
+                Effect.map((remoteNodes): FabricNode[] => [localNode, ...remoteNodes]),
+              )),
             },
           };
         }
@@ -433,18 +532,18 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // afterwards is what nothing can drive. Reclaiming first would stop
         // every Project on the host and then start them again, which is the
         // opposite of what running the Agent separately is for.
-        await projectRuntime.adopt?.().catch(() => undefined);
+        yield* integration(() => projectRuntime!.adopt?.()).pipe(Effect.catch(() => Effect.void));
 
         // What remains is unowned: processes from a crashed Platform that no
         // driver claimed. Reconciliation would reclaim the Projects it
         // restarts, but a Project the operator has since stopped is never
         // started again — and so would never be reclaimed at all.
-        await runtimeOptions.agent.reclaim?.(undefined, {
+        yield* integration(() => runtimeOptions.agent!.reclaim?.(undefined, {
           // Detached environment processes still have replayable pipes in the
           // Agent and are reclaimed by their persisted session, not as orphaned
           // Project runtimes during Platform boot.
           preservePrefixes: [REMOTE_ENVIRONMENT_WORKLOAD_PREFIX],
-        }).catch(() => undefined);
+        })).pipe(Effect.catch(() => Effect.void));
       }
       // Host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
@@ -463,7 +562,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let edgeCertificates: ZelavisCertificateController | undefined;
       if (options.edge !== false && options.installation?.edge !== false && !isProjectRuntime && systemStore) {
         edgeRoutes = createZelavisEdgeRouteStore({ store: systemStore });
-        const masterSecret = await loadPlatformMasterSecret(systemStore);
+        const masterSecret = yield* integration(() => loadPlatformMasterSecret(systemStore));
         edgeCertificates = createZelavisCertificateController({
           store: systemStore,
           masterSecret,
@@ -480,10 +579,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           });
           const traefikCerts = createTraefikCertificateDistributor({
             invoker,
-            certificateResolver: async (ref) => {
-              const resolved = await edgeCertificates?.resolveCertificate(ref);
+            certificateResolver: (ref) => present(Effect.gen(function* () {
+              const resolved = yield* integration(() => Promise.resolve(edgeCertificates?.resolveCertificate(ref)));
               return resolved ? { certPem: resolved.certPem, keyPem: resolved.keyPem } : undefined;
-            },
+            })),
           });
           const routeStore = edgeRoutes;
           edgeManager = createZelavisEdgeManager({
@@ -491,14 +590,37 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             defaultAdapterId: "traefik",
             adapters: [traefikAdapter],
             certificates: traefikCerts,
-            getPublication: async () => {
-              const current = await routeStore.getCurrentPublication();
+            getPublication: () => present(Effect.gen(function* () {
+              const current = yield* integration(() => routeStore.getCurrentPublication());
               return current ? toPublicationSummary(current) : undefined;
-            },
+            })),
           });
-          await edgeManager.reconcile().catch(() => undefined);
+          yield* integration(() => edgeManager!.reconcile()).pipe(Effect.catch(() => Effect.void));
         }
       }
+
+      const externalTarget = options.externalProjectDomainTarget;
+      if (externalTarget !== undefined && !isProjectDomainLoopbackTarget(externalTarget)) {
+        return yield* new IntegrationFailure(new Error("External Project domain ingress requires a fixed IPv4 loopback HTTP target with a port."));
+      }
+      const probeProjectDomain = (hostname: string, mode: ProjectDomainTlsMode, target?: string) => present(Effect.gen(function* () {
+        const url = new URL(PROJECT_DOMAIN_PROBE_PATH, target ?? (mode === "managed" ? "https://127.0.0.1" : "http://127.0.0.1"));
+        const result = yield* integration(() => fetchNodeSite(url, {
+          method: "GET", headers: { host: hostname }, signal: AbortSignal.timeout(2500),
+        }, mode === "managed" ? { servername: hostname } : undefined));
+        if (result.body) yield* integration(() => result.body!.cancel());
+        return result.status === 204 && result.headers.get("x-zelavis-project-domain") === "ready";
+      }));
+      const probeProjectDomainWithdrawal = (hostname: string) => present(Effect.gen(function* () {
+        const reachable = yield* integration(() => probeProjectDomain(hostname, "external"));
+        if (!reachable) return false;
+        // The fixed local adapter may fall back to its own certificate after withdrawal.
+        const response = yield* integration(() => fetchNodeSite(new URL(PROJECT_DOMAIN_PROBE_PATH, "https://127.0.0.1"), {
+          method: "GET", headers: { host: hostname }, signal: AbortSignal.timeout(2500),
+        }, { servername: hostname, rejectUnauthorized: false }));
+        if (response.body) yield* integration(() => response.body!.cancel());
+        return response.status === 404 && !response.headers.has("x-zelavis-project-domain");
+      }));
 
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
@@ -511,12 +633,39 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         : undefined;
       if (edgePreviews) stores.add(edgePreviews);
 
+      let cloudCapacity: CloudCapacityController | undefined;
+      if (options.cloud && options.enrollmentEndpoint && systemStore && !isProjectRuntime) {
+        const cloud = options.cloud;
+        const endpoint = options.enrollmentEndpoint;
+        const store = systemStore;
+        const masterSecret = yield* integration(() => loadPlatformMasterSecret(store));
+        const policy = yield* readCloudPolicy(cloud.policyFile).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
+        // One stable id per installation: it labels every machine this Platform creates.
+        const platformId = yield* integration(() => store.setIfAbsent("fabric.cloud-platform.v1", "id", crypto.randomUUID()))
+          .pipe(Effect.map((result) => String(result.record.value)));
+        cloudCapacity = yield* composeCloudCapacity({
+          store, masterSecret, platformId, bundlePath: cloud.bundlePath, policy, endpoint,
+          workDir: join(dataDirectory, "system", "cloud"),
+        }).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
+      }
+
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
         ...(serviceSources.bundleStore ? { bundleStore: serviceSources.bundleStore } : {}),
         serviceRegistry: serviceSources.serviceRegistry,
         ...(projectDispatcher ? { projectDispatcher } : {}),
+        ...(appShardNodes ? { appShards: { nodes: appShardNodes } } : {}),
+        ...(appShards !== undefined && systemStore !== undefined
+          ? { appShardEnvironment: (projectId: string, nodeId: string, epoch: number) => appShardEnvironment(appShards, systemStore, projectId, nodeId, epoch) }
+          : {}),
+        ...(projectLeases !== undefined && systemStore !== undefined ? {
+          projectLeases: {
+            nodeId: projectLeases.node,
+            standbyNodeId: projectLeases.standby,
+            environment: (projectId: string, nodeId: string, role: ProjectLeaseRole) => projectLeaseEnvironmentAt(projectLeases, systemStore, projectId, nodeId, role),
+          },
+        } : {}),
         resources: {
           systemStore,
           publicSiteFetch: fetchNodeSite,
@@ -528,7 +677,23 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
           ...(hostOperations ? { hostOperations } : {}),
+          ...(cloudCapacity ? { cloudCapacity } : {}),
+          // What recipes can be installed here: the tools already present, plus what an approved package
+          // set (with the operation Agent) or Homebrew could add. Checked when a Project is created or started.
+          ...(!isProjectRuntime ? { projectInstallHost: () => present(availableRequirements(provisionableRequirements(hostOperations !== undefined)).pipe(
+            Effect.map((requirements) => ({ drivers: ["js" as const], requirements, ...(runtimePlatform() ? { platform: runtimePlatform()! } : {}) })))) } : {}),
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
+          ...(!isProjectRuntime && systemStore ? { projectDomainIngress: {
+            dns: createNodeDnsTxtResolver(),
+            ...(externalTarget ? { externalTarget } : {}),
+            preflight: (hostname: string) => present(Effect.gen(function* () {
+              const dns = yield* integration(() => preflightHostname(hostname));
+              return dns.valid && dns.dnsResolved && (yield* integration(() => probeProjectDomain(hostname, "external")));
+            })),
+            probe: (hostname: string, mode: ProjectDomainTlsMode) => probeProjectDomain(hostname, mode,
+              mode === "external" ? externalTarget : undefined),
+            probeWithdrawal: probeProjectDomainWithdrawal,
+          } } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),
           ...(edgePreviews ? { edgePreviews } : {}),
@@ -538,6 +703,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           servicePackages: serviceSources.servicePackages,
           ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
           ...(!isProjectRuntime && systemStore ? { updates: createNodeUpdateControl({ dataDirectory }) } : {}),
+          ...(!isProjectRuntime && systemStore ? { diagnostics: createNodeDiagnosticsControl({ dataDirectory }) } : {}),
+          ...(!isProjectRuntime && systemStore && options.terminal !== false ? { terminal: options.terminal ?? createNodeTerminalControl({ dataDirectory }) } : {}),
+          ...(platformBackups === undefined ? {} : { platformBackups }),
         },
         metadata: {
           runtime: "node",
@@ -548,6 +716,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectRuntime ? { projectRuntime: projectRuntime.name } : {}),
         },
       };
+      }));
     },
   });
 }

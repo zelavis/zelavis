@@ -1,4 +1,4 @@
-import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, presentProtocol, present } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { parseJson, isJsonValue } from "../core/json-validation.js";
 /**
@@ -207,8 +207,9 @@ export function createHostOperationBroker(options: {
     buckets.set(actorId, bucket);
   }
 
-  async function requestable() {
-    const catalog = await options.agent.hostOperationCatalog();
+  function requestable() {
+    return present(Effect.gen(function* () {
+    const catalog = (yield* integrationValue(options.agent.hostOperationCatalog()));
     return {
       agentId: catalog.agentId,
       operations: catalog.operations.filter(
@@ -217,6 +218,7 @@ export function createHostOperationBroker(options: {
         } => manifest.authorization !== undefined,
       ),
     };
+  }));
   }
 
   const requireAuthenticated = (principal: ZelavisPrincipal | undefined) => {
@@ -226,12 +228,13 @@ export function createHostOperationBroker(options: {
   };
 
   return {
-    async catalog(principal) {
+    catalog(principal) {
+    return present(Effect.gen(function* () {
       requireAuthenticated(principal);
-      const { operations } = await requestable();
+      const { operations } = (yield* integrationValue(requestable()));
       // Listed if the caller could request it for some scope it holds: the
       // top-level permission, or any grant of that permission.
-      return operations
+      return (yield* integrationValue(operations
         .filter((manifest) =>
           principal!.permissions?.includes("*") ||
           principal!.permissions?.includes(manifest.authorization.permission) ||
@@ -244,8 +247,9 @@ export function createHostOperationBroker(options: {
           authorization: manifest.authorization,
           arguments: manifest.arguments,
           ...(manifest.result ? { result: manifest.result } : {}),
-        }));
-    },
+        }))));
+    }));
+  },
 
     submit(input, principal) { return presentProtocol(Effect.gen(function* () {
       requireAuthenticated(principal);
@@ -339,7 +343,8 @@ export function createHostOperationBroker(options: {
       return { ...record, agent: agentSummary };
     }).pipe(Effect.withSpan("createHostOperationBroker/submit"))); },
 
-    async audit(query, principal) {
+    audit(query, principal) {
+    return present(Effect.gen(function* () {
       requireAuthenticated(principal);
       const limit = query?.limit ?? 100;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
@@ -358,17 +363,19 @@ export function createHostOperationBroker(options: {
       }
       // Whole-namespace read: fine at current volumes, a known gap until the
       // System Store offers indexed, paginated listing.
-      return (await options.store.list(AUDIT_NAMESPACE))
+      return (yield* integrationValue(((yield* integrationValue(options.store.list(AUDIT_NAMESPACE))))
         .map((entry) => entry.value as unknown as ZelavisHostOperationRecord)
         .filter((record) => projectId === undefined || record.projectId === projectId)
         .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
-        .slice(0, limit);
-    },
+        .slice(0, limit)));
+    }));
+  },
 
-    async get(operationId, principal) {
+    get(operationId, principal) {
+    return present(Effect.gen(function* () {
       requireAuthenticated(principal);
       const stored = typeof operationId === "string" && /^hostop_[a-f0-9]{32}$/.test(operationId)
-        ? await options.store.get(AUDIT_NAMESPACE, operationId)
+        ? (yield* integrationValue(options.store.get(AUDIT_NAMESPACE, operationId)))
         : undefined;
       const record = stored?.value as unknown as ZelavisHostOperationRecord | undefined;
       if (!record) {
@@ -376,7 +383,7 @@ export function createHostOperationBroker(options: {
       }
       // Readable by its requester, or by whoever may request it for that scope.
       if (record.actorId !== principal!.id) {
-        const { operations } = await requestable();
+        const { operations } = (yield* integrationValue(requestable()));
         const manifest = operations.find((candidate) =>
           candidate.id === record.operation && candidate.version === record.version);
         if (!manifest || !allowed(principal, manifest.authorization, record.projectId)) {
@@ -384,8 +391,9 @@ export function createHostOperationBroker(options: {
           throw new ZelavisHostOperationNotFoundError(`Host operation "${operationId}" was not found.`);
         }
       }
-      const agent = await options.agent.getHostOperation(operationId);
+      const agent = (yield* integrationValue(options.agent.getHostOperation(operationId)));
       return { ...record, ...(agent ? { agent } : {}) };
-    },
+    }));
+  },
   };
 }

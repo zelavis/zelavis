@@ -1,3 +1,4 @@
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 /**
  * Embeddings, and what it means for two of them to be close.
  *
@@ -165,10 +166,10 @@ export interface UsearchModule {
 }
 
 export const loadUsearch = Effect.tryPromise({
-  try: async () => {
-    const mod = (await import("usearch")) as unknown as UsearchModule & { default?: UsearchModule };
+  try: () => present(Effect.gen(function* () {
+    const mod = ((yield* integrationValue(import("usearch")))) as unknown as UsearchModule & { default?: UsearchModule };
     return (mod.default ?? mod) as UsearchModule;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "vectors.loadUsearch",

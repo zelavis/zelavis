@@ -2,7 +2,7 @@ import { parseJson, objectFields, isString } from "../core/json-validation.js";
 import { Effect } from "effect";
 import type { DomainEvent, DomainEventsApi, DomainEventType } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
-import { ProjectionNotFound } from "./errors.js";
+import { dieUnlessMoving, ProjectionNotFound, type TenantMoving } from "./errors.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
 
@@ -15,9 +15,21 @@ export interface ProjectionDefinition {
   readonly name: string;
   readonly description?: string;
   readonly source?: ProjectionSource;
-  /** Applied in log order. Must be deterministic: a rebuild replays it. */
+  /**
+   * Applied in log order, at least once. The checkpoint advances once per page
+   * of events, after `apply` has run for all of them, and `apply` writes
+   * wherever it likes — so the two cannot commit together, and a run cut off
+   * between them applies that page again. Make `apply` idempotent: key what it
+   * writes by `event.eventId`, which names the record and the version it
+   * reached and stays the same when the tenant moves. It must also be
+   * deterministic: a rebuild replays it.
+   */
   readonly apply: (event: DomainEvent) => Effect.Effect<void>;
-  /** Discard derived state before a rebuild replays the log into it. */
+  /**
+   * Discard derived state before a rebuild replays the log into it. Runs after
+   * the checkpoint is cleared, so a rebuild cut off at any point is finished by
+   * the next `run`, which then starts from the beginning.
+   */
   readonly reset?: () => Effect.Effect<void>;
 }
 
@@ -38,24 +50,29 @@ export interface ProjectionRunResult {
 export interface ProjectionsApi {
   readonly register: (definition: ProjectionDefinition) => Effect.Effect<void>;
   readonly list: Effect.Effect<ReadonlyArray<ProjectionSummary>>;
-  /** Apply everything after the stored checkpoint, then advance it. */
-  readonly run: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound>;
+  /**
+   * Apply everything after the stored checkpoint, then advance it. Refused
+   * with `TenantMoving` while the tenant is being moved.
+   */
+  readonly run: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound | TenantMoving>;
   /** Discard derived state and replay the whole log into it. */
-  readonly rebuild: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound>;
+  readonly rebuild: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound | TenantMoving>;
 }
 
 /**
- * Checkpoints live in the shard whose log they track.
+ * Checkpoints live in the partition whose log they track.
  *
- * That is what makes them shard-aware without any bookkeeping: a cursor is only
- * meaningful against the log that issued it, so storing it anywhere else would
- * invite comparing positions from different shards as if they were one order.
+ * A cursor is only meaningful against the log that issued it, and a partition
+ * keeps its log, positions included, when it moves to another shard. So a
+ * checkpoint stored beside that log moves with it and still means the same
+ * place, and nothing compares positions from different partitions as if they
+ * were one order.
  */
 /** Projections registered on a caller's behalf, listed by their own surface. */
 const INTERNAL_PREFIX = "zv.";
 
 const CHECKPOINT_NS = "zv.checkpoint";
-const checkpointKey = (tenant: TenantId, name: string) => `${tenant}/${name}`;
+const checkpointKey = (name: string) => name;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -89,7 +106,7 @@ export const projectionsFor = (
 
   const readCheckpoint = (name: string) =>
     Effect.gen(function* () {
-      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(tenant, name));
+      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(name));
       if (seq === undefined) return undefined;
       const object = yield* store.read(seq);
       return object === undefined
@@ -99,7 +116,7 @@ export const projectionsFor = (
 
   const writeCheckpoint = (name: string, cursor: EventCursor) =>
     Effect.gen(function* () {
-      const key = checkpointKey(tenant, name);
+      const key = checkpointKey(name);
       const existing = yield* store.lookup(CHECKPOINT_NS, key);
       const seq = existing ?? (yield* store.nextSeq);
       yield* store.transact((txn) =>
@@ -110,29 +127,45 @@ export const projectionsFor = (
           { namespace: CHECKPOINT_NS, key },
         ),
       );
-    }).pipe(Effect.orDie);
+    }).pipe(dieUnlessMoving);
+
+  /** Forget where a projection had got to, so the next run starts from the beginning. */
+  const clearCheckpoint = (name: string) =>
+    Effect.gen(function* () {
+      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(name));
+      if (seq !== undefined) yield* store.transact((txn) => txn.retract(seq));
+    }).pipe(dieUnlessMoving);
 
   const drain = (definition: ProjectionDefinition, from: EventCursor | undefined) =>
     Effect.gen(function* () {
       let cursor = from;
       let applied = 0;
       for (;;) {
-        const batch = yield* events.read({
+        // The checkpoint is this partition's own, or a branch ancestor's it carries on from, so a refusal
+        // here is a broken invariant rather than a caller's to act on.
+        const page = yield* Effect.orDie(events.read({
           ...(cursor === undefined ? {} : { after: cursor }),
           limit: 512,
-        });
-        if (batch.length === 0) break;
-        for (const event of batch) {
+        }));
+        for (const event of page.events) {
           if (matchesSource(definition, event)) {
             yield* definition.apply(event);
             applied++;
           }
-          cursor = event.cursor;
         }
-        // Advance once per batch rather than per event: a crash mid-batch
-        // replays it, which the deterministic `apply` contract allows.
-        yield* writeCheckpoint(definition.name, cursor!);
-        if (batch.length < 512) break;
+        // Advance once per page rather than per event: a crash mid-page
+        // replays it, which the deterministic `apply` contract allows. A page
+        // that held nothing but a stretch of other writes still advances, or
+        // the next run would read that stretch again; one that reached the end
+        // with nothing in it does not, because the only thing it passed may be
+        // the previous run's own checkpoint, and writing another for it would
+        // make every run write one.
+        if (page.cursor !== undefined && page.cursor !== cursor
+          && (page.events.length > 0 || page.more)) {
+          cursor = page.cursor;
+          yield* writeCheckpoint(definition.name, cursor);
+        }
+        if (!page.more) break;
       }
       return { name: definition.name, applied, ...(cursor === undefined ? {} : { checkpoint: cursor }) };
     });
@@ -174,6 +207,9 @@ export const projectionsFor = (
     rebuild: (name) =>
       Effect.gen(function* () {
         const definition = yield* require_(name);
+        // Cleared first: a rebuild cut off after its reset must not leave a
+        // checkpoint saying the discarded state was still applied.
+        yield* clearCheckpoint(name);
         if (definition.reset !== undefined) yield* definition.reset();
         return yield* drain(definition, undefined);
       }),

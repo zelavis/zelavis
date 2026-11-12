@@ -5,13 +5,12 @@ import { parseJson, objectFields, isString, isJsonValue } from "../dist/core/jso
 import { documentRecord, collectionRecord } from "../dist/db/documents.js";
 import { runtimeReleaseRecord } from "../dist/core/runtime/handover.js";
 import { projectDescriptorRecord } from "../dist/adapters/_project-record-validation.js";
-import { openStoreOverKv } from "../dist/db/kv-store.js";
+import { openShardOverKv } from "../dist/db/kv-store.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
-import { manifestKey, payloadKey, metaKey } from "../dist/db/keys.js";
+import { partitionKeys } from "../dist/db/keys.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../dist/core/runtime/effect-boundary.js";
 
 const enc = new TextEncoder();
-const encoded = value => enc.encode(JSON.stringify(value));
 const at = "2026-10-06T00:00:00.000Z";
 const document = { id: "record", collection: "items", data: { nested: [true, null, { value: 1 }] }, version: 1, createdAt: at, updatedAt: at };
 
@@ -50,22 +49,28 @@ test("release and Project authority decoders reject incomplete or malformed nest
   assert.throws(() => parseJson('{"id":"project","recipe":{"version":true}}', projectDescriptorRecord));
 });
 
-test("corrupt index manifests refuse a write without changing the previous payload", async () => {
+const openTest = (engine) => Effect.map(openShardOverKv("test", engine), (shard) => shard.partition("test"));
+const testKeys = partitionKeys("test");
+
+test("a corrupt stored record refuses a write without changing it", async () => {
   const engine = memoryKvEngine();
-  const store = await Effect.runPromise(openStoreOverKv("test", engine));
+  const store = await Effect.runPromise(openTest(engine));
   const manifest = { terms: [], columns: [], measures: [], edges: [] };
   await Effect.runPromise(store.transact(txn => txn.put(1, enc.encode("original"), manifest)));
-  await Effect.runPromise(engine.write([{ op: "put", key: manifestKey(1), value: encoded({ ...manifest, edges: [["edge", "wrong-id"]] }) }]));
-  const before = await Effect.runPromise(engine.get(payloadKey(1)));
-  await assert.rejects(Effect.runPromise(store.transact(txn => txn.put(1, enc.encode("replacement"), manifest))), /Malformed object-store record/);
-  assert.deepEqual(await Effect.runPromise(engine.get(payloadKey(1))), before);
+  // A record whose stored manifest is cut short: one byte of flags, a version, and half a count.
+  await Effect.runPromise(engine.write([{ op: "put", key: testKeys.record(1), value: Uint8Array.of(0, 0, 0, 0, 1, 0x80) }]));
+  const before = await Effect.runPromise(engine.get(testKeys.record(1)));
+  await assert.rejects(Effect.runPromise(store.transact(txn => txn.put(1, enc.encode("replacement"), manifest))),
+    (error) => error._tag === "StoreError" && /Malformed stored record/.test(String(error.cause)));
+  assert.deepEqual(await Effect.runPromise(engine.get(testKeys.record(1))), before);
 });
 
 test("truncated stored counters cannot be coerced into valid sequence numbers", async () => {
   const engine = memoryKvEngine();
-  const store = await Effect.runPromise(openStoreOverKv("test", engine));
-  await Effect.runPromise(engine.write([{ op: "put", key: metaKey("next_seq"), value: Uint8Array.of(1, 2) }]));
-  await assert.rejects(Effect.runPromise(store.nextSeq), /Truncated u32/);
+  const store = await Effect.runPromise(openTest(engine));
+  await Effect.runPromise(engine.write([{ op: "put", key: testKeys.meta("next_seq"), value: Uint8Array.of(1, 2) }]));
+  await assert.rejects(Effect.runPromise(store.nextSeq),
+    (error) => error._tag === "StoreError" && /not eight bytes/.test(String(error.cause)));
 });
 
 test("Promise protocol presentation preserves the original error and completes local cleanup", async () => {

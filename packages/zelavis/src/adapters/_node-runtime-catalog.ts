@@ -11,11 +11,25 @@ import type { ZelavisProjectRecipeLock } from "../project.js";
 import { normalizeProjectIsolationIntent } from "../project-isolation.js";
 import { verifyNodeRuntimeArtifact } from "./_node-runtime-artifact.js";
 
+/**
+ * The data layout of every release published before releases declared one: they all wrote format 2 (alpha.5 to
+ * alpha.42), so an artifact without the field is read as that, not as unknown. A later release always declares its own.
+ */
+const FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION = 2;
+const declaredDataFormat = (value: unknown): number => value === undefined ? FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION : value as number;
+
 /** The installation's already acquired immutable releases. Acquisition and
  * permission to install host code remain with the existing installer/updater;
  * selecting a Project version never runs npm, sudo, or an arbitrary executable.
  */
-export function createNodeRuntimeCatalog(options: { readonly directory: string; readonly rootOwned: boolean }) {
+export type VerifiedRuntimeArtifacts = Map<string, Effect.Success<ReturnType<typeof verifyNodeRuntimeArtifact>>>;
+
+/**
+ * Pass `remembered` for one operation (a start, a migration) that names the same immutable release more than once: a
+ * release whose every byte was just verified is not hashed again by that operation. Never keep one beyond the
+ * operation; the next operation verifies the release again (see `verifyNodeRuntimeArtifact` for what that re-reads).
+ */
+export function createNodeRuntimeCatalog(options: { readonly directory: string; readonly rootOwned: boolean }, remembered?: VerifiedRuntimeArtifacts) {
   const directory = resolve(options.directory);
   const exactDirectory = Effect.fn("RuntimeCatalog.exactDirectory")(function* (version: string) {
     yield* evaluate(() => { if (!isExactVersion(version)) throw new Error("Runtime engine selection requires an exact version."); });
@@ -23,6 +37,14 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     const tree = yield* integration(() => realpath(join(root, version)));
     if (tree !== join(root, version) || !tree.startsWith(`${root}${sep}`)) return yield* new IntegrationFailure(new Error("Runtime engine selection must name an immutable release directory, never a link or external path."));
     return tree;
+  });
+  const verified = Effect.fn("RuntimeCatalog.verified")(function* (version: string, expected: { readonly version: string; readonly digest: string }) {
+    const key = `${version}\u0000${expected.digest}`;
+    const hit = remembered?.get(key);
+    if (hit) return hit;
+    const result = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(version), expected, options.rootOwned);
+    remembered?.set(key, result);
+    return result;
   });
   const entry = Effect.fn("RuntimeCatalog.entry")(function* (version: string) {
     const tree = yield* exactDirectory(version);
@@ -33,12 +55,14 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     return yield* evaluate(() => {
       const artifact = JSON.parse(source);
       if (artifact.version !== version || !/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || artifact.metadata?.protocol !== NODE_RUNTIME_PROTOCOL || artifact.metadata.platform !== process.platform || artifact.metadata.architecture !== process.arch || typeof artifact.metadata.nodeVersion !== "string") throw new Error("Runtime engine does not declare this host's exact handover protocol.");
-      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion as string };
+      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion as string, dataFormat: declaredDataFormat(artifact.metadata.dataFormat) };
     });
   });
   const catalog = {
-    /** Advertised selections; execution always re-verifies every byte and link.
-     * Invalid releases remain visible so operator repair has an explicit reason. */
+    /** Advertised selections; nothing here is verified. `select` and `resolve` verify the release before it is used:
+     * its whole inventory and links, and each file's digest, re-reading only files whose status changed since this
+     * process hashed them (see `verifyNodeRuntimeArtifact`). Invalid releases remain visible so operator repair has an
+     * explicit reason. */
     list: Effect.fn("RuntimeCatalog.list")(function* () {
       const directories = yield* integration(() => readdir(directory, { withFileTypes: true }));
       if (directories.length > 4096) return yield* new IntegrationFailure(new Error("Runtime catalog exceeds its entry bound."));
@@ -53,9 +77,13 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
       if (!latest) return yield* new IntegrationFailure(new Error("No qualified installed runtime engine is available."));
       return yield* catalog.select(latest.version);
     }),
+    /** The data layout the installed release writes and opens; see `engineConvergence`. */
+    dataFormat: Effect.fn("RuntimeCatalog.dataFormat")(function* (version: string) {
+      return (yield* entry(version)).dataFormat;
+    }),
     select: Effect.fn("RuntimeCatalog.select")(function* (version: string) {
       const advertised = yield* entry(version);
-      const selected = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(version), advertised, options.rootOwned);
+      const selected = yield* verified(version, advertised);
       return selected.release;
     }),
     app: Effect.fn("RuntimeCatalog.app")(function* (version: string): Effect.fn.Return<{ engine: RuntimeRelease; recipe: ZelavisProjectRecipeLock; packageDirectory: string }, IntegrationFailure> {
@@ -76,11 +104,11 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     }),
     resolve: Effect.fn("RuntimeCatalog.resolve")(function* (selected: RuntimeRelease, role: "platform" | "project", configuration: Readonly<Record<string, unknown>>, environment: Readonly<Record<string, string>>): Effect.fn.Return<NodeRuntimeExecution, IntegrationFailure> {
       yield* evaluate(() => { if (role !== "platform" && role !== "project") throw new Error("Runtime engine role requires explicit Platform or Project authority."); });
-      const verified = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(selected.version), selected, options.rootOwned);
-      return { executable: join(verified.root, "runtime", "node", "bin", "node"),
-        worker: join(verified.root, "platform", "dist", "adapters", "_node-runtime-worker.js"),
-        module: join(verified.root, "platform", "dist", "adapters", `_node-${role}-engine.js`),
-        cwd: verified.root, environment, configuration };
+      const checked = yield* verified(selected.version, selected);
+      return { executable: join(checked.root, "runtime", "node", "bin", "node"),
+        worker: join(checked.root, "platform", "dist", "adapters", "_node-runtime-worker.js"),
+        module: join(checked.root, "platform", "dist", "adapters", `_node-${role}-engine.js`),
+        cwd: checked.root, environment, configuration };
     }),
   };
   return catalog;

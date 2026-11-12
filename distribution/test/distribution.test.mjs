@@ -47,7 +47,8 @@ test("the Debian package manages Traefik unit, conffiles, and enables production
   assert.match(builder, /cli\.js install --from-release/);
   const plan = await readFile(new URL("../../packages/zelavis/src/core/runtime/installation-plan.ts", import.meta.url), "utf8");
   assert.match(plan, /\["enable", "zelavis-traefik\.service"\]/);
-  assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
+  // deb-instance-upgrade.test.mjs executes the generated removal hook and
+  // verifies ingress and activation lifecycle behavior.
 });
 
 test("the bootstrap acquires only Node and the npm package, and trusts nothing else", async () => {
@@ -103,10 +104,17 @@ test("release staging bounds file hashing and includes complete uninstall", asyn
   assert.match(builder, /share", "uninstall\.sh/u);
 });
 
-test("the Agent unit delegates cgroups and runs operations from the release tree", async () => {
-  const unit = await readFile(new URL("runtime/zelavis-agent.service", distribution), "utf8");
+test("Project supervision stays process-only and root operations retain delegated containment", async () => {
+  const project = await readFile(new URL("runtime/zelavis-agent.service", distribution), "utf8");
+  assert.match(project, /^User=zelavis$/m);
+  assert.match(project, /^KillMode=process$/m);
+  assert.doesNotMatch(project, /^Delegate=|--operations-root|--operation-cgroup/m);
+  assert.doesNotMatch(project, /^PrivateTmp=(?:true|yes)$/m);
+  const unit = await readFile(new URL("runtime/zelavis-host-agent.service", distribution), "utf8");
   assert.match(unit, /^Delegate=yes$/m);
-  assert.match(unit, /^User=zelavis$/m);
+  assert.match(unit, /^User=root$/m);
+  assert.match(unit, /^KillMode=control-group$/m);
+  assert.match(unit, /^PrivateTmp=true$/m);
   for (const flag of [
     "--operations-root /opt/zelavis/current/operations",
     "--platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json",
@@ -166,7 +174,8 @@ test("shipped host operation sources are valid and produce their declared result
   for (const id of ids) {
     for (const version of (await readdir(join(source, id.name), { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
       const directory = join(source, id.name, version.name);
-      const template = JSON.parse(await read(join(directory, "operation.json"), "utf8"));
+      // `embed` is a staging directive (see stage-operations.mjs), not part of the installed manifest.
+      const { embed: _embed, ...template } = JSON.parse(await read(join(directory, "operation.json"), "utf8"));
       // Every shipped operation declares who may request it.
       assert.ok(template.authorization, `${id.name} declares authorization`);
       validateHostOperationManifest({ ...template, sha256: "a".repeat(64) });
@@ -186,6 +195,7 @@ test("shipped host operation sources are valid and produce their declared result
   const staged = await stageOperations({ source, output: directory, validate: validateHostOperationManifest });
   assert.ok(staged.includes("zelavis.host-report@v1"));
   assert.ok(staged.includes("zelavis.packages-install@v1"));
+  assert.ok(staged.includes("zelavis.container-probe@v1"));
   for (const operation of staged) {
     const [id, version] = operation.split("@");
     assert.equal((await stat(join(directory, id, version, "artifact"))).mode & 0o777, 0o755);
@@ -204,8 +214,16 @@ test("named templates use the instance's private Node launcher, account, config 
   }
   assert.match(platform, /serve --instance %i/);
   assert.match(platform, /EnvironmentFile=-\/etc\/zelavis-%i\/zelavis.env/);
-  assert.match(agent, /Delegate=yes/);
-  assert.match(agent, /\/var\/lib\/zelavis-%i\/system\/agent-authority/);
+  assert.match(agent, /^KillMode=process$/m);
+  assert.doesNotMatch(agent, /^Delegate=|--operations-root|--operation-cgroup/m);
+  assert.doesNotMatch(agent, /^PrivateTmp=(?:true|yes)$/m);
+  const operations = await readFile(new URL("runtime/zelavis-host-agent@.service", distribution), "utf8");
+  assert.match(operations, /^User=root$/m);
+  assert.match(operations, /^Group=zelavis-%i$/m);
+  assert.match(operations, /^Delegate=yes$/m);
+  assert.match(operations, /^KillMode=control-group$/m);
+  assert.match(operations, /^PrivateTmp=true$/m);
+  assert.match(operations, /\/var\/lib\/zelavis-%i\/system\/agent-authority/);
   for (const script of ["scripts/build-stage.mjs", "scripts/build-deb.mjs"]) {
     const source = await readFile(new URL(script, distribution), "utf8");
     assert.match(source, /zelavis@\.service/); assert.match(source, /zelavis-agent@\.service/);

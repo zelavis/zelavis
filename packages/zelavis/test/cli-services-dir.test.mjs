@@ -27,3 +27,15 @@ test("the flag wins over ZELAVIS_SERVICES_DIR, and without either nothing is set
   assert.equal((await serveOptions([], { ZELAVIS_SERVICES_DIR: "./env" })).servicesDirectory, "./env");
   assert.equal("servicesDirectory" in (await serveOptions([])), false, "the default stays <data>/services");
 });
+
+test("--enrollment-port and --enrollment-address reach the Platform host, and an address without a port is refused", async () => {
+  const options = await serveOptions(["--enrollment-port", "8444", "--enrollment-address", "203.0.113.5", "--enrollment-address=panel.example.com"]);
+  assert.deepEqual(options.enrollment, { port: 8444, addresses: ["203.0.113.5", "panel.example.com"] });
+  assert.equal((await serveOptions([])).enrollment, undefined);
+  const realError = console.error; const savedExit = process.exitCode; const messages = [];
+  console.error = (...parts) => messages.push(parts.join(" "));
+  try {
+    assert.equal(await serveOptions(["--enrollment-address", "203.0.113.5"]), undefined, "serve is never reached");
+  } finally { console.error = realError; process.exitCode = savedExit; }
+  assert.match(messages.join("\n"), /requires --enrollment-port/);
+});

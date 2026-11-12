@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServiceRuntime } from "../dist/core/index.js";
 import { defineDatabaseService } from "../dist/db/index.js";
+import { TenantDivided, TenantMoving, TimeSeriesMapFailed } from "../dist/db/errors.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
 /**
@@ -14,7 +15,7 @@ import { openTemporaryDatabase } from "./_database.mjs";
 const operator = {
   id: "operator",
   type: "user",
-  permissions: ["database.inspect", "database.read", "database.write"],
+  permissions: ["database.inspect", "database.read", "database.write", "database.define"],
 };
 
 const call = (route, { service, params = {}, query = "", body, principal = operator } = {}) =>
@@ -48,7 +49,61 @@ test("the database service mounts the same routes on the db runtime API", async 
     runtime.routes.map((route) => route.fullPath),
     [
       "/api/database/tenants",
+      "/api/database/tenants/overview",
+      "/api/database/tenants/:tenantId",
+      "/api/database/tenants/:tenantId/branch",
+      "/api/database/tenants/:tenantId/merge",
+      "/api/database/workflows/executions",
+      "/api/database/tenants/:tenantId/recovery",
+      "/api/database/tenants/:tenantId/export",
+"/api/database/followers/feed",
+      "/api/database/followers/partitions",
+      "/api/database/followers/declarations",
+      "/api/database/followers/:partition/stats",
+      "/api/database/followers/:partition/records",
+      "/api/database/followers/:partition/log",
+      "/api/database/followers/:partition/holds",
+      "/api/database/followers/:partition/holds/:holdId",
+      "/api/database/followers/:partition/lease",
+      "/api/database/followers/:partition/lease/promote",
+      "/api/database/followers/:partition/lease/demote",
+      "/api/database/followers/:partition/acknowledgments",
+      "/api/database/followers/:partition/acknowledgments",
+            "/api/database/entities/:type/:id/messages",
+      "/api/database/entities/:type/:id/messages/:messageKey",
+      "/api/database/entities/:type/:id/messages/:messageKey/cancel",
+      "/api/database/entities/:type/:id/state",
+      "/api/database/entities/:type/:id/mailbox",
+      "/api/database/entities/:type/list",
+      "/api/database/maintenance/images",
+      "/api/database/maintenance/images",
+      "/api/database/maintenance/backup-schedules",
+      "/api/database/maintenance/backup-schedules",
+      "/api/database/maintenance/backup-schedules/:name",
+      "/api/database/maintenance/backup-schedules/:name/run",
+      "/api/database/maintenance/backup-runs",
+      "/api/database/maintenance/backup-schedules/:name/runs/:runId/verify",
+      "/api/database/maintenance/backup-schedules/:name/drill",
+      "/api/database/maintenance/backup-schedules/:name/runs/:runId/restore",
+      "/api/database/shards",
+      "/api/database/shards/operation",
+      "/api/database/shards/place",
+      "/api/database/shards/:shardId/release",
+      "/api/database/shards/:shardId/replicate",
+      "/api/database/shards/:shardId/unreplicate",
+      "/api/database/maintenance/storage",
+      "/api/database/maintenance/storage",
+      "/api/database/maintenance/images/prune",
+      "/api/database/maintenance/images/:name/verify",
+      "/api/database/maintenance/images/:name",
+      "/api/database/cross-tenant-indexes",
+      "/api/database/cross-tenant-indexes",
+      "/api/database/cross-tenant-indexes/:name",
+      "/api/database/cross-tenant-indexes/:name",
+      "/api/database/cross-tenant-indexes/:name/refresh",
+      "/api/database/cross-tenant-indexes/:name/query",
       "/api/database/menu/tables",
+      "/api/database/events/read",
       "/api/database/health",
       "/api/database/documents/collections",
       "/api/database/documents/collections/:collection/modalities",
@@ -57,14 +112,23 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/write",
       "/api/database/documents/:collection",
       "/api/database/documents/:collection/:id",
+      "/api/database/documents/:collection/search-statistics",
+      "/api/database/documents/:collection/scatter",
       "/api/database/documents/:collection/query",
       "/api/database/documents/:collection/page",
       "/api/database/documents/:collection/traverse",
+      "/api/database/documents/:collection/covariance",
+      "/api/database/documents/:collection/histogram",
+      "/api/database/documents/:collection/imports/plan",
+      "/api/database/documents/:collection/imports/run",
+      "/api/database/documents/:collection/imports/verify",
       "/api/database/documents/:collection/summarize",
       "/api/database/documents/:collection/summarize-by",
+      "/api/database/documents/collections/:collection/count",
       "/api/database/documents/collections/:collection/exists",
       "/api/database/documents/:collection/related",
       "/api/database/documents/:collection/analyzer",
+      "/api/database/documents/:collection/columns",
       "/api/database/documents/:collection/geometry",
       "/api/database/documents/:collection/embedding",
       "/api/database/documents/:collection/indexes",
@@ -84,11 +148,24 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/kv/:namespace/write",
       "/api/database/kv/:namespace",
       "/api/database/kv/:namespace",
+      "/api/database/outbox/messages",
+      "/api/database/outbox/messages",
+      "/api/database/outbox/messages/remove",
+      "/api/database/schemas/collections/export",
+      "/api/database/schemas/collections/import",
+      "/api/database/schemas/collections/types",
       "/api/database/schemas/collections",
+      "/api/database/schemas/collections/activations",
+      "/api/database/schemas/collections/activations/resume",
       "/api/database/schemas/:collection",
       "/api/database/schemas/:collection",
       "/api/database/schemas/:collection/activate",
       "/api/database/schemas/:collection/validate",
+      "/api/database/aggregates",
+      "/api/database/aggregates",
+      "/api/database/aggregates/:name",
+      "/api/database/aggregates/:name/refresh",
+      "/api/database/aggregates/:name",
       "/api/database/timeseries/series",
       "/api/database/timeseries/:series/range",
       "/api/database/timeseries/:series/aggregate",
@@ -231,6 +308,26 @@ test("KV routes read and write the same collection records", async (t) => {
     body: { tenantId: "acme", prefix: "the" },
   });
   assert.deepEqual(page.body.entries.map((entry) => entry.key), ["theme"]);
+
+  const changesRoute = routeOf(service, "database.kv.changes");
+  const changes = await call(changesRoute, {
+    service: api,
+    params: { namespace: "settings" },
+    body: { tenantId: "acme" },
+  });
+  assert.deepEqual(changes.body.changes.map((change) => [change.type, change.key]), [["set", "theme"]]);
+  assert.equal(changes.body.more, false);
+  assert.deepEqual(
+    changes.body,
+    await api.forTenant("acme").kv.changes("settings"),
+    "HTTP answers exactly what the JS API answers",
+  );
+  const caughtUp = await call(changesRoute, {
+    service: api,
+    params: { namespace: "settings" },
+    body: { tenantId: "acme", after: changes.body.cursor },
+  });
+  assert.deepEqual(caughtUp.body, { changes: [], cursor: changes.body.cursor, more: false });
 });
 
 test("schemas are saved, activated and listed per Tenant", async (t) => {
@@ -825,4 +922,70 @@ test("an empty database menu needs no fabricated Tenant and discovers later tabl
   const items = (await call(route, { service: api })).body.items;
   assert.deepEqual(items.filter(item => item.search.databaseTable).map(item => [item.title, item.search.databaseTenant]),
     [["a · invoices", "a"], ["b · invoices", "b"]]);
+});
+
+test("a write refused because its tenant is mid-move is a conflict that says to retry", async () => {
+  const moving = new TenantMoving({ tenant: "acme", from: "shard-0", to: "shard-1" });
+  const api = { forTenant: () => ({ documents: { insert: () => Promise.reject(moving) } }) };
+  const service = defineDatabaseService(api);
+  const response = await call(routeOf(service, "database.documents.insert"), {
+    service: api,
+    params: { collection: "posts" },
+    body: { tenantId: "acme", data: {} },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error, 'Tenant "acme" is being moved to another shard; retry shortly.');
+});
+
+test("a divided tenant addressed as a whole is a bad request naming its parts, and a failing mapper is said rather than hidden", async () => {
+  const divided = { forTenant: () => { throw new TenantDivided({ tenant: "whale", parts: ["a", "b"] }); } };
+  const refused = await call(routeOf(defineDatabaseService(divided), "database.documents.insert"), {
+    service: divided,
+    params: { collection: "posts" },
+    body: { tenantId: "whale", data: {} },
+  });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /divided into a, b/);
+
+  const mapFailed = new TimeSeriesMapFailed({ series: "views", eventId: "acme:4:1", reason: "Invalid time series timestamp: x" });
+  const broken = { forTenant: () => ({ timeSeries: { ingest: () => Promise.reject(mapFailed) } }) };
+  const response = await call(routeOf(defineDatabaseService(broken), "database.timeseries.ingest"), {
+    service: broken, params: { series: "views" }, body: { tenantId: "acme" }, query: "tenantId=acme",
+  });
+  assert.equal(response.status, 422);
+  assert.match(response.body.error, /could not map event acme:4:1/);
+});
+
+test("declared columns over HTTP: created with the collection, refused for other fields, changed by their own route", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const params = { collection: "posts" };
+  const created = await call(routeOf(service, "database.collections.create"), {
+    service: api, body: { tenantId: "acme", name: "posts", columns: ["status"] },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.columns, ["status"]);
+  for (const [id, data] of [["p1", { status: "live", title: "One" }], ["p2", { status: "draft", title: "Two" }]]) {
+    await call(routeOf(service, "database.documents.insert"), { service: api, params, body: { tenantId: "acme", id, data } });
+  }
+  const query = routeOf(service, "database.documents.query");
+
+  const live = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "status", value: "live" }] } });
+  assert.deepEqual(live.body.documents.map((document) => document.id), ["p1"]);
+  const refused = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "title", value: "Two" }] } });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, 'Collection "posts" does not index "title"; add it to the collection\'s columns to query or order by it.');
+
+  const changed = await call(routeOf(service, "database.documents.columns"), {
+    service: api, params, body: { tenantId: "acme", columns: ["status", "title"] },
+  });
+  assert.deepEqual(changed.body, { columns: ["status", "title"], documents: 2 });
+  const found = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "title", value: "Two" }] } });
+  assert.deepEqual(found.body.documents.map((document) => document.id), ["p2"]);
+
+  const invalid = await call(routeOf(service, "database.documents.columns"), {
+    service: api, params, body: { tenantId: "acme", columns: "status" },
+  });
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.error, /list of field paths/);
 });

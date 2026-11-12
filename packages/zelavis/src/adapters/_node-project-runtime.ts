@@ -1,6 +1,9 @@
 import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
+import { compareVersions, isExactVersion } from "../updates.js";
 import { IntegrationFailure, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
+import type { ProjectLeaseRole } from "./_project-lease-environment.js";
+import type { ProjectPlacementToken } from "../platform/project-placement-authority.js";
 import { defineEffectProjectRuntime } from "./project-runtime.js";
 import { Cause, Deferred, Effect } from "effect";
 import { integration, singleFlight, type EffectOperations } from "../core/runtime/effect-boundary.js";
@@ -11,18 +14,27 @@ import { ensureRecipeArtifact } from "./_recipe-artifact.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
+import { engineConvergence } from "../core/runtime/engine-convergence.js";
+import { chooseBoundEngine } from "./_node-bound-engine.js";
+import type { VerifiedRuntimeArtifacts } from "./_node-runtime-catalog.js";
+import { migrateDataLayout } from "./_node-data-migration.js";
+import { commitDataSwap, dataFormatOnDisk, dataLayoutOnDisk, listRetainedData, recordDataLayout, removeRetainedData, settleDataSwap, startOnSwappedData, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
+import { readNodeRuntimeJournalSelection } from "./_node-runtime-journal.js";
+import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
 import { randomUUID } from "node:crypto";
 import { evaluate } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeRuntimeClient } from "./_node-runtime-client.js";
+import { nodeProjectControlPaths } from "./_node-project-control.js";
 import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
 import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcess, ZelavisAgentProcessRunner, } from "../core/agent/process-command.js";
 import { ZelavisProjectValidationError } from "../project.js";
-import type { ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, } from "../project.js";
+import type { ZelavisProjectDataMigration, ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRecord, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, ZelavisProjectStartOptions } from "../project.js";
+import { standbyWorkloadId } from "../core/agent/project-dispatch.js";
 export interface NodeProcessProjectRuntimeOptions {
     directory: string;
     /** Project-scoped SDK integration beside a managed third-party workload. */
@@ -43,18 +55,39 @@ export interface NodeProcessProjectRuntimeOptions {
     recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined> | string | undefined;
     /** Gives a starting Project the allow-list this Platform holds (see `LocalMarketplace.handDown`). */
     handDownAllowlist?: (projectDataDirectory: string) => Promise<void>;
+    /**
+     * The writer-lease environment a starting Project is given (`ZELAVIS_LEASE_*`, see `leaseFromEnvironment`), or none
+     * for a Project that is not lease-guarded. Asked at every start, because the capability it carries is the Project's.
+     */
+    leaseEnvironment?: (projectId: string, role: ProjectLeaseRole) => Promise<Readonly<Record<string, string>> | undefined>;
+    /**
+     * The App shard channel (`ZELAVIS_APP_SHARDS_*`) a starting writer is given: where to reach the Platform and a capability bound to
+     * the placement it starts under. Asked at every writer start; a standby and the integration host get none.
+     */
+    appShardEnvironment?: (projectId: string, placement: ProjectPlacementToken) => Promise<Readonly<Record<string, string>>>;
     /** Installer-acquired exact engines. No package acquisition occurs here. */
     runtimeCatalog?: { readonly directory: string; readonly rootOwned: boolean };
 }
 interface NodeProjectProcess {
     boundEngineVersion?: string;
+    /** A layout change holds this host on its engine until migration replaces the host. */
+    convergenceHeld?: boolean;
+    /** The runner the host process executes, which is the code it loads recipes with. */
+    runner?: string;
     process?: ZelavisAgentProcess;
     control?: ReturnType<typeof createNodeRuntimeClient>;
     logs: ZelavisProjectLogEntry[];
     snapshot: ZelavisProjectRuntimeSnapshot;
     stopping: boolean;
 }
-const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+// Installed hosts verify the complete immutable engine before preparing and
+// activating its worker. The outer deadline must cover the inner supervisor's
+// 30-second stages, including a cold start on a small production server.
+const DEFAULT_STARTUP_TIMEOUT_MS = 90_000;
+/** The first release whose persistent host verifies a recipe's identity only, never its content. */
+const IDENTITY_ONLY_HOST_SINCE = "2.0.0-alpha.36";
+/** The first release whose code reads each recipe manifest contract. */
+const RECIPE_CONTRACT_SINCE: Readonly<Record<number, string>> = { 1: "0.0.0", 2: "2.0.0-alpha.30" };
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_SHUTDOWN_CONCURRENCY = 8;
 const DEFAULT_LOG_LIMIT = 500;
@@ -162,6 +195,24 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     const shutdownConcurrency = positiveInteger(options.shutdownConcurrency, DEFAULT_SHUTDOWN_CONCURRENCY);
     const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
     const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
+    /**
+     * Whether a running host can verify `candidate`'s recipe. From alpha.36 a host checks only identity and digest;
+     * an earlier one parses the recipe's manifest with its own code, which knows the contracts of its release.
+     */
+    const hostReadsRecipe = Effect.fn("NodeProjects.hostReadsRecipe")(function* (runner: string, candidate: { readonly recipe: { readonly name: string; readonly version: string } }) {
+        const version = /\/releases\/([^/]+)\/platform\/dist\/adapters\/_node-project-runner\.js$/.exec(runner)?.[1];
+        // A checkout's runner is this code; an installed one names its release.
+        if (!version || !isExactVersion(version) || compareVersions(version, IDENTITY_ONLY_HOST_SINCE) >= 0) return true;
+        const source = yield* integration(() => options.recipePackageDirectory?.(candidate.recipe.name, candidate.recipe.version));
+        if (!source) return true;
+        const manifest = yield* integration(() => readFile(join(source, "package.json"), "utf8"));
+        const contract = yield* evaluate(() => {
+            const install = parseJson(manifest, objectFields<{ zelavis?: { project?: { install?: unknown } } }>({ zelavis: optional(objectFields<{ project?: { install?: unknown } }>({ project: optional(objectFields<{ install?: unknown }>({ install: optional(isUnknown) })) })) }), "recipe package.json").zelavis?.project?.install;
+            return install && typeof install === "object" && typeof (install as { contract?: unknown }).contract === "number" ? (install as { contract: number }).contract : 1;
+        });
+        const since = RECIPE_CONTRACT_SINCE[contract];
+        return since !== undefined && compareVersions(version, since) >= 0;
+    });
     const installation = describeInstallation(fileURLToPath(new URL("../cli.js", import.meta.url)));
     const catalogConfiguration = Effect.fn("NodeProjects.catalogConfiguration")(function* () {
         if (options.runtimeCatalog) return options.runtimeCatalog;
@@ -235,6 +286,375 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         survivesControlPlaneRestart: agent.survivesControlPlaneRestart === true,
         description: "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
     };
+    const adopt = Effect.fn("NodeProjects.adopt")(function* (onlyProjectId?: string) {
+            if (!agent.attach)
+                return;
+            const directories = onlyProjectId ? [onlyProjectId] : ((yield* Effect.orElseSucceed(integration(() => readdir(projectsDirectory, { withFileTypes: true })), () => [])))
+                .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+                .map(entry => entry.name);
+            for (const projectId of directories) {
+                if (processes.get(projectId)?.process?.running) continue;
+                const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
+                if (frozenManifest) {
+                    const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
+                    if (options.integrationOnly ? !customRuntime : customRuntime) continue;
+                }
+                // A canonical recipe swap can be interrupted while a verified
+                // snapshot is serving. Adoption must still reach that host so
+                // durable intent recovery can restore the selected recipe.
+                const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
+                if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
+                const attached = yield* integration(() => agent.attach!(projectId));
+                for (const { process: child, command, replay } of attached) {
+                    const runner = command.args?.[0];
+                    if (!runner?.endsWith("/_node-project-runner.js") || command.cwd !== projectDirectory(projectId) ||
+                        command.args?.includes("--integration") !== (options.integrationOnly === true)) continue;
+                    if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
+                    if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
+                    const state: NodeProjectProcess = {
+                        process: child,
+                        runner,
+                        logs: [],
+                        snapshot: { status: "running" },
+                        stopping: false,
+                    };
+                    state.control = createNodeRuntimeClient(child, startupTimeoutMs);
+                    processes.set(projectId, state);
+                    for (const { stream, line } of replay) {
+                        const url = readyUrl(line);
+                        if (url) {
+                            state.snapshot = { status: "running", url };
+                            continue;
+                        }
+                        appendLog(state, stream, line);
+                    }
+                    appendLog(state, "system", state.snapshot.url
+                        ? `Re-attached to a running Project at ${state.snapshot.url}.`
+                        : "Re-attached to a running Project whose address is no longer in the Agent's buffer.");
+                    child.listen?.(({ stream, line }) => {
+                        if (stream === "stdout" && state.control?.accept(line)) return;
+                        const url = readyUrl(line);
+                        if (url) {
+                            state.snapshot = { status: "running", url };
+                            appendLog(state, "system", `Project ready at ${url}.`);
+                            return;
+                        }
+                        appendLog(state, stream, line);
+                    });
+                    void child.exit.then(({ code, signal, requested }) => {
+                        state.control?.exited();
+                        const stoppedAt = new Date().toISOString();
+                        state.snapshot =
+                            requested || state.stopping || code === 0
+                                ? { status: "stopped", stoppedAt }
+                                : {
+                                    status: "failed",
+                                    stoppedAt,
+                                    error: formatProjectProcessExitError({
+                                        code,
+                                        signal: signal as NodeJS.Signals | null,
+                                        logs: state.logs,
+                                    }),
+                                };
+                    });
+                    if (command.control) {
+                        const deadline = Date.now() + startupTimeoutMs;
+                        while (true) {
+                            const ready = yield* integration(() => lstat(command.control!.credentialsFile)).pipe(
+                                Effect.as(true), Effect.catchIf(isMissingFileError, () => Effect.succeed(false)));
+                            if (ready) break;
+                            if (!child.running || Date.now() >= deadline) return yield* new IntegrationFailure(new Error("Recovered Project host did not publish private control before its startup deadline."));
+                            yield* Effect.sleep(25);
+                        }
+                    }
+                    const secret = createGatewayAuthoritySecret();
+                    const reply = yield* state.control.request({ action: "rotate-key", secret });
+                    if (reply.type !== "key-rotated") return yield* new IntegrationFailure(new Error("Project host did not acknowledge Gateway re-keying."));
+                    const url = readyUrl(JSON.stringify({ type: "ready", url: reply.url }));
+                    if (!url) return yield* new IntegrationFailure(new Error("Project host did not report its persistent ingress address."));
+                    state.snapshot = { ...state.snapshot, status: "running", url };
+                    gatewaySecrets.set(projectId, secret);
+                }
+            }
+        });
+    /** The migration a native App's `prepare` made, until the upgrade that needed it is recorded and `commitUpgrade` reports it. */
+    const migrations = new Map<string, ZelavisProjectDataMigration>();
+    /**
+     * What `prepareData` verified for a Project's coming migration and start, made before its requests are held. It is read only by
+     * that Project's own migration and start, dropped when the migration ends, and ignored once five minutes old: the next
+     * operation, and any later start, hashes the engines afresh.
+     */
+    const prefetchedEngines = new Map<string, { readonly at: number; readonly artifacts: VerifiedRuntimeArtifacts }>();
+    const PREFETCH_LIFE_MS = 300_000;
+    const prefetchedFor = (projectId: string): VerifiedRuntimeArtifacts => {
+        const found = prefetchedEngines.get(projectId);
+        return found !== undefined && Date.now() - found.at < PREFETCH_LIFE_MS ? new Map(found.artifacts) : new Map();
+    };
+    /** Where this driver's database lives: a native App's `.zelavis`, a managed app's bound App under `.zelavis/integration`. */
+    const dataRoot = (projectId: string) => join(projectDirectory(projectId), ".zelavis", ...(options.integrationOnly ? ["integration"] : []));
+    const stampNow = () => new Date().toISOString().replace(/[-:.]/g, "");
+    /**
+     * Migrates a native App's data when the engine it moves to writes another layout, and says whether it did. The Project is
+     * stopped; its data is exported by the engine that wrote it, recreated by the current one, verified, and swapped in with the
+     * old data kept beside it. Nothing is migrated when the layouts agree or the Project has no database yet.
+     */
+    const migrateLayout = Effect.fn("NodeProjects.migrateLayout")(function* (root: string, catalog: ReturnType<typeof createNodeRuntimeCatalog>, previous: RuntimeRelease, target: { readonly version: string }, onPhase?: (phase: string) => void) {
+        const paths = { zelavis: root }, stamp = stampNow();
+        yield* settleDataSwap(paths, yield* catalog.dataFormat(previous.version), stamp);
+        const from = yield* dataFormatOnDisk(paths, yield* catalog.dataFormat(previous.version));
+        const to = yield* catalog.dataFormat(target.version);
+        if (from === to) return undefined;
+        const shards = join(root, "data", "primary", "shards");
+        const hasDatabase = yield* integration(() => lstat(shards)).pipe(Effect.as(true), Effect.catch(() => Effect.succeed(false)));
+        if (!hasDatabase) {
+            // Nothing to bring forward: whatever the new engine creates here is its own layout.
+            yield* recordDataLayout(paths, to);
+            return undefined;
+        }
+        const earlier = yield* catalog.resolve(previous, "project", {}, {});
+        onPhase?.("verify the earlier engine");
+        const work = join(root, `migration-${stamp}`);
+        const report = yield* migrateDataLayout({ sourceShards: shards, sourceFormat: from, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"), ...(onPhase ? { onPhase } : {}),
+            exportWorker: fileURLToPath(new URL("./_data-export-worker.js", import.meta.url)) });
+        onPhase?.("recreate and verify the data");
+        const { retained } = yield* swapInMigratedData(paths, { migratedShards: report.shardsDirectory, from, to, stamp, engine: previous.version }).pipe(Effect.onError(() => undoDataSwap(paths, stamp).pipe(Effect.orElseSucceed(() => false))));
+        onPhase?.("swap in the migrated data");
+        // What the migration changed that a person should know: kept with the retained data, shown by the dashboard.
+        yield* integration(() => writeFile(join(root, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
+        yield* integration(() => rm(work, { recursive: true, force: true }));
+        return { from, to, tenants: report.tenants, collections: report.collections, documents: report.documents,
+            eventsCarried: report.eventsCarried, tenantsWithoutHistory: report.tenantsWithoutHistory,
+            documentsWithHistoryDropped: report.documentsWithHistoryDropped, retained } satisfies ZelavisProjectDataMigration;
+    });
+    const launch = Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1], role: ProjectLeaseRole, startOptions?: ZelavisProjectStartOptions) {
+            if (closed) {
+                return yield* new IntegrationFailure(new Error("The Node project runtime is shutting down."));
+            }
+            // A lost start reply can leave an unbound durable host. Reuse its
+            // exact identity and private control before considering another spawn.
+            // Where a start spends its time before the process exists, written to the Project's log once it does.
+            const laps: string[] = [];
+            let lapAt = Date.now();
+            const lap = (name: string) => { const now = Date.now(); laps.push(`${name} ${now - lapAt} ms`); lapAt = now; };
+            if (!processes.get(project.id)?.process?.running) yield* adopt(project.id);
+            lap("adopt");
+            const current = processes.get(project.id);
+            if (current?.process?.running && current.snapshot.status === "standby") {
+                if (role === "standby") return current.snapshot;
+                // The Agent binds a Project's placement when its process starts and has no way to give a running one a placement,
+                // so the standby does not become the writer in place: it is stopped and the Project starts again here under
+                // the placement it was given, taking the lease as this node's own next epoch. The standby keeps the lease as
+                // it stops (`releaseOnClose: false`): released, the standby it named could promote in between.
+                appendLog(current, "system", "Replacing the standby process with the writer.");
+                yield* driver.stop(project.id);
+            }
+            if (role === "standby" && options.leaseEnvironment === undefined && startOptions?.leaseEnvironment === undefined) {
+                return yield* new IntegrationFailure(new Error(`Project "${project.id}" cannot run as a standby: this node is not lease-guarded.`));
+            }
+            if (current?.process?.running &&
+                (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
+                // A managed app's private App follows its control plane engine.
+                // Its recipe lock and public app processes remain independent.
+                // The persistent host journal is the sole engine selection;
+                // interrupted replacement recovers through that same journal.
+                if (options.integrationOnly && current.control && !current.convergenceHeld && current.boundEngineVersion !== ZELAVIS_VERSION) {
+                    const status = yield* current.control.request({ action: "status" });
+                    const previous = yield* evaluate(() => {
+                        const release = status.release as RuntimeRelease;
+                        if (status.requiresRecovery === true || !release || typeof release.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(release.digest))
+                            throw new Error("Bound Project runtime requires fenced recovery before engine convergence.");
+                        return release;
+                    });
+                    if (previous.version !== ZELAVIS_VERSION) {
+                        const catalog = yield* catalogConfiguration();
+                        if (catalog) {
+                            const installed = createNodeRuntimeCatalog(catalog);
+                            // The Platform update never moves a Project across a data-layout change: its own recipe upgrade does.
+                            const convergence = engineConvergence({ from: yield* dataFormatOnDisk({ zelavis: join(projectDirectory(project.id), ".zelavis", "integration") }, yield* installed.dataFormat(previous.version)), to: CURRENT_FORMAT });
+                            if (!convergence.converge) {
+                                current.convergenceHeld = true;
+                                appendLog(current, "system", `Staying on Zelavis ${previous.version}. ${convergence.reason}`);
+                                return current.snapshot;
+                            }
+                            yield* installed.select(ZELAVIS_VERSION);
+                        }
+                        const target = { version: ZELAVIS_VERSION, digest: previous.digest };
+                        const { record } = yield* verifyNodeProjectRelease(projectDirectory(project.id), project.id, target);
+                        const canonical = yield* integration(() => readFile(join(projectDirectory(project.id), "project.json"), "utf8"));
+                        const unchanged = yield* evaluate(() => {
+                            const value = JSON.parse(canonical);
+                            return value.id === project.id && value.recipe?.name === record.recipe.name && value.recipe?.version === record.recipe.version && value.recipe?.artifact?.digest === record.recipe.artifact.digest;
+                        });
+                        // Convergence never changes recipe selection. Refuse a
+                        // pending canonical recipe swap rather than adopting it.
+                        if (!unchanged) return yield* new IntegrationFailure(new Error("Bound Project recipe recovery must finish before engine convergence."));
+                        const reply = yield* current.control.request({ action: "replace", release: target, commit: true }, {
+                            timeoutMs: 150_000,
+                            commit: Effect.fn("NodeProjects.commitBoundEngine")(function* (selected, generation) {
+                                if (!Number.isSafeInteger(generation) || generation < 1 || selected.digest !== previous.digest ||
+                                    selected.version !== previous.version && selected.version !== target.version)
+                                    return yield* new IntegrationFailure(new Error("Bound Project host requested an unqualified engine selection."));
+                                // Identical immutable recipe content needs no
+                                // canonical rewrite or second registry record.
+                            }),
+                        });
+                        if (reply.type !== "replaced") return yield* new IntegrationFailure(new Error("Bound Project host did not acknowledge engine convergence."));
+                    }
+                    current.boundEngineVersion = ZELAVIS_VERSION;
+                }
+                return current.snapshot;
+            }
+            const directory = projectDirectory(project.id);
+            yield* Effect.catch(integration(() => readFile(join(directory, "project.json"), "utf8")), Effect.fn("NodeProjects.recover")(function* (error) {
+                if (isMissingFileError(error)) {
+                    return (yield* new IntegrationFailure(new Error(`Project "${project.id}" has not been prepared.`)));
+                }
+                return (yield* error);
+            }));
+            const catalogOptions = yield* catalogConfiguration();
+            // Both the engine this start selects and the host it executes are the same immutable tree when the Project follows the
+            // Platform: it is verified once for this start (or reused from `prepareData`, at most five minutes old), and the
+            // next start verifies it again.
+            const verifiedHere = prefetchedFor(project.id);
+            let heldReason: string | undefined;
+            const engine = options.integrationOnly
+                ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* Effect.gen(function* () {
+                    const installed = createNodeRuntimeCatalog(catalogOptions, verifiedHere);
+                    // A cold start follows the Platform too, except across a data-layout change; see `chooseBoundEngine`.
+                    const chosen = yield* chooseBoundEngine({ journalFile: join(directory, ".zelavis", "integration", "runtime-handover.json"), layoutRoot: join(directory, ".zelavis", "integration"), catalog: installed });
+                    heldReason = chosen.heldReason;
+                    return yield* installed.select(chosen.version);
+                }) : undefined }
+                : yield* readCreationEngine(directory);
+            lap("choose and verify the engine");
+            // A crash between a migration's swap and the record of the upgrade that needed it is settled before the data is opened.
+            if (!options.integrationOnly && catalogOptions && engine.runtime) {
+                yield* settleDataSwap({ zelavis: join(directory, ".zelavis") }, yield* createNodeRuntimeCatalog(catalogOptions).dataFormat(engine.runtime.version), stampNow());
+            }
+            let executable = process.execPath, selectedRunner = runnerPath;
+            if (catalogOptions) {
+                if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
+                // The host is supervision/control plumbing of this Platform.
+                // Its workers still execute the Project's exact locked engine
+                // and private Node through the catalog inside that host.
+                const catalog = createNodeRuntimeCatalog(catalogOptions, verifiedHere);
+                const execution = yield* catalog.resolve(yield* catalog.select(ZELAVIS_VERSION), "project", {}, {});
+                executable = execution.executable;
+                selectedRunner = join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
+            }
+            lap("verify the Platform's engine");
+            const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
+            lap("freeze the release");
+            const state: NodeProjectProcess = {
+                ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
+                ...(heldReason !== undefined ? { convergenceHeld: true } : {}),
+                runner: selectedRunner,
+                logs: current?.logs ?? [],
+                snapshot: { status: "starting" },
+                stopping: false,
+            };
+            processes.set(project.id, state);
+            appendLog(state, "system", `Starting ${project.name} with ${driver.name}. Before the process: ${laps.join(", ")}.`);
+            if (heldReason !== undefined) appendLog(state, "system", `Staying on Zelavis ${state.boundEngineVersion}. ${heldReason}`);
+            // A fresh secret per start: a restarted runtime never accepts envelopes
+            // signed for its previous process.
+            const gatewaySecret = createGatewayAuthoritySecret();
+            gatewaySecrets.set(project.id, gatewaySecret);
+            // The integration host shares the Project but not its database: it never holds the writer lease.
+            const leaseEnvironment = options.integrationOnly ? undefined
+                : startOptions?.leaseEnvironment ?? (options.leaseEnvironment === undefined ? undefined : yield* integration(() => options.leaseEnvironment!(project.id, role)));
+            const appShardEnvironment = options.integrationOnly || role !== "writer" ? undefined
+                : startOptions?.appShardEnvironment ?? (placement && options.appShardEnvironment ? yield* integration(() => options.appShardEnvironment!(project.id, placement)) : undefined);
+            const ready = Deferred.makeUnsafe<ZelavisProjectRuntimeSnapshot, TaggedFailure>();
+            function finish(error?: Error, snapshot?: ZelavisProjectRuntimeSnapshot) {
+                if (error) Deferred.doneUnsafe(ready, Effect.fail(new IntegrationFailure(error)));
+                else if (snapshot) Deferred.doneUnsafe(ready, Effect.succeed(snapshot));
+            }
+            return yield* Effect.uninterruptibleMask(restore => Effect.gen(function* () {
+            const child = yield* integration(() => agent.start({
+                // A standby holds no placement, so it is not the Project's own Agent workload (see `standbyWorkloadId`).
+                workloadId: role === "standby" ? standbyWorkloadId(project.id) : project.id,
+                ...(placement && role === "writer" ? { placement } : {}),
+                executable,
+                // Visible identity lets process diagnostics distinguish hosts
+                // without inspecting their private environment or credentials.
+                args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : []), "--project-root", directory],
+                cwd: directory,
+                control: nodeProjectControlPaths(directory, options.integrationOnly),
+                env: {
+                    ...projectProcessEnvironment(),
+                    PORT: "0",
+                    ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
+                    ZELAVIS_PROJECT_ID: project.id,
+                    ...(leaseEnvironment ?? {}),
+                    ...(appShardEnvironment ?? {}),
+                    ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
+                    ZELAVIS_PROJECT_INITIAL_RELEASE: JSON.stringify(initial),
+                    ...(catalogOptions ? { ZELAVIS_RUNTIME_RELEASES_DIR: catalogOptions.directory, ZELAVIS_RUNTIME_ROOT_OWNED: String(catalogOptions.rootOwned) } : {}),
+                    ZELAVIS_UI_DEV_SERVER: "",
+                },
+            }, {
+                onOutput: ({ stream, line }) => {
+                    if (stream === "stderr") {
+                        appendLog(state, "stderr", line);
+                        return;
+                    }
+                    if (state.control?.accept(line)) return;
+                    // The readiness handshake: the child announces the address it
+                    // actually bound, because it was started on port 0 and the
+                    // Platform cannot know the port until it says so.
+                    const url = readyUrl(line);
+                    if (url) {
+                        const snapshot: ZelavisProjectRuntimeSnapshot = {
+                            status: role === "standby" ? "standby" : "running",
+                            url,
+                            startedAt: new Date().toISOString(),
+                        };
+                        state.snapshot = snapshot;
+                        appendLog(state, "system", role === "standby" ? `Project standing by at ${url}.` : `Project ready at ${url}.`);
+                        finish(undefined, snapshot);
+                        return;
+                    }
+                    appendLog(state, "stdout", line);
+                },
+                onExit: ({ code, signal, requested }) => {
+                    state.control?.exited();
+                    const stoppedAt = new Date().toISOString();
+                    if (requested || state.stopping || code === 0) {
+                        state.snapshot = { status: "stopped", stoppedAt };
+                    }
+                    else {
+                        state.snapshot = {
+                            status: "failed",
+                            stoppedAt,
+                            error: formatProjectProcessExitError({
+                                code,
+                                signal: signal as NodeJS.Signals | null,
+                                logs: state.logs,
+                            }),
+                        };
+                    }
+                    appendLog(state, "system", state.snapshot.error ?? "Project stopped.");
+                    finish(state.snapshot.status === "failed"
+                        ? new Error(state.snapshot.error)
+                        : new Error(`Project "${project.id}" stopped before becoming ready.`));
+                },
+            }));
+            state.process = child;
+            state.control = createNodeRuntimeClient(child, startupTimeoutMs);
+            return yield* restore(Deferred.await(ready).pipe(
+                Effect.timeoutOrElse({ duration: startupTimeoutMs,
+                    orElse: () => Effect.fail(new IntegrationFailure(new Error(`Project "${project.id}" did not become ready within ${startupTimeoutMs}ms. ${state.logs.slice(-8).map(entry => entry.message).join(" ")}`))) }),
+                Effect.onError(cause => Effect.gen(function* () {
+                    state.stopping = true;
+                    yield* integration(() => child.stop({ graceMs: 2000 })).pipe(Effect.ignore);
+                    gatewaySecrets.delete(project.id);
+                    state.snapshot = { status: "failed", stoppedAt: new Date().toISOString(), error: String(unwrapFailure(Cause.squash(cause))) };
+                    appendLog(state, "system", state.snapshot.error!);
+                })),
+            ));
+            }));
+        });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "node-process",
         runtimeKinds: Object.freeze(["native"]),
@@ -244,11 +664,25 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         capabilities: () => capabilities,
         versions: Effect.fn("NodeProjects.versions")(function* (project) {
             const configuration = yield* catalogConfiguration();
+            if (options.integrationOnly && configuration && project) {
+                // A managed app's bound App follows the Platform; what the card needs is whether its data layout does yet.
+                const catalog = createNodeRuntimeCatalog(configuration);
+                const root = join(projectDirectory(project.id), ".zelavis", "integration");
+                const selected = yield* readNodeRuntimeJournalSelection(join(root, "runtime-handover.json"));
+                const currentDataFormat = selected === undefined ? undefined
+                    : yield* dataFormatOnDisk({ zelavis: root }, yield* catalog.dataFormat(selected.version)).pipe(Effect.orElseSucceed(() => undefined));
+                return { selectable: false, reason: "This recipe manages its own runtime version.", versions: [],
+                    ...(currentDataFormat === undefined ? {} : { currentDataFormat, latestDataFormat: CURRENT_FORMAT }) };
+            }
             if (!configuration || project && (project.recipe.name !== "@zelavis/app" || project.runtimeKind !== "native"))
                 return { selectable: false, reason: "Engine version selection requires an installer-managed native Zelavis App.", versions: [] };
-            const versions = yield* createNodeRuntimeCatalog(configuration).list();
+            const catalog = createNodeRuntimeCatalog(configuration);
+            const versions = yield* catalog.list();
             const current = project ? (yield* readCreationEngine(projectDirectory(project.id))).runtime?.version : undefined;
-            return { selectable: true, current, latest: versions.find(value => value.status === "available")?.version, versions };
+            const currentDataFormat = project && current
+                ? yield* dataFormatOnDisk({ zelavis: join(projectDirectory(project.id), ".zelavis") }, yield* catalog.dataFormat(current)).pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+            return { selectable: true, current, ...(currentDataFormat === undefined ? {} : { currentDataFormat }), latest: versions.find(value => value.status === "available")?.version, versions };
         }),
         resolveVersion: Effect.fn("NodeProjects.resolveVersion")(function* (project, version) {
             const configuration = yield* catalogConfiguration();
@@ -261,7 +695,21 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const app = yield* catalog.app(selected.version).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
             return { engineVersion: selected.version, recipe: app.recipe };
         }),
-        prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate) {
+        prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate, placement) {
+            // A managed app's integration host outlives Platform updates by design (its supervision is kept
+            // through them), and it loads and validates recipes with its own code. About to load a new recipe,
+            // one still running an earlier release's runner would judge it by older rules, so it is replaced
+            // first; the app's own processes are separate and keep serving.
+            const existing = processes.get(previous.id);
+            if (options.integrationOnly && existing?.process?.running && existing.runner !== undefined &&
+                !(yield* hostReadsRecipe(existing.runner, candidate))) {
+                appendLog(existing, "system", "Replacing the integration host, which runs an earlier release's code.");
+                existing.stopping = true;
+                yield* integration(() => existing.process!.stop()).pipe(Effect.uninterruptible);
+                gatewaySecrets.delete(previous.id);
+                existing.snapshot = stoppedSnapshot(existing);
+                yield* driver.start(previous, placement);
+            }
             const state = processes.get(previous.id);
             if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project has no running handover host."));
             const before = yield* state.control.request({ action: "status" });
@@ -360,6 +808,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             // what it runs. Preparing fails, with the reason, when it cannot be frozen.
             const engine = yield* readCreationEngine(directory);
             const catalogOptions = yield* catalogConfiguration();
+            let migrated = false;
             let app: { packageDirectory: string; recipe: ZelavisProjectRecipeLock } | undefined;
             if (catalogOptions) {
                 const catalog = createNodeRuntimeCatalog(catalogOptions);
@@ -367,13 +816,20 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     : engine.runtime ? yield* catalog.select(engine.runtime.version) : yield* catalog.latest();
                 if (engine.runtime && (!project.engineVersion || project.engineVersion === engine.runtime.version) && engine.runtime.digest !== selected.digest)
                     return yield* new IntegrationFailure(new Error("The installed engine differs from this Project's exact runtime lock."));
+                const previousRuntime = engine.runtime;
                 engine.runtime = selected;
+                if (!options.integrationOnly && previousRuntime !== undefined && previousRuntime.version !== selected.version) {
+                    const report = yield* migrateLayout(join(directory, ".zelavis"), catalog, previousRuntime, selected);
+                    migrated = report !== undefined;
+                    if (report) migrations.set(project.id, report);
+                }
                 if (recipe.name === "@zelavis/app") {
                     const selectedApp = yield* catalog.app(selected.version);
                     app = selectedApp;
                     if (selectedApp.recipe.version !== recipe.version) return yield* new IntegrationFailure(new Error("Selected engine and App recipe do not match."));
                 }
             }
+            yield* Effect.gen(function* () {
             const artifact = yield* integration(() => ensureRecipeArtifact(recipe, directory, dataDirectory,
                 app ? () => app!.packageDirectory : options.recipePackageDirectory));
             yield* integration(() => writeFile(join(directory, "project.json"), `${JSON.stringify({
@@ -388,249 +844,98 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     capabilities: driver.capabilities(project),
                 },
             }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }));
+            // The migrated data goes back if the lock that makes it current could not be written.
+            }).pipe(Effect.onError(() => migrated ? undoDataSwap({ zelavis: join(directory, ".zelavis") }, stampNow()).pipe(Effect.orElseSucceed(() => false)) : Effect.void));
         }),
-        adopt: Effect.fn("NodeProjects.adopt")(function* () {
-            if (!agent.attach)
-                return;
-            const directories = ((yield* Effect.orElseSucceed(integration(() => readdir(projectsDirectory, { withFileTypes: true })), () => [])))
-                .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
-                .map(entry => entry.name);
-            for (const projectId of directories) {
-                const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
-                if (frozenManifest) {
-                    const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
-                    if (options.integrationOnly ? !customRuntime : customRuntime) continue;
-                }
-                // A canonical recipe swap can be interrupted while a verified
-                // snapshot is serving. Adoption must still reach that host so
-                // durable intent recovery can restore the selected recipe.
-                const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
-                if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
-                const attached = yield* Effect.catch(integration(() => agent.attach!(projectId)), Effect.fn("NodeProjects.recover")(function* () { return []; }));
-                for (const { process: child, command, replay } of attached) {
-                    const runner = command.args?.[0];
-                    if (!runner?.endsWith("/_node-project-runner.js") || command.cwd !== projectDirectory(projectId) ||
-                        command.args?.includes("--integration") !== (options.integrationOnly === true)) continue;
-                    if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
-                    if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
-                    const state: NodeProjectProcess = {
-                        process: child,
-                        logs: [],
-                        snapshot: { status: "running" },
-                        stopping: false,
-                    };
-                    state.control = createNodeRuntimeClient(child, startupTimeoutMs);
-                    processes.set(projectId, state);
-                    for (const { stream, line } of replay) {
-                        const url = readyUrl(line);
-                        if (url) {
-                            state.snapshot = { status: "running", url };
-                            continue;
-                        }
-                        appendLog(state, stream, line);
-                    }
-                    appendLog(state, "system", state.snapshot.url
-                        ? `Re-attached to a running Project at ${state.snapshot.url}.`
-                        : "Re-attached to a running Project whose address is no longer in the Agent's buffer.");
-                    child.listen?.(({ stream, line }) => {
-                        if (stream === "stdout" && state.control?.accept(line)) return;
-                        const url = readyUrl(line);
-                        if (url) {
-                            state.snapshot = { status: "running", url };
-                            appendLog(state, "system", `Project ready at ${url}.`);
-                            return;
-                        }
-                        appendLog(state, stream, line);
-                    });
-                    void child.exit.then(({ code, signal, requested }) => {
-                        state.control?.exited();
-                        const stoppedAt = new Date().toISOString();
-                        state.snapshot =
-                            requested || state.stopping || code === 0
-                                ? { status: "stopped", stoppedAt }
-                                : {
-                                    status: "failed",
-                                    stoppedAt,
-                                    error: formatProjectProcessExitError({
-                                        code,
-                                        signal: signal as NodeJS.Signals | null,
-                                        logs: state.logs,
-                                    }),
-                                };
-                    });
-                    const secret = createGatewayAuthoritySecret();
-                    const reply = yield* state.control.request({ action: "rotate-key", secret });
-                    if (reply.type !== "key-rotated") return yield* new IntegrationFailure(new Error("Project host did not acknowledge Gateway re-keying."));
-                    const url = readyUrl(JSON.stringify({ type: "ready", url: reply.url }));
-                    if (!url) return yield* new IntegrationFailure(new Error("Project host did not report its persistent ingress address."));
-                    state.snapshot = { ...state.snapshot, status: "running", url };
-                    gatewaySecrets.set(projectId, secret);
-                }
-            }
+        /**
+         * Brings a managed app's bound App across a data-layout change, whether or not its recipe changes. The bound host is stopped,
+         * the data migrated by the engine that wrote it and swapped in, and the host started again, which follows the Platform's engine
+         * now that the data agrees. If it does not start, the old data and engine come back. Undefined when nothing needed migrating.
+         */
+        /** See `ZelavisProjectRuntimeDriver.prepareData`: verifies, outside the hold, the two engines a migration and the start after it execute. */
+        prepareData: Effect.fn("NodeProjects.prepareData")(function* (project: ZelavisProjectRecord) {
+            if (!options.integrationOnly) return;
+            const configuration = yield* catalogConfiguration();
+            if (!configuration) return;
+            const root = join(projectDirectory(project.id), ".zelavis", "integration");
+            const selected = yield* readNodeRuntimeJournalSelection(join(root, "runtime-handover.json"));
+            if (selected === undefined) return;
+            const artifacts: VerifiedRuntimeArtifacts = new Map();
+            const catalog = createNodeRuntimeCatalog(configuration, artifacts);
+            const layout = yield* dataLayoutOnDisk({ zelavis: root }, yield* catalog.dataFormat(selected.version));
+            if (layout.format === CURRENT_FORMAT) return;
+            const began = Date.now();
+            const earlier = layout.engine ?? selected.version;
+            yield* catalog.select(earlier);
+            yield* catalog.select(ZELAVIS_VERSION);
+            prefetchedEngines.set(project.id, { at: Date.now(), artifacts });
+            // Before the hold, but inside the upgrade request: its time is written down so a slow one says where it went.
+            const live = processes.get(project.id);
+            if (live) appendLog(live, "system", `Verified Zelavis ${earlier} and ${ZELAVIS_VERSION} for the data migration in ${Date.now() - began} ms.`);
         }),
-        start: Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
-            if (closed) {
-                return yield* new IntegrationFailure(new Error("The Node project runtime is shutting down."));
+        migrateData: Effect.fn("NodeProjects.migrateData")(function* (project: ZelavisProjectRecord, placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
+            if (!options.integrationOnly) return undefined;
+            const configuration = yield* catalogConfiguration();
+            if (!configuration) return undefined;
+            // One operation: the earlier engine is verified once, however often it is named. The Platform's own engine is not
+            // executed here (the migration opens the data in this process); the start that follows verifies it before it runs it.
+            const catalog = createNodeRuntimeCatalog(configuration, prefetchedFor(project.id));
+            const root = join(projectDirectory(project.id), ".zelavis", "integration");
+            const selected = yield* readNodeRuntimeJournalSelection(join(root, "runtime-handover.json"));
+            if (selected === undefined) return undefined;
+            const layout = yield* dataLayoutOnDisk({ zelavis: root }, yield* catalog.dataFormat(selected.version));
+            if (layout.format === CURRENT_FORMAT) return undefined;
+            const held = yield* catalog.select(layout.engine ?? selected.version);
+            const existing = processes.get(project.id);
+            // Each phase's duration goes to the Project's log, so a migration that outlasts a caller's deadline says where it spent it.
+            const began = Date.now();
+            let phaseAt = began;
+            const phase = (name: string) => { const now = Date.now(); const line = `Data migration phase "${name}" took ${now - phaseAt} ms (${now - began} ms in all).`; phaseAt = now; const live = processes.get(project.id); if (live) appendLog(live, "system", line); };
+            if (existing?.process?.running) {
+                appendLog(existing, "system", `Stopping the bound App to migrate its data from layout ${layout.format} to ${CURRENT_FORMAT}.`);
+                existing.stopping = true;
+                yield* integration(() => existing.process!.stop()).pipe(Effect.uninterruptible);
+                gatewaySecrets.delete(project.id);
+                existing.snapshot = stoppedSnapshot(existing);
             }
-            const current = processes.get(project.id);
-            if (current?.process?.running &&
-                (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
-                // A managed app's private App follows its control plane engine.
-                // Its recipe lock and public app processes remain independent.
-                // The persistent host journal is the sole engine selection;
-                // interrupted replacement recovers through that same journal.
-                if (options.integrationOnly && current.control && current.boundEngineVersion !== ZELAVIS_VERSION) {
-                    const status = yield* current.control.request({ action: "status" });
-                    const previous = yield* evaluate(() => {
-                        const release = status.release as RuntimeRelease;
-                        if (status.requiresRecovery === true || !release || typeof release.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(release.digest))
-                            throw new Error("Bound Project runtime requires fenced recovery before engine convergence.");
-                        return release;
-                    });
-                    if (previous.version !== ZELAVIS_VERSION) {
-                        const catalog = yield* catalogConfiguration();
-                        if (catalog) yield* createNodeRuntimeCatalog(catalog).select(ZELAVIS_VERSION);
-                        const target = { version: ZELAVIS_VERSION, digest: previous.digest };
-                        const { record } = yield* verifyNodeProjectRelease(projectDirectory(project.id), project.id, target);
-                        const canonical = yield* integration(() => readFile(join(projectDirectory(project.id), "project.json"), "utf8"));
-                        const unchanged = yield* evaluate(() => {
-                            const value = JSON.parse(canonical);
-                            return value.id === project.id && value.recipe?.name === record.recipe.name && value.recipe?.version === record.recipe.version && value.recipe?.artifact?.digest === record.recipe.artifact.digest;
-                        });
-                        // Convergence never changes recipe selection. Refuse a
-                        // pending canonical recipe swap rather than adopting it.
-                        if (!unchanged) return yield* new IntegrationFailure(new Error("Bound Project recipe recovery must finish before engine convergence."));
-                        const reply = yield* current.control.request({ action: "replace", release: target, commit: true }, {
-                            timeoutMs: 150_000,
-                            commit: Effect.fn("NodeProjects.commitBoundEngine")(function* (selected, generation) {
-                                if (!Number.isSafeInteger(generation) || generation < 1 || selected.digest !== previous.digest ||
-                                    selected.version !== previous.version && selected.version !== target.version)
-                                    return yield* new IntegrationFailure(new Error("Bound Project host requested an unqualified engine selection."));
-                                // Identical immutable recipe content needs no
-                                // canonical rewrite or second registry record.
-                            }),
-                        });
-                        if (reply.type !== "replaced") return yield* new IntegrationFailure(new Error("Bound Project host did not acknowledge engine convergence."));
-                    }
-                    current.boundEngineVersion = ZELAVIS_VERSION;
-                }
-                return current.snapshot;
+            phase("stop bound host");
+            const report = yield* migrateLayout(root, catalog, held, { version: ZELAVIS_VERSION }, phase);
+            phase("report and clean up");
+            const migrated = report !== undefined;
+            const paths = { zelavis: root };
+            // The host now starts on the Platform's engine; if it cannot, the old data and the engine that wrote it return.
+            // A stopped Project's host stays stopped; its next start follows the layout on disk.
+            if (existing?.process?.running === true || project.runtime.status === "running") {
+                yield* migrated
+                    ? startOnSwappedData(paths, stampNow(), driver.start(project, placement), driver.start(project, placement))
+                    : driver.start(project, placement);
             }
-            const directory = projectDirectory(project.id);
-            yield* Effect.catch(integration(() => readFile(join(directory, "project.json"), "utf8")), Effect.fn("NodeProjects.recover")(function* (error) {
-                if (isMissingFileError(error)) {
-                    return (yield* new IntegrationFailure(new Error(`Project "${project.id}" has not been prepared.`)));
-                }
-                return (yield* error);
-            }));
-            const catalogOptions = yield* catalogConfiguration();
-            const engine = options.integrationOnly
-                ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* createNodeRuntimeCatalog(catalogOptions).select(ZELAVIS_VERSION) : undefined }
-                : yield* readCreationEngine(directory);
-            let executable = process.execPath, selectedRunner = runnerPath;
-            if (catalogOptions) {
-                if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
-                const execution = yield* createNodeRuntimeCatalog(catalogOptions).resolve(engine.runtime, "project", {}, {});
-                executable = execution.executable;
-                selectedRunner = join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
-            }
-            const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
-            const state: NodeProjectProcess = {
-                ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
-                logs: current?.logs ?? [],
-                snapshot: { status: "starting" },
-                stopping: false,
-            };
-            processes.set(project.id, state);
-            appendLog(state, "system", `Starting ${project.name} with ${driver.name}.`);
-            // A fresh secret per start: a restarted runtime never accepts envelopes
-            // signed for its previous process.
-            const gatewaySecret = createGatewayAuthoritySecret();
-            gatewaySecrets.set(project.id, gatewaySecret);
-            const ready = Deferred.makeUnsafe<ZelavisProjectRuntimeSnapshot, TaggedFailure>();
-            function finish(error?: Error, snapshot?: ZelavisProjectRuntimeSnapshot) {
-                if (error) Deferred.doneUnsafe(ready, Effect.fail(new IntegrationFailure(error)));
-                else if (snapshot) Deferred.doneUnsafe(ready, Effect.succeed(snapshot));
-            }
-            return yield* Effect.uninterruptibleMask(restore => Effect.gen(function* () {
-            const child = yield* integration(() => agent.start({
-                workloadId: project.id,
-                ...(placement ? { placement } : {}),
-                executable,
-                args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : [])],
-                cwd: directory,
-                stdin: "pipe",
-                env: {
-                    ...projectProcessEnvironment(),
-                    PORT: "0",
-                    ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
-                    ZELAVIS_PROJECT_ID: project.id,
-                    ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
-                    ZELAVIS_PROJECT_INITIAL_RELEASE: JSON.stringify(initial),
-                    ...(catalogOptions ? { ZELAVIS_RUNTIME_RELEASES_DIR: catalogOptions.directory, ZELAVIS_RUNTIME_ROOT_OWNED: String(catalogOptions.rootOwned) } : {}),
-                    ZELAVIS_UI_DEV_SERVER: "",
-                },
-            }, {
-                onOutput: ({ stream, line }) => {
-                    if (stream === "stderr") {
-                        appendLog(state, "stderr", line);
-                        return;
-                    }
-                    if (state.control?.accept(line)) return;
-                    // The readiness handshake: the child announces the address it
-                    // actually bound, because it was started on port 0 and the
-                    // Platform cannot know the port until it says so.
-                    const url = readyUrl(line);
-                    if (url) {
-                        const snapshot: ZelavisProjectRuntimeSnapshot = {
-                            status: "running",
-                            url,
-                            startedAt: new Date().toISOString(),
-                        };
-                        state.snapshot = snapshot;
-                        appendLog(state, "system", `Project ready at ${url}.`);
-                        finish(undefined, snapshot);
-                        return;
-                    }
-                    appendLog(state, "stdout", line);
-                },
-                onExit: ({ code, signal, requested }) => {
-                    state.control?.exited();
-                    const stoppedAt = new Date().toISOString();
-                    if (requested || state.stopping || code === 0) {
-                        state.snapshot = { status: "stopped", stoppedAt };
-                    }
-                    else {
-                        state.snapshot = {
-                            status: "failed",
-                            stoppedAt,
-                            error: formatProjectProcessExitError({
-                                code,
-                                signal: signal as NodeJS.Signals | null,
-                                logs: state.logs,
-                            }),
-                        };
-                    }
-                    appendLog(state, "system", state.snapshot.error ?? "Project stopped.");
-                    finish(state.snapshot.status === "failed"
-                        ? new Error(state.snapshot.error)
-                        : new Error(`Project "${project.id}" stopped before becoming ready.`));
-                },
-            }));
-            state.process = child;
-            state.control = createNodeRuntimeClient(child, startupTimeoutMs);
-            return yield* restore(Deferred.await(ready).pipe(
-                Effect.timeoutOrElse({ duration: startupTimeoutMs,
-                    orElse: () => Effect.fail(new IntegrationFailure(new Error(`Project "${project.id}" did not become ready within ${startupTimeoutMs}ms. ${state.logs.slice(-8).map(entry => entry.message).join(" ")}`))) }),
-                Effect.onError(cause => Effect.gen(function* () {
-                    state.stopping = true;
-                    yield* integration(() => child.stop({ graceMs: 2000 })).pipe(Effect.ignore);
-                    gatewaySecrets.delete(project.id);
-                    state.snapshot = { status: "failed", stoppedAt: new Date().toISOString(), error: String(unwrapFailure(Cause.squash(cause))) };
-                })),
-            ));
-            }));
+            phase("start bound host");
+            yield* commitDataSwap(paths);
+            phase("commit swap");
+            return report;
+        }, (operation, project) => operation.pipe(Effect.ensuring(Effect.sync(() => { prefetchedEngines.delete(project.id); })))),
+        // The upgrade was recorded, or was not: either way the swap it made is settled, never half-kept.
+        commitUpgrade: Effect.fn("NodeProjects.commitUpgrade")(function* (projectId: string) {
+            if (options.integrationOnly) return undefined;
+            yield* commitDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") });
+            const report = migrations.get(projectId);
+            migrations.delete(projectId);
+            return report;
         }),
+        retainedData: Effect.fn("NodeProjects.retainedData")(function* (projectId: string) {
+            return yield* listRetainedData({ zelavis: dataRoot(projectId) });
+        }),
+        removeRetainedData: Effect.fn("NodeProjects.removeRetainedData")(function* (projectId: string, name: string) {
+            yield* removeRetainedData({ zelavis: dataRoot(projectId) }, name);
+        }),
+        abandonUpgrade: Effect.fn("NodeProjects.abandonUpgrade")(function* (projectId: string) {
+            migrations.delete(projectId);
+            if (!options.integrationOnly) yield* undoDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") }, stampNow());
+        }),
+        adopt: () => adopt(),
+        start: (project, placement, startOptions) => launch(project, placement, "writer", startOptions),
+        startStandby: (project, placement, startOptions) => launch(project, placement, "standby", startOptions),
         stop: Effect.fn("NodeProjects.stop")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["stop"]>>[0]) {
             const state = processes.get(projectId);
             if (!state?.process?.running) {
@@ -671,7 +976,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             yield* driver.stop(projectId);
             processes.delete(projectId);
             gatewaySecrets.delete(projectId);
-            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true }));
+            // Retried, bounded: the Platform hands each Project's folder its allow-list after a background
+            // refresh, and a write landing mid-removal leaves the last rmdir with ENOTEMPTY.
+            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
         }),
         close: () => singleFlight(closingRuns, "close", () => Effect.gen(function* () {
             closed = true;

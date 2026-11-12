@@ -1,14 +1,16 @@
+import { present, integrationValue } from "../../core/runtime/effect-boundary.js";
 import { isUnknown, recordOf, parseJson } from "../../core/json-validation.js";
 import { existsSync, mkdirSync, realpathSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Array as Arr, Effect, Stream, type Scope } from "effect";
+import { Effect, Option, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
-import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { scanRange, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
 import { exclusiveKvEngine } from "./exclusive-kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * RocksDB through `@harperfast/rocksdb-js`, under evaluation.
@@ -36,6 +38,8 @@ import type { ObjectStoreApi } from "../store.js";
  * loses nothing, because the log is in the operating system's page cache; a
  * machine that loses power can lose a suffix of recent commits, never leave a
  * hole. `db-durability.test.mjs` checks both, the second by cutting the log.
+ * The binding has no per-commit log sync, so `durability: "power"` is refused
+ * when the store opens rather than quietly given the weaker promise.
  *
  * One gap is known and not closable here. The binding ends a range scan quietly
  * when RocksDB's iterator fails — a checksum mismatch in a block reads as the end
@@ -44,17 +48,30 @@ import type { ObjectStoreApi } from "../store.js";
  * corrupted file returns a prefix and no error (HarperFast/rocksdb-js#846).
  */
 
-/** The shape used here, declared rather than imported so the package stays optional. */
-interface RocksdbJsDatabase {
-  open: () => boolean;
-  close: () => void;
-  get: (key: Buffer) => Promise<Buffer | undefined>;
+/** What the database and a transaction both scan through. */
+interface RocksdbJsReads {
   getRange: (options: {
     start?: Buffer;
     end?: Buffer;
     reverse?: boolean;
   }) => Iterable<{ key: Buffer; value: Buffer }>;
+}
+
+/** The shape used here, declared rather than imported so the package stays optional. */
+interface RocksdbJsDatabase extends RocksdbJsReads {
+  /** A value when the binding has it at hand, a promise when it has to read for it. */
+  get: (key: Buffer) => Buffer | undefined | Promise<Buffer | undefined>;
+  open: () => boolean;
+  close: () => void;
+  /** The native store, which a transaction is opened on. */
+  store: unknown;
   transaction: <A>(run: (txn: RocksdbJsTransaction) => A) => Promise<A | void>;
+}
+
+/** A transaction opened for reading only: it reads from the snapshot its first read takes. */
+interface RocksdbJsReadTransaction extends RocksdbJsReads {
+  getSync: (key: Buffer) => Buffer | undefined;
+  abort: () => void;
 }
 
 interface RocksdbJsTransaction {
@@ -63,15 +80,18 @@ interface RocksdbJsTransaction {
 }
 
 const loadRocksdbJs = Effect.tryPromise({
-  try: async () =>
-    (await import("@harperfast/rocksdb-js")) as unknown as {
+  try: () =>
+    present(Effect.gen(function* () {
+    return ((yield* integrationValue(import("@harperfast/rocksdb-js")))) as unknown as {
       RocksDatabase: new (
         path: string,
         options: Record<string, unknown>,
       ) => RocksdbJsDatabase;
+      Transaction: new (store: unknown) => RocksdbJsReadTransaction;
       /** The binding's version and the RocksDB it was built against. */
       versions: Readonly<Record<string, string>>;
-    },
+    };
+  })),
   catch: (cause) => new StoreError({ op: "rocksdb-js.load", cause }),
 });
 
@@ -129,6 +149,9 @@ const claimFormat = (path: string, versions: Readonly<Record<string, string>>): 
   renameSync(temporary, marker);
 };
 
+/** Any key, read to make a transaction take its snapshot; the binding refuses an empty one. */
+const SNAPSHOT_PROBE = Buffer.of(0);
+
 /** Entries per step of a scan; see `scan`. */
 const SCAN_BATCH = 1024;
 
@@ -151,7 +174,7 @@ export const makeRocksdbJsEngine = (
   directory: string,
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
   Effect.acquireRelease(
-    Effect.flatMap(loadRocksdbJs, ({ RocksDatabase, versions }) =>
+    Effect.flatMap(loadRocksdbJs, ({ RocksDatabase, Transaction, versions }) =>
       Effect.try({
         try: () => {
           const path = join(directory, partition);
@@ -165,45 +188,46 @@ export const makeRocksdbJsEngine = (
           });
           // The constructor does not open; it only describes the database.
           db.open();
-          return db;
+          return { db, Transaction };
         },
         catch: (cause) => new StoreError({ op: "rocksdb-js.open", cause }),
       }),
     ),
-    closeDatabase,
+    ({ db }) => closeDatabase(db),
   ).pipe(
-    Effect.flatMap((db) => {
+    Effect.flatMap(({ db, Transaction }) => {
       const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
-      return exclusiveKvEngine({
-        get: (key) =>
-          Effect.tryPromise({
-            try: async () => {
-              const value = await db.get(buf(key));
-              return value === undefined ? undefined : new Uint8Array(value);
-            },
-            catch: fail("rocksdb-js.get"),
-          }),
+      /**
+       * Reads through the database as it is, or through a transaction's
+       * snapshot: the database's point read is asynchronous, a transaction's
+       * synchronous.
+       */
+      const readerOn = (
+        reads: RocksdbJsReads,
+        read: (key: Buffer) => Effect.Effect<Buffer | undefined, StoreError>,
+      ): KvReader => ({
+        get: (key) => Effect.map(read(buf(key)), (value) => (value === undefined ? undefined : new Uint8Array(value))),
 
         scan: (prefix, options) =>
-          Stream.fromAsyncIterable(
-            (async function* (): AsyncGenerator<Arr.NonEmptyArray<KvEntry>> {
-              const { lo, hi, empty } = scanRange(prefix, options);
-              let left = options?.limit ?? Infinity;
-              if (empty || left <= 0) return;
-              const reverse = options?.reverse === true;
-              // An empty bound is omitted rather than passed. The binding
-              // rejects a zero-length key outright, and this store asks for
-              // exactly that whenever it scans a whole tag — or, at the top,
-              // the entire keyspace. Omitting the bound is what "from the
-              // beginning" and "to the end" mean here.
-              //
-              // In reverse the binding reads `start` as an inclusive upper
-              // bound and `end` as an exclusive lower one — the opposite of
-              // the half-open range asked for. So a reverse scan starts at
-              // `hi`, passes over `hi` itself, and stops at the first key below
-              // `lo`: the same entries as the forward scan, read backwards.
-              const entries = db
+          Stream.unwrap(Effect.gen(function* () {
+            const { lo, hi, empty } = scanRange(prefix, options);
+            let left = options?.limit ?? Infinity;
+            if (empty || left <= 0) return Stream.empty;
+            const reverse = options?.reverse === true;
+            // An empty bound is omitted rather than passed. The binding
+            // rejects a zero-length key outright, and this store asks for
+            // exactly that whenever it scans a whole tag — or, at the top,
+            // the entire keyspace. Omitting the bound is what "from the
+            // beginning" and "to the end" mean here.
+            //
+            // In reverse the binding reads `start` as an inclusive upper
+            // bound and `end` as an exclusive lower one — the opposite of
+            // the half-open range asked for. So a reverse scan starts at
+            // `hi`, passes over `hi` itself, and stops at the first key below
+            // `lo`: the same entries as the forward scan, read backwards.
+            const entries = yield* Effect.try({
+              try: () => reads
                 .getRange(
                   reverse
                     ? { ...(hi === undefined || hi.length === 0 ? {} : { start: buf(hi) }), reverse: true }
@@ -212,51 +236,63 @@ export const makeRocksdbJsEngine = (
                         ...(hi === undefined || hi.length === 0 ? {} : { end: buf(hi) }),
                       },
                 )
-                [Symbol.iterator]();
-              // Entries leave in batches, not one at a time. Each step of an
-              // async generator is a promise and a trip through the stream, and
-              // per entry that cost more than RocksDB did: a 100k-key scan took
-              // half again as long as the binding's own iterator. The binding
-              // reads synchronously anyway, so a batch costs one step.
-              //
-              // `return` runs when the consumer stops early too — the stream
-              // calls it on scope close — and closes the native iterator, which
-              // would otherwise hold its snapshot until garbage collection.
-              try {
-                for (;;) {
-                  const batch: Array<KvEntry> = [];
-                  let finished = false;
-                  while (batch.length < SCAN_BATCH) {
-                    const step = entries.next();
-                    if (step.done) {
-                      finished = true;
-                      break;
-                    }
-                    if (reverse) {
-                      if (hi !== undefined && compareKeys(step.value.key, hi) >= 0) continue;
-                      if (compareKeys(step.value.key, lo) < 0) {
-                        finished = true;
-                        break;
-                      }
-                    }
-                    batch.push({
-                      key: new Uint8Array(step.value.key),
-                      value: new Uint8Array(step.value.value),
-                    });
-                    if (--left <= 0) {
+                [Symbol.iterator](),
+              catch: (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
+            });
+            // Closing the native iterator releases its snapshot. The stream's
+            // scope runs this when the scan ends or the consumer stops early,
+            // which would otherwise hold the snapshot until garbage collection.
+            yield* Effect.addFinalizer(() => Effect.sync(() => { entries.return?.(); }));
+            // Entries leave in batches, not one at a time. Each step of a
+            // stream is a trip through the runtime, and per entry that cost
+            // more than RocksDB did: a 100k-key scan took half again as long
+            // as the binding's own iterator. The binding reads synchronously
+            // anyway, so a batch costs one step.
+            return Stream.paginate(undefined, () => Effect.try({
+              try: (): readonly [ReadonlyArray<KvEntry>, Option.Option<undefined>] => {
+                const batch: Array<KvEntry> = [];
+                let finished = false;
+                while (batch.length < SCAN_BATCH) {
+                  const step = entries.next();
+                  if (step.done) {
+                    finished = true;
+                    break;
+                  }
+                  if (reverse) {
+                    if (hi !== undefined && compareKeys(step.value.key, hi) >= 0) continue;
+                    if (compareKeys(step.value.key, lo) < 0) {
                       finished = true;
                       break;
                     }
                   }
-                  if (Arr.isArrayNonEmpty(batch)) yield batch;
-                  if (finished) return;
+                  batch.push({
+                    key: new Uint8Array(step.value.key),
+                    value: new Uint8Array(step.value.value),
+                  });
+                  if (--left <= 0) {
+                    finished = true;
+                    break;
+                  }
                 }
-              } finally {
-                entries.return?.();
-              }
-            })(),
-            (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
-          ).pipe(Stream.flattenArray),
+                return [batch, finished ? Option.none() : Option.some(undefined)];
+              },
+              catch: (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
+            }));
+          })),
+      });
+
+      return exclusiveKvEngine({
+        ...readerOn(db, (key) => Effect.suspend(() => {
+          let pending: Buffer | undefined | Promise<Buffer | undefined>;
+          try {
+            pending = db.get(key);
+          } catch (cause) {
+            return Effect.fail(fail("rocksdb-js.get")(cause));
+          }
+          return pending instanceof Promise
+            ? Effect.tryPromise({ try: () => pending, catch: fail("rocksdb-js.get") })
+            : Effect.succeed(pending);
+        })),
 
         write: (writes: ReadonlyArray<KvWrite>) =>
           Effect.tryPromise({
@@ -274,16 +310,40 @@ export const makeRocksdbJsEngine = (
             catch: fail("rocksdb-js.write"),
           }).pipe(Effect.asVoid),
 
+        snapshot: Effect.map(
+          Effect.acquireRelease(
+            Effect.try({
+              try: () => {
+                const transaction = new Transaction(db.store);
+                // The binding takes a transaction's snapshot at its first read,
+                // so it is read once here, as the snapshot is taken.
+                transaction.getSync(SNAPSHOT_PROBE);
+                return transaction;
+              },
+              catch: fail("rocksdb-js.snapshot"),
+            }),
+            // Nothing was written through it, so aborting only releases its snapshot.
+            (transaction) => Effect.sync(() => transaction.abort()),
+          ),
+          (transaction) => readerOn(transaction, (key) =>
+            Effect.try({ try: () => transaction.getSync(key), catch: fail("rocksdb-js.get") })),
+        ),
+
         close: closeDatabase(db),
       }, realpathSync(join(directory, partition)));
     }),
   );
 
 export const makeRocksdbJsStore = (
-  partition: PartitionKey,
+  shard: ShardId,
   directory: string,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  options?: OpenShardOptions & { readonly durability?: KvDurability },
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeRocksdbJsEngine(partition, directory);
-    return yield* openStoreOverKv(partition, engine);
+    if (options?.durability === "power") {
+      return yield* new StoreError({ op: "rocksdb-js.open", cause: new Error(
+        "rocksdb cannot flush every commit through this binding; open it with durability \"crash\" or choose sqlite or lmdb for \"power\"") });
+    }
+    const engine = yield* makeRocksdbJsEngine(shard, directory);
+    return yield* openShardOverKv(shard, engine, options);
   });

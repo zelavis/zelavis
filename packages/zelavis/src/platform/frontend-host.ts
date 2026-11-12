@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present } from "../core/runtime/effect-boundary.js";
 /**
  * What the Platform needs from whatever serves its root path.
  *
@@ -16,6 +18,8 @@ import type { BundleStore } from "../bundle-store.js";
 export interface ZelavisPlatformFrontendContext {
   /** Path the installation is mounted at, e.g. `/zelavis`. */
   readonly rootPath: string;
+  /** Configured, versioned API mount for the same runtime. */
+  readonly apiBasePath: string;
   readonly title?: string;
   readonly subtitle?: string;
   /** Dev server to proxy to while developing the frontend. */
@@ -25,11 +29,21 @@ export interface ZelavisPlatformFrontendContext {
    * round trip; one that does not simply fetches `/runtime/config`.
    */
   readonly createRuntimeConfig: () => Promise<unknown>;
+  /**
+   * Calls this Platform's own API in-process, as the request's caller: the Platform resolves that caller from the
+   * request's cookie or authorization header exactly as it would for a request from the network. A frontend that
+   * renders on the server uses this rather than guessing its Platform's address, which no frontend can know (a
+   * Host header is the caller's, not the operator's). Available once composition has finished; before that it
+   * rejects.
+   */
+  readonly fetch: (request: Request) => Promise<Response>;
 }
 
 export interface ZelavisPlatformFrontend {
   /** Service that serves the frontend at the installation's root path. */
   readonly service: ZelavisRuntimeService<any>;
+  /** Advertises the built-in public App auth pages to the Project operator UI. */
+  readonly appPublicAuth?: true;
   /** Serves the frontend's own assets, when it ships any. */
   readonly bundleStore?: BundleStore;
   /**
@@ -56,6 +70,18 @@ export interface ZelavisPlatformFrontend {
    * components rather than reinventing a card.
    */
   readonly serviceElementsScript?: string;
+  /**
+   * A component runtime and its stylesheet that the Platform adds to every HTML service page it serves, so a plain page
+   * can write the frontend's components (`<zv-select>`) without a build step. A page opts out with
+   * `<meta name="zelavis-service-ui" content="none">`. The runtime is served publicly (with CORS), because a sandboxed extension
+   * page has an opaque origin and sends no credentials; it holds no installation data.
+   */
+  readonly serviceUi?: {
+    readonly script: string;
+    readonly stylesheet: string;
+    /** Static JavaScript build modules, keyed by flat content-hashed filename. Never include installation data. */
+    readonly modules: Readonly<Record<string, string>>;
+  };
 }
 
 export type ZelavisPlatformFrontendFactory = (
@@ -257,7 +283,7 @@ export function createMissingPlatformFrontendService(options: {
           // No access requirement: this is the installation's front door, seen
           // by whoever opens it, including someone who has not signed in
           // because there is no page to sign in on.
-          handler: async ({ request }: { request: Request }) => {
+          handler: ({ request }: { request: Request }) => present(Effect.gen(function* () {
             const pathname = new URL(request.url).pathname;
             if (isReserved(pathname)) {
               return { status: 404, body: { error: "Not found" } };
@@ -279,7 +305,7 @@ export function createMissingPlatformFrontendService(options: {
               }),
               body,
             };
-          },
+          })),
         },
       ],
     },

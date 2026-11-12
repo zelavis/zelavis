@@ -1,3 +1,17 @@
+import {
+  REGISTRATION_SETTINGS_BODY_BYTES,
+  registrationSettingsInputJsonSchema,
+  registrationSettingsJsonSchema,
+} from "../app/identity/domain/registration.js";
+import {
+  ACCOUNT_ACCESS_BODY_BYTES,
+  accountAccessInputJsonSchema,
+  accountAccessResultJsonSchema,
+  decodeProjectAccountAuthority,
+  decodeSetAccountAccessInput,
+  projectAccountAccessDigest,
+  projectAccountAccessPermissions,
+} from "../app/identity/domain/account-access.js";
 /**
  * Project Gateway: the Platform's proxy into a Project runtime.
  *
@@ -9,13 +23,14 @@
 import {
   ZELAVIS_GATEWAY_AUTHORITY_HEADER,
 } from "./gateway-authority.js";
-import { Effect } from "effect";
-import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import { Cause, Effect } from "effect";
+import { evaluate, integration, present, unwrapFailure, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/index.js";
+import { principalHasPermission } from "../core/runtime/request-dispatcher.js";
 import { tenantOfPrincipal } from "./shared.js";
 import type { FabricApi } from "../core/fabric/index.js";
-import type { ZelavisProjectManager } from "../project.js";
-import { ZelavisProjectNotFoundError } from "../project.js";
+import type { ZelavisProjectManager, ZelavisProjectRemoteRoute } from "../project.js";
+import { isCanonicalProjectId, ZelavisProjectNotFoundError } from "../project.js";
 import type {
   ZelavisRouteResponse,
   ZelavisServerRoute,
@@ -128,15 +143,27 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
   // authority over the Project it happens to live in.
   "project.data.read": Object.freeze(["database.read"]),
   "project.data.write": Object.freeze(["database.read", "database.write"]),
+  "project.data.define": Object.freeze(["database.define"]),
   "project.logs.read": Object.freeze(["workloads.logs.read"]),
   "project.runtime.manage": Object.freeze([
     "workloads.manage",
     "workloads.logs.read",
     "storage.write",
+    "storage.manage",
     "database.read",
     "database.write",
+    "database.define",
     "database.backup",
     "database.restore",
+    "database.drop",
+    // Cross-Tenant indexes read every Tenant, so defining one is the
+    // Project's infrastructure authority, not an App client's data authority.
+    "database.indexes.manage",
+    // A follower on another host reads every record and log entry of the
+    // partitions it follows, holds their logs and reports what it holds.
+    "database.replicate",
+    // Placing shards on other Nodes is the Project's infrastructure authority.
+    "database.shards.manage",
   ]),
 });
 
@@ -150,10 +177,12 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
 const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
   "project.data.read",
   "project.data.write",
+  "project.data.define",
   "project.delete",
   "project.logs.read",
   "project.runtime.manage",
   "project.settings.manage",
+  "project.setup.reveal",
   "project.users.manage",
   "project.view",
   "project.website.manage",
@@ -181,7 +210,7 @@ export function projectDataPermissions(
 ): readonly string[] {
   const held = new Set(
     projectRuntimePermissions(principal, projectId).filter((permission) =>
-      permission === "database.read" || permission === "database.write"
+      permission === "database.read" || permission === "database.write" || permission === "database.define"
     ),
   );
   return [...held];
@@ -361,11 +390,12 @@ export function isRuntimeControlPlanePath(wildcardPath: string): boolean {
  * A Project owns at most one frontend today; the first running one wins rather
  * than failing, so a half-finished replacement cannot take the site down.
  */
-export async function findRunningFrontend(
+export function findRunningFrontend(
   projects: Pick<ZelavisProjectManager, "listOwned">,
   projectId: string,
 ): Promise<{ readonly url: string } | undefined> {
-  const owned = await projects.listOwned(projectId).catch(() => []);
+    return present(Effect.gen(function* (): Effect.fn.Return<{ readonly url: string } | undefined, IntegrationFailure> {
+  const owned = (yield* integrationValue(projects.listOwned(projectId).catch(() => [])));
   for (const candidate of owned) {
     if (
       candidate.kind === "frontend" &&
@@ -376,7 +406,8 @@ export async function findRunningFrontend(
     }
   }
   return undefined;
-}
+}));
+  }
 
 export interface ProjectGatewayDependencies {
   readonly projects: ZelavisProjectManager | undefined;
@@ -396,6 +427,7 @@ export type ProjectForwardOptions = {
   readonly principal?: ZelavisPrincipal;
   /** Permissions to sign into the envelope for this request. */
   readonly permissions: readonly string[];
+  readonly accountAccessDigest?: string;
   /**
    * Whether a running server frontend may answer instead of the runtime.
    * Only the public proxy allows it; App data is a control-plane surface.
@@ -415,16 +447,55 @@ export function createProjectForwarder(
 ): (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse> {
   const { projects, fabric, unavailableProjectsResponse } = dependencies;
 
+  const forwardRemote = Effect.fn("ProjectGateway.forwardRemote")(function* (projectId: string, remote: ZelavisProjectRemoteRoute, options: ProjectForwardOptions) {
+    const target = resolveProxyTarget("http://project.invalid", options.wildcardPath);
+    if (!target) return { status: 400, body: { error: "Invalid Project proxy path." } };
+    target.search = options.query.toString();
+    const body = options.request.method === "GET" || options.request.method === "HEAD"
+      ? undefined
+      : yield* integration(() => options.request.clone().arrayBuffer());
+    if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+      return { status: 413, body: { error: `Project Gateway bodies are limited to ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.` } };
+    }
+    const placement = yield* integration(() => fabric?.getProjectPlacement(projectId));
+    const answer = yield* Effect.result(integration(() => remote.send({
+      method: options.request.method,
+      path: `${target.pathname}${target.search}`,
+      gateway: {
+        projectId,
+        scopeId: placement?.identity.scopeId ?? "platform",
+        generation: remote.placement.epoch,
+        runtimeNodeId: remote.nodeId,
+        subject: options.principal?.id ?? "anonymous",
+        subjectType: options.principal?.type ?? "anonymous",
+        tenantId: options.principal ? tenantOfPrincipal(options.principal) : "anonymous",
+        permissions: options.permissions,
+        ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
+      },
+      headers: [...gatewayRequestHeaders(options.request.headers)],
+      ...(body && body.byteLength > 0 ? { body: new Uint8Array(body) } : {}),
+    }), { interruptible: true }));
+    if (answer._tag === "Failure") {
+      return { status: 502, body: { error: `Project "${projectId}" on node "${remote.nodeId}" could not be reached.` } };
+    }
+    return { status: answer.success.status, headers: gatewayResponseHeaders(new Headers(answer.success.headers as [string, string][])), body: answer.success.body };
+  });
+
   const forward = Effect.fn("ProjectGateway.forward")(function* (options: ProjectForwardOptions) {
     if (!projects) {
       return unavailableProjectsResponse();
     }
-    const project = yield* integration(() => projects.get(options.projectId));
+    // A view, not a locked read: a live update holds the Project's lifecycle for its whole length,
+    // and requests must keep reaching the serving runtime, waiting only at its own handover.
+    const project = yield* integration(() => projects.view(options.projectId));
     if (!project) {
       return yield* Effect.fail(new ZelavisProjectNotFoundError(
         `Project "${options.projectId}" was not found.`,
       ));
     }
+    // A Project placed on another node has no runtime URL here: its Agent verifies a signed request and forwards it.
+    const remote = yield* integration(() => projects.remoteRoute?.(project.id));
+    if (remote) return yield* forwardRemote(project.id, remote, options);
     if (project.runtime.status !== "running" || !project.runtime.url) {
       return {
         status: 409,
@@ -464,6 +535,8 @@ export function createProjectForwarder(
         : undefined;
 
     const controlPlane = isRuntimeControlPlanePath(options.wildcardPath);
+    // While the Project's serving processes are being replaced the request waits instead of failing.
+    if (!frontend) yield* integration(() => projects.ingressReady?.(project.id));
     const runtimeUrl = controlPlane && projects.gatewayTarget
       ? yield* integration(() => projects.gatewayTarget!(project.id)) : project.runtime.url;
     if (controlPlane && !runtimeUrl) return { status: 503, body: { error: "Project integration runtime is unavailable." } };
@@ -500,6 +573,7 @@ export function createProjectForwarder(
             ? tenantOfPrincipal(options.principal)
             : "anonymous",
           permissions: options.permissions,
+          ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
         }));
     if (authority) {
       headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
@@ -594,6 +668,123 @@ export function createProjectGatewayRoutes(
 
   const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 
+  const registrationSettingsRoutes: readonly ZelavisServerRoute[] = (["GET", "PUT"] as const).map<ZelavisServerRoute>((method) => {
+    const write = method === "PUT";
+    const writeResponses: Record<number, { description: string }> = write ? {
+      400: { description: "Invalid registration settings" },
+      413: { description: "Request exceeds 1024 bytes" },
+    } : {};
+    return {
+      id: `runtime.projects.auth.registration.settings.${write ? "set" : "get"}`,
+      method,
+      path: "/projects/:projectId/auth/registration/settings",
+      access: {
+        permissions: ["project.settings.manage"],
+        scope: { type: "project", projectIdParam: "projectId" },
+      },
+      ...(write ? {
+        maxRequestBodyBytes: REGISTRATION_SETTINGS_BODY_BYTES,
+        invalidJsonBodyCode: "invalid_registration",
+      } : {}),
+      spec: {
+        operationId: write ? "setProjectRegistrationSettings" : "projectRegistrationSettings",
+        summary: write ? "Update a Project's registration settings" : "Read a Project's registration settings",
+        tags: ["runtime", "auth"],
+        pathParams: { projectId: { type: "string", required: true } },
+        ...(write ? { requestBody: { required: true, schema: registrationSettingsInputJsonSchema } } : {}),
+        responses: {
+          200: { description: "Project registration setting and revision", schema: registrationSettingsJsonSchema },
+          ...writeResponses,
+          403: { description: "Project settings permission required" },
+          404: { description: "No such Project" },
+          409: { description: "Project unavailable or settings revision has changed" },
+          503: { description: "Project registration settings unavailable" },
+        },
+      },
+      handler: ({ params, request, principal }) => present(Effect.gen(function* () {
+        return yield* integration(() => forwardToProject({
+          projectId: params.projectId,
+          wildcardPath: "zelavis/api/v1/auth/registration/settings",
+          query: new URLSearchParams(),
+          request,
+          principal,
+          permissions: ["project.settings.manage"],
+          allowFrontend: false,
+        }));
+      }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+    };
+  });
+
+  const accountAccessRoute: ZelavisServerRoute = {
+    id: "runtime.projects.auth.accounts.access.set",
+    method: "PUT",
+    path: "/projects/:projectId/auth/accounts/:accountId/access",
+    access: { permissions: ["project.users.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    maxRequestBodyBytes: ACCOUNT_ACCESS_BODY_BYTES,
+    invalidJsonBodyCode: "invalid_account_access",
+    spec: {
+      operationId: "setProjectAccountAccess",
+      summary: "Replace a human account's access in one Project",
+      tags: ["runtime", "auth"],
+      pathParams: { projectId: { type: "string", required: true }, accountId: { type: "string", required: true } },
+      requestBody: { required: true, schema: accountAccessInputJsonSchema },
+      responses: {
+        200: { description: "Current account access and revision", schema: accountAccessResultJsonSchema },
+        400: { description: "Invalid account access" },
+        403: { description: "Delegation or account modification forbidden" },
+        404: { description: "Project or account not found" },
+        409: { description: "Project unavailable or account access revision changed" },
+        503: { description: "Project unavailable or access changed but its security event could not be recorded" },
+      },
+    },
+    handler: ({ params: { projectId, accountId }, request, principal, body }) => present(Effect.gen(function* () {
+      const invalid = { status: 400, body: { error: "Invalid account access.", code: "invalid_account_access" } };
+      const forbidden = { status: 403, body: { error: "The caller cannot delegate this account access.", code: "account_access_forbidden" } };
+      const decoded = yield* Effect.result(evaluate(() => decodeSetAccountAccessInput(body)));
+      if (decoded._tag === "Failure" || !isCanonicalProjectId(projectId) ||
+          !accountId || accountId === "." || accountId === "..") return invalid;
+      const input = decoded.success;
+      const scope = { type: "project" as const, projectId };
+      const canDelegate = (permission: string) => principalHasPermission(principal, permission, scope) &&
+        (permission !== "system.services.manage" || principal?.permissions?.includes(permission) === true ||
+          principal?.permissions?.includes("*") === true);
+      if (input.role !== "user" || input.permissions.length !== 0 ||
+          input.grants.some((grant) => grant.scope.type !== "project" || grant.scope.projectId !== projectId ||
+            !canDelegate(grant.permission))) return forbidden;
+
+      const forwarding = { projectId, principal, permissions: ["project.users.manage"], allowFrontend: false };
+      // The exact read supplies old authority that must be delegable even when
+      // the replacement removes it. No child wildcard is needed for this check.
+      const read = yield* integration(() => forwardToProject({
+        ...forwarding,
+        wildcardPath: "zelavis/api/v1/auth/accounts",
+        query: new URLSearchParams({ accountId }),
+        request: new Request(request.url, { headers: request.headers, signal: request.signal }),
+      }));
+      if (read.status !== 200) return read;
+      if (!(read.body instanceof Uint8Array)) return { status: 502, body: { error: "Invalid Project account response." } };
+      const bytes = read.body;
+      const snapshot = yield* Effect.result(evaluate(() => decodeProjectAccountAuthority(JSON.parse(new TextDecoder().decode(bytes)))));
+      if (snapshot._tag === "Failure") return { status: 502, body: { error: "Invalid Project account response." } };
+      const [current] = snapshot.success;
+      if (!current) return { status: 404, body: { error: "Account not found.", code: "account_not_found" } };
+      if (current.id !== accountId) return { status: 502, body: { error: "Invalid Project account response." } };
+      if (current.accessRevision !== input.expectedRevision) {
+        return { status: 409, body: { error: "The account access revision has changed.", code: "account_access_conflict" } };
+      }
+      const names = projectAccountAccessPermissions(projectId, current, input);
+      if (!names || names.some((permission) => !canDelegate(permission))) return forbidden;
+      const accountAccessDigest = yield* projectAccountAccessDigest(accountId, input, names);
+      return yield* integration(() => forwardToProject({
+        ...forwarding,
+        wildcardPath: `zelavis/api/v1/auth/accounts/${encodeURIComponent(accountId)}/access`,
+        query: new URLSearchParams(),
+        request,
+        accountAccessDigest,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  };
+
   const proxyRoutes = methods.map((method) => ({
     id: `runtime.projects.proxy.${method.toLowerCase()}`,
     spec: {
@@ -631,7 +822,7 @@ export function createProjectGatewayRoutes(
         method === "GET" ? ["project.view"] : ["project.runtime.manage"],
       scope: { type: "project" as const, projectIdParam: "projectId" },
     },
-    handler: async ({
+    handler: ({
       params,
       query,
       request,
@@ -641,24 +832,20 @@ export function createProjectGatewayRoutes(
       query: URLSearchParams;
       request: Request;
       principal?: ZelavisPrincipal;
-    }) => {
-      try {
-        return await forwardToProject({
-          projectId: params.projectId ?? "",
-          wildcardPath: params.path ?? "",
-          query,
-          request,
+    }) => present(Effect.gen(function* () {
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: params.path ?? "",
+        query,
+        request,
+        principal,
+        permissions: projectRuntimePermissions(
           principal,
-          permissions: projectRuntimePermissions(
-            principal,
-            params.projectId ?? "",
-          ),
-          allowFrontend: true,
-        });
-      } catch (error) {
-        return projectErrorResponse(error);
-      }
-    },
+          params.projectId ?? "",
+        ),
+        allowFrontend: true,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
   /**
@@ -677,7 +864,7 @@ export function createProjectGatewayRoutes(
       operationId: `projectData${method[0]}${method.slice(1).toLowerCase()}`,
       summary: "Read or write a Project's App data",
       description:
-        "Forwards to the Project's database service as the caller's own App Tenant. Reads require `project.data.read` and writes `project.data.write`; neither grants any Platform authority over the Project.",
+        "Forwards only the caller's Project data grants. The database operation enforces read, write or define authority independently of its HTTP method; POST queries are reads. No Platform authority travels with it.",
       tags: ["data"],
       pathParams: {
         projectId: {
@@ -702,11 +889,10 @@ export function createProjectGatewayRoutes(
     method,
     path: "/projects/:projectId/data/*path",
     access: {
-      permissions:
-        method === "GET" ? ["project.data.read"] : ["project.data.write"],
+      authenticated: true,
       scope: { type: "project" as const, projectIdParam: "projectId" },
     },
-    handler: async ({
+    handler: ({
       params,
       query,
       request,
@@ -716,36 +902,118 @@ export function createProjectGatewayRoutes(
       query: URLSearchParams;
       request: Request;
       principal?: ZelavisPrincipal;
-    }) => {
-      try {
-        const path = (params.path ?? "").replace(/^\/+/, "");
-        if (!path) {
-          return {
-            status: 400,
-            body: { error: "A database path is required." },
-          };
-        }
-        return await forwardToProject({
-          projectId: params.projectId ?? "",
-          wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/${path}`,
-          query,
-          request,
-          principal,
-          // Only the data implications travel with an App data request. The
-          // caller's other Project authority, if it happens to hold any, is
-          // not this request's business and must not ride along into the
-          // child where it would widen what the request can reach.
-          permissions: projectDataPermissions(
-            principal,
-            params.projectId ?? "",
-          ),
-          allowFrontend: false,
-        });
-      } catch (error) {
-        return projectErrorResponse(error);
+    }) => present(Effect.gen(function* () {
+      const path = (params.path ?? "").replace(/^\/+/, "");
+      if (!path) {
+        return {
+          status: 400,
+          body: { error: "A database path is required." },
+        };
       }
-    },
+      const permissions = projectDataPermissions(principal, params.projectId ?? "");
+      if (permissions.length === 0) return { status: 403, body: { error: "No App data authority for this Project." } };
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/${path}`,
+        query,
+        request,
+        principal,
+        // Only the data implications travel with an App data request. The
+        // caller's other Project authority, if it happens to hold any, is
+        // not this request's business and must not ride along into the
+        // child where it would widen what the request can reach.
+        permissions,
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
-  return [...proxyRoutes, ...dataRoutes];
+  /**
+   * A signed upload's bytes, from a browser holding only the link. The token is the authority: no principal and no
+   * permission travel with it, and only the upload-receive route of the Project's storage is reachable here.
+   */
+  const uploadRoute = {
+    id: "runtime.projects.uploads.receive",
+    spec: {
+      operationId: "receiveProjectUpload",
+      summary: "Send a signed upload's bytes to a Project",
+      description: "Needs no credentials: the token minted by `storage/uploads` binds the path, size, type and expiry, and is single use. Forwards nothing else.",
+      tags: ["storage"],
+      pathParams: {
+        projectId: { type: "string" as const, required: true, description: "The Project." },
+        token: { type: "string" as const, required: true, description: "The upload token." },
+      },
+      responses: { 200: { description: "{ id, size, sha256 }" }, 400: { description: "Refused, with the reason" }, 404: { description: "No such Project" } },
+    },
+    method: "PUT" as const,
+    path: "/projects/:projectId/uploads/:token",
+    handler: ({ params, query, request }: { params: Record<string, string>; query: URLSearchParams; request: Request }) => present(Effect.gen(function* () {
+      const token = params.token ?? "";
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return { status: 400, body: { error: "This upload link is not valid." } };
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `zelavis/api/v1/storage/uploads/${token}`,
+        query,
+        request,
+        principal: undefined,
+        permissions: [],
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  };
+
+  /**
+   * The leader side of following a Project's database, for a follower on another node.
+   *
+   * A standby holds only `database.replicate` on its Project, which is not enough for the proxy above (a POST there
+   * needs `project.runtime.manage`, which also stops the Project). This route forwards only the followers service of the
+   * Project's database, with only that permission, to wherever the Project is placed now.
+   */
+  const followerRoutes = (["GET", "POST"] as const).map((method) => ({
+    id: `runtime.projects.followers.${method.toLowerCase()}`,
+    spec: {
+      operationId: `projectFollowers${method[0]}${method.slice(1).toLowerCase()}`,
+      summary: "Follow a Project's database",
+      description: "The leader side of following a Project's database (`database/followers/*`): stats, records, log, holds, acknowledgments, the change feed, the partition listing and the declarations. Needs only `database.replicate` on the Project, and carries nothing else to it.",
+      tags: ["database"],
+      pathParams: {
+        projectId: { type: "string" as const, required: true, description: "The Project whose database is followed." },
+        path: { type: "string" as const, required: true, description: "The path within the followers service, such as `feed`." },
+      },
+      responses: {
+        200: { description: "The followers service's response" },
+        400: { description: "The path is not a followers path" },
+        404: { description: "No such Project" },
+        503: { description: "The Project runtime is not reachable" },
+      },
+    },
+    method,
+    path: "/projects/:projectId/followers/*path",
+    access: {
+      permissions: ["database.replicate"],
+      scope: { type: "project" as const, projectIdParam: "projectId" },
+    },
+    handler: ({ params, query, request, principal }: {
+      params: Record<string, string>;
+      query: URLSearchParams;
+      request: Request;
+      principal?: ZelavisPrincipal;
+    }) => present(Effect.gen(function* () {
+      const path = (params.path ?? "").replace(/^\/+/, "");
+      if (path === "" || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+        return { status: 400, body: { error: "A followers path is required, such as feed." } };
+      }
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/followers/${path}`,
+        query,
+        request,
+        principal,
+        permissions: projectRuntimePermissions(principal, params.projectId ?? "").filter((permission) => permission === "database.replicate"),
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
+  return [...registrationSettingsRoutes, accountAccessRoute, ...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
 }

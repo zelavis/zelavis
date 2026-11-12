@@ -1,3 +1,5 @@
+import { Cause, Effect, Fiber, type Scope } from "effect";
+import { evaluate, integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * `zelavis agent` — run the Agent as its own process.
  *
@@ -7,10 +9,9 @@
  * launchd, whatever the host uses — so a Platform restart is not a restart of
  * everything the Platform was running.
  *
- * It runs until it is signalled, then stops the processes it owns. Stopping
- * them is the right shutdown behaviour for a supervisor going away on purpose:
- * a supervisor that exits leaving unsupervised children behind is the leak
- * this whole line of work exists to close.
+ * Ordinary shutdown stops owned processes. A valid generation-bound handover
+ * marker lets Linux survivable mode release supervision to its replacement;
+ * durable records and placement leases remain authoritative across that gap.
  */
 import { access, lstat, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +23,7 @@ import { createLocalSqliteSystemStore } from "../adapters/_sqlite-system-store.j
 import { REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "../adapters/_agent-remote-environment.js";
 import { readLocalProjectPlacementLease } from "../platform/project-placement-authority.js";
 import { createRemoteProjectAgent } from "../adapters/_remote-project-agent.js";
+import { TRUST_REFRESH_INTERVAL_MS, refreshTrustFile } from "../adapters/_trust-refresh.js";
 import type { ZelavisHostOperationTrustStore } from "../core/deployment/index.js";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import {
@@ -29,6 +31,7 @@ import {
   type AgentHostOperationService,
 } from "../adapters/_agent-host-operations.js";
 import { prepareDelegatedCgroupLayout } from "../adapters/_linux-cgroup-supervisor.js";
+import { consumeAgentHandover, publishAgentDescriptor } from "../adapters/_agent-lifecycle.js";
 
 export interface RunAgentCommandOptions {
   /** Defaults to the same `.zelavis` directory the Platform uses. */
@@ -61,15 +64,48 @@ export interface RunAgentCommandOptions {
   readonly remoteProjectConfig?: string;
 }
 
+const SHARD_COUNTS = ["readsPerShard", "readsPerAgent", "readPermitWaitMillis", "readDeadlineMillis", "maxReadAnswerBytes"] as const;
+const READ_LIMIT_NAMES = ["bytes", "entries", "postings"] as const;
+
+/**
+ * The `shards` object of a remote Project Agent's config: the bounds on the reads it serves for remote App shards.
+ * Every key is optional and a non-negative safe integer; `readLimits` holds the per-read work budget. Anything else is refused.
+ */
+export function readAgentShardOptions(value: unknown): NonNullable<Parameters<typeof createRemoteProjectAgent>[0]["shards"]> {
+  const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+  const count = (candidate: unknown, name: string): number => {
+    if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 0) {
+      throw new Error(`Remote Project Agent config: shards.${name} must be a non-negative safe integer.`);
+    }
+    return candidate;
+  };
+  if (!isRecord(value)) throw new Error("Remote Project Agent config: shards must be an object.");
+  const unknown = Object.keys(value).filter((key) => key !== "readLimits" && !(SHARD_COUNTS as readonly string[]).includes(key));
+  if (unknown.length > 0) throw new Error(`Remote Project Agent config: shards has no key ${unknown.join(", ")}.`);
+  const result: { -readonly [Name in (typeof SHARD_COUNTS)[number]]?: number } & { readLimits?: { bytes?: number; entries?: number; postings?: number } } = {};
+  for (const name of SHARD_COUNTS) if (value[name] !== undefined) result[name] = count(value[name], name);
+  if (value.readLimits !== undefined) {
+    if (!isRecord(value.readLimits)) throw new Error("Remote Project Agent config: shards.readLimits must be an object.");
+    const unknownLimits = Object.keys(value.readLimits).filter((key) => !(READ_LIMIT_NAMES as readonly string[]).includes(key));
+    if (unknownLimits.length > 0) throw new Error(`Remote Project Agent config: shards.readLimits has no key ${unknownLimits.join(", ")}.`);
+    const limits: { bytes?: number; entries?: number; postings?: number } = {};
+    for (const name of READ_LIMIT_NAMES) if (value.readLimits[name] !== undefined) limits[name] = count(value.readLimits[name], `readLimits.${name}`);
+    result.readLimits = limits;
+  }
+  return result;
+}
+
 /** Called with the Agent once it listens; tests use it to reach the service. */
 export type RunAgentCommandReady = (agent: {
   readonly socketPath: string;
   readonly operations?: AgentHostOperationService;
 }) => void;
 
-export async function runAgentCommand(
+export function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
+  return present(Effect.scoped(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure, Scope.Scope> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   if (options.operationsOnly && (!options.operationsRoot || !options.platformAuthority)) {
     throw new Error("--operations-only requires --operations-root and --platform-authority.");
@@ -81,9 +117,9 @@ export async function runAgentCommand(
     if (!options.operationsOnly || !options.requireRootOwnedOperations || process.getuid?.() !== 0) {
       throw new Error("--endpoint-group-access requires a root --operations-only Agent with --require-root-owned-operations.");
     }
-    await mkdir(dataDirectory, { recursive: true, mode: 0o750 });
+    yield* integrationValue(mkdir(dataDirectory, { recursive: true, mode: 0o750 }));
     for (let path = dataDirectory; ; path = dirname(path)) {
-      const stats = await lstat(path);
+      const stats = yield* integrationValue(lstat(path));
       if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== 0 || (stats.mode & 0o022) !== 0) {
         throw new Error("Privileged Agent state and its ancestors must be root-owned and not group/world-writable.");
       }
@@ -96,9 +132,13 @@ export async function runAgentCommand(
       throw new Error("Remote Project Agent config cannot be combined with local Agent options.");
     }
     const file = resolve(options.remoteProjectConfig);
-    const config = JSON.parse(await readFile(file, "utf8")) as {
+    const config = (yield* integrationValue(readFile(file, "utf8")).pipe(
+      Effect.flatMap((text) => evaluate(() => JSON.parse(text))),
+    )) as {
       host?: unknown; port?: unknown; keyFile?: unknown; certFile?: unknown;
       trustFile?: unknown; agentId?: unknown; nodeId?: unknown;
+      platform?: { url?: unknown; fingerprint?: unknown; caFile?: unknown };
+      shards?: unknown;
     };
     if (typeof config.host !== "string" || typeof config.port !== "number" ||
         typeof config.keyFile !== "string" || typeof config.certFile !== "string" ||
@@ -107,30 +147,53 @@ export async function runAgentCommand(
       throw new Error("Remote Project Agent config needs host, port, keyFile, certFile, trustFile, agentId and nodeId.");
     }
     const relativeFile = (path: string) => resolve(dirname(file), path);
-    const [keyPem, certPem, trustText] = await Promise.all([
-      readFile(relativeFile(config.keyFile), "utf8"),
-      readFile(relativeFile(config.certFile), "utf8"),
-      readFile(relativeFile(config.trustFile), "utf8"),
-    ]);
-    const trust = JSON.parse(trustText) as ZelavisHostOperationTrustStore;
+    const [keyPem, certPem, trustText] = yield* Effect.all([
+      integration(() => readFile(relativeFile(config.keyFile as string), "utf8")),
+      integration(() => readFile(relativeFile(config.certFile as string), "utf8")),
+      integration(() => readFile(relativeFile(config.trustFile as string), "utf8")),
+    ], { concurrency: 3 });
+    const trust = (yield* evaluate(() => JSON.parse(trustText))) as ZelavisHostOperationTrustStore;
     if (!Array.isArray(trust.keys) || trust.keys.length === 0) {
       throw new Error("Remote Project Agent trust file has no Platform keys.");
     }
-    const remote = await createRemoteProjectAgent({
+    // The keys in force. A rotation on the Platform replaces them here without a restart.
+    let currentTrust = trust;
+    const platformUrl = config.platform?.url;
+    const refresher = typeof platformUrl === "string"
+      ? Effect.runFork(Effect.forever(
+          refreshTrustFile({
+            platform: {
+              url: platformUrl,
+              ...(typeof config.platform?.fingerprint === "string" ? { fingerprint: config.platform.fingerprint } : {}),
+              ...(typeof config.platform?.caFile === "string" ? { caFile: relativeFile(config.platform.caFile) } : {}),
+            },
+            trustFile: relativeFile(config.trustFile as string),
+          }).pipe(
+            Effect.tap((refreshed) => Effect.sync(() => {
+              currentTrust = refreshed.trust;
+              if (refreshed.changed) console.log("Updated the Platform's keys.");
+            })),
+            // A Platform that cannot be reached right now must not stop the Agent serving: it keeps the keys it has.
+            Effect.catch((failure) => Effect.logWarning(failure.message)),
+            Effect.andThen(Effect.sleep(TRUST_REFRESH_INTERVAL_MS)),
+          )))
+      : undefined;
+    const stopRefreshing = refresher ? Fiber.interrupt(refresher) : Effect.void;
+    const remote = yield* integrationValue(createRemoteProjectAgent({
       dataDirectory, host: config.host, port: config.port,
-      keyPem, certPem, trust, agentId: config.agentId, nodeId: config.nodeId,
-    });
+      keyPem, certPem, trust: () => currentTrust, agentId: config.agentId, nodeId: config.nodeId,
+      ...(config.shards === undefined ? {} : { shards: readAgentShardOptions(config.shards) }),
+    }));
     console.log(`Zelavis Project Agent listening on ${remote.address}`);
-    if (options.signal) {
-      if (!options.signal.aborted) {
-        await new Promise<void>((resolveAborted) => options.signal!.addEventListener(
-          "abort", () => resolveAborted(), { once: true }));
-      }
-      await remote.close();
+    const signal = options.signal;
+    if (signal) {
+      if (!signal.aborted) yield* untilAborted(signal);
+      yield* integrationValue(remote.close());
+      yield* stopRefreshing;
       return;
     }
-    await new Promise<void>((resolveStopped) => {
-      const stop = () => { void remote.close().finally(resolveStopped); };
+    yield* Effect.callback<void>((resume) => {
+      const stop = () => { void remote.close().finally(() => resume(stopRefreshing)); };
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
     });
@@ -138,21 +201,21 @@ export async function runAgentCommand(
   }
   const endpointDirectory = join(dataDirectory, "agent");
 
-  const runner: ZelavisAgentProcessRunner = options.operationsOnly ? {
+  const runner: ZelavisAgentProcessRunner = yield* Effect.acquireRelease(evaluate((): ZelavisAgentProcessRunner => options.operationsOnly ? {
     name: "host-operations-only",
-    start: async () => { throw new Error("This Agent executes installed host operations only."); },
-    close: async () => {},
+    start: () => present(Effect.gen(function* () { throw new Error("This Agent executes installed host operations only."); })),
+    close: () => present(Effect.gen(function* () {})),
   } : createLocalAgentProcessRunner({
     // The same records the in-process runner keeps, in the same place, so an
     // installation that switches between the two does not lose track of what
     // the other started.
     stateDirectory: join(dataDirectory, "projects", ".agent-processes"),
-  });
+    survivable: process.platform === "linux" && !options.operationsRoot,
+  })), runner => integration(() => runner.detach ? runner.detach() : runner.close()).pipe(Effect.orDie));
 
-  // Anything a previous Agent or Platform left running is stopped before this
-  // one starts accepting work, so the first Project start does not race a
-  // leftover holding its port.
-  const reclaimed = (await runner.reclaim?.()) ?? 0;
+  // Survivable mode validates and adopts under its kernel lock. Ordinary
+  // pipe runners still reclaim a dead owner's abandoned processes.
+  const reclaimed = (yield* integration(() => runner.reclaim?.())) ?? 0;
   if (reclaimed > 0) {
     console.log(`Reclaimed ${reclaimed} process(es) left by an earlier run.`);
   }
@@ -169,14 +232,14 @@ export async function runAgentCommand(
       ...(options.operationPidsMax !== undefined ? { pidsMax: options.operationPidsMax } : {}),
     };
     const cgroupRoot = options.operationCgroup === "delegated"
-      ? (await prepareDelegatedCgroupLayout({
+      ? (yield* integrationValue(prepareDelegatedCgroupLayout({
           controllers: [
             ...(limits.memoryMaxBytes !== undefined ? ["memory" as const] : []),
             ...(limits.pidsMax !== undefined ? ["pids" as const] : []),
           ],
-        })).operations
+        }))).operations
       : options.operationCgroup;
-    operations = await createAgentHostOperationService({
+    operations = yield* integrationValue(createAgentHostOperationService({
       directory: join(dataDirectory, "agent-operations"),
       operationsRoot: resolve(options.operationsRoot),
       platformAuthorityFile: resolve(options.platformAuthority),
@@ -186,8 +249,11 @@ export async function runAgentCommand(
       ...(cgroupRoot
         ? { supervision: { kind: "cgroup-v2" as const, root: cgroupRoot, limits } }
         : {}),
-    });
-    const platformAuthorityPresent = await access(resolve(options.platformAuthority)).then(() => true, () => false);
+    }));
+    const platformAuthorityPresent = yield* integration(() => access(resolve(options.platformAuthority!))).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
     if (!platformAuthorityPresent) {
       console.log(
         `Platform authority file ${options.platformAuthority} does not exist yet; every operation request is refused until the Platform creates it.`,
@@ -200,10 +266,10 @@ export async function runAgentCommand(
     throw new Error("Host operation options require --operations-root.");
   }
 
-  const placementStore = options.operationsOnly ? undefined : createLocalSqliteSystemStore({
+  const placementStore = options.operationsOnly ? undefined : yield* Effect.acquireRelease(evaluate(() => createLocalSqliteSystemStore({
     filename: resolve(options.placementStore ?? join(dataDirectory, "system", "zelavis.sqlite")),
-  });
-  const server = await createAgentProcessServer({
+  })), store => integration(() => store.close?.()).pipe(Effect.orDie));
+  const server = yield* Effect.acquireRelease(integrationValue(createAgentProcessServer({
     directory: endpointDirectory,
     runner,
     operationsOnly: options.operationsOnly,
@@ -213,47 +279,47 @@ export async function runAgentCommand(
       isProjectWorkload: (id: string) => !id.startsWith(REMOTE_ENVIRONMENT_WORKLOAD_PREFIX),
       read: (projectId: string) => readLocalProjectPlacementLease(placementStore, projectId),
     } } : {}),
-  });
+  })), server => integration(() => server.close({ preserveProcesses: runner.detach !== undefined })).pipe(Effect.orDie));
 
   console.log(`Zelavis Agent listening on ${server.socketPath}`);
-  options.onReady?.({ socketPath: server.socketPath, ...(operations ? { operations } : {}) });
+  const descriptor = yield* publishAgentDescriptor(endpointDirectory, runner.recover !== undefined);
 
   let closing: Promise<void> | undefined;
   const shutdown = () => {
-    closing ??= server.close().finally(
-      async () => { await placementStore?.close?.(); },
-    ).then(
-      () => undefined,
-      (error) => {
+    closing ??= present(consumeAgentHandover(endpointDirectory, descriptor).pipe(
+      Effect.flatMap(preserveProcesses => integration(() => server.close({ preserveProcesses }))),
+      Effect.catchCause((cause) => Effect.sync(() => {
+        const error = unwrapFailure(Cause.squash(cause));
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
-      },
-    );
+      })),
+    ));
     return closing;
   };
 
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
+  const signalled = () => { void shutdown(); };
+  process.once("SIGINT", signalled);
+  process.once("SIGTERM", signalled);
+  yield* Effect.addFinalizer(() => Effect.sync(() => {
+    process.off("SIGINT", signalled); process.off("SIGTERM", signalled);
+  }));
+  options.onReady?.({ socketPath: server.socketPath, ...(operations ? { operations } : {}) });
 
-  if (options.signal) {
-    if (options.signal.aborted) {
-      await shutdown();
-      return;
-    }
-    await new Promise<void>((resolveAborted) => {
-      options.signal!.addEventListener("abort", () => resolveAborted(), {
-        once: true,
-      });
-    });
-    await shutdown();
+  const stopSignal = options.signal;
+  if (stopSignal) {
+    if (!stopSignal.aborted) yield* untilAborted(stopSignal);
+    yield* integrationValue(shutdown());
     return;
   }
 
-  await new Promise<void>((resolveClosed) => {
-    const poll = setInterval(() => {
-      if (!closing) return;
-      clearInterval(poll);
-      void closing.then(() => resolveClosed());
-    }, 100);
-  });
+  while (!closing) yield* Effect.sleep(100);
+  yield* integrationValue(closing);
+  })));
 }
+
+/** Completes when the signal aborts; a listener left behind by an interrupted wait is removed. */
+const untilAborted = (signal: AbortSignal): Effect.Effect<void> => Effect.callback<void>((resume) => {
+  const onAbort = () => resume(Effect.void);
+  signal.addEventListener("abort", onAbort, { once: true });
+  return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+});

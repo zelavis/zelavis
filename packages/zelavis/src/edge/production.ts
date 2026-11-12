@@ -1,7 +1,28 @@
 import { Effect } from "effect";
 import { evaluate, integration } from "../core/runtime/effect-boundary.js";
-import type { ZelavisEdgeManager } from "./index.js";
+import { ZelavisEdgeConflictError, type ZelavisEdgeManager } from "./index.js";
 import { toPublicationSummary, type ZelavisEdgeRouteStore } from "./routes.js";
+
+/** Restage the live publication so certificate renewal cannot publish pending route changes. */
+export const applyRenewedEdgeCertificates = Effect.fn("Edge.applyRenewedCertificates")(function* (options: {
+  readonly routes?: ZelavisEdgeRouteStore;
+  readonly manager?: ZelavisEdgeManager;
+  readonly renewed: readonly string[];
+}) {
+  const { manager, routes, renewed } = options;
+  if (!manager || !routes || renewed.length === 0) return;
+  const { activeAdapterId, activePublication } = yield* integration(() => manager.getPolicy());
+  if (!activeAdapterId || activePublication?.id !== "zelavis-edge-routes") return;
+  const active = yield* integration(() => routes.getPublication(Number(activePublication.revision)));
+  if (!active?.certificateRefs.some(ref => renewed.includes(ref))) return;
+  const current = yield* integration(() => routes.getCurrentPublication());
+  if (current?.revision !== active.revision) {
+    return yield* evaluate(() => {
+      throw new ZelavisEdgeConflictError("A newer Edge publication is pending. Apply it to serve the renewed certificates.");
+    });
+  }
+  yield* integration(() => manager.switchAdapter(activeAdapterId, toPublicationSummary(active)));
+});
 
 /** Production ingress is Platform state, compiled by the ordinary Edge adapter. */
 export const ensureProductionEdge = Effect.fn("Edge.ensureProductionIngress")(function* (options: {

@@ -61,16 +61,30 @@ export const serveNodeRuntimeControl = Effect.fn("RuntimeControl.serve")(functio
         if (size > LIMIT) { fail(new Error("Runtime control request exceeds its size bound.")); incoming.destroy(); return; }
         chunks.push(Buffer.from(chunk));
       });
+      const uploadTimedOut = () => {
+        fail(new Error("Runtime control upload timed out."));
+        incoming.destroy();
+      };
       incoming.once("error", fail);
-      incoming.once("end", () => resume(evaluate(() => {
-        const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid runtime control request.");
-        return value;
-      })));
-      incoming.setTimeout(30_000, () => fail(new Error("Runtime control upload timed out.")));
+      incoming.once("end", () => {
+        // The upload deadline ends with the body. A handover can legitimately outlast it.
+        incoming.setTimeout(0);
+        incoming.off("timeout", uploadTimedOut);
+        resume(evaluate(() => {
+          const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid runtime control request.");
+          return value;
+        }));
+      });
+      incoming.setTimeout(30_000, uploadTimedOut);
       const aborted = () => incoming.destroy();
       signal.addEventListener("abort", aborted, { once: true });
-      return Effect.sync(() => { incoming.off("error", fail); signal.removeEventListener("abort", aborted); });
+      return Effect.sync(() => {
+        incoming.setTimeout(0);
+        incoming.off("timeout", uploadTimedOut);
+        incoming.off("error", fail);
+        signal.removeEventListener("abort", aborted);
+      });
     });
     const operation = received.pipe(Effect.flatMap(input => command(input, incoming.headers.authorization)), Effect.match({
       onSuccess: value => { outgoing.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); outgoing.end(JSON.stringify(value)); },

@@ -14,12 +14,28 @@ const [, , engine, directory, receiptPath, totalRaw] = process.argv;
 const total = Number(totalRaw ?? 100000);
 const enc = new TextEncoder();
 
+/**
+ * `ZV_ENGINE_CHECKPOINTS=1` (SQLite only): the shard checkpoints the way SQLite does by itself, inside a commit past
+ * 16 MiB of log (4,000 pages of 4 KiB), rather than on the checkpoint thread, so every commit here is still in the write-ahead log when the
+ * process is killed. A test that cuts the log to simulate a power cut needs that: a checkpoint syncs the log before it
+ * writes the file, so a cut below a checkpoint is not a state a power cut can leave, and cutting there would only
+ * corrupt a copy in a way no machine could.
+ */
+const engineCheckpoints = async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { join } = await import("node:path");
+  const { mkdirSync } = await import("node:fs");
+  const { sqliteKvEngineOver } = await import("../../dist/db/engines/sqlite-kv.js");
+  const { openShardOverKv } = await import("../../dist/db/kv-store.js");
+  mkdirSync(directory, { recursive: true });
+  const file = join(directory, "acme.sqlite");
+  const kv = sqliteKvEngineOver(new DatabaseSync(file), { openReader: () => new DatabaseSync(file, { readOnly: true }), checkpoints: "engine" });
+  return openShardOverKv("acme", kv);
+};
+
 const open = async () => {
+  if (engine === "sqlite" && process.env.ZV_ENGINE_CHECKPOINTS === "1") return engineCheckpoints();
   switch (engine) {
-    case "libsql":
-      // libSQL takes an options object; the rest take a bare directory.
-      return (await import("../../dist/db/engines/libsql.js"))
-        .makeLibsqlStore("acme", { directory });
     case "lmdb":
       return (await import("../../dist/db/engines/lmdb.js")).makeLmdbStore("acme", directory);
     case "rocksdb-js":
@@ -35,7 +51,7 @@ const receipts = openSync(receiptPath, "a");
 
 await Effect.runPromise(
   Effect.scoped(Effect.gen(function* () {
-    const store = yield* yield* Effect.promise(open);
+    const store = (yield* yield* Effect.promise(open)).partition("acme");
     for (let seq = 1; seq <= total; seq++) {
       yield* store.transact((txn) =>
         txn.put(

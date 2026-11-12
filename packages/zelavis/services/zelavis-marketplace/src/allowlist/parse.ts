@@ -56,8 +56,12 @@ function parseVersion(value: unknown, where: string): AllowlistVersion {
   if (!INTEGRITY.test(integrity)) {
     throw new AllowlistFormatError(`${where}.integrity must be a sha512 integrity string.`);
   }
+  const platform = text(input.platform, `${where}.platform`)!;
+  if (!EXACT_VERSION.test(platform)) {
+    throw new AllowlistFormatError(`${where}.platform must be the exact oldest Zelavis version it runs on.`);
+  }
   const deprecated = text(input.deprecated, `${where}.deprecated`, false);
-  return { version, integrity, ...(deprecated ? { deprecated } : {}) };
+  return { version, integrity, platform, ...(deprecated ? { deprecated } : {}) };
 }
 
 function parseService(value: unknown, where: string): AllowlistService {

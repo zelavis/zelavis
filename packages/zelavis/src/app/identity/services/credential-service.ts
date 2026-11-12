@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type { CredentialRepository } from "../contracts/repositories.js";
 import type { Credential } from "../domain/entities.js";
 import { IdentityValidationError } from "../core/errors.js";
@@ -14,7 +16,9 @@ export interface CreateCredentialInput {
 export class CredentialService {
   constructor(private readonly repository: CredentialRepository) {}
 
-  async create(input: CreateCredentialInput): Promise<Credential> {
+  create(input: CreateCredentialInput): Promise<Credential> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<Credential, IntegrationFailure> {
     if (!input.id) {
       throw new IdentityValidationError("Credential creation requires an id.");
     }
@@ -42,33 +46,37 @@ export class CredentialService {
 
     // Uniqueness is the repository's atomic job, not a check made here first.
     const now = new Date();
-    return this.repository.create({
+    return (yield* integrationValue(self.repository.create({
       ...input,
       identifier,
       createdAt: now,
       updatedAt: now,
-    });
+    })));
+  }));
   }
 
-  async findByProviderIdentifier(provider: string, identifier: string): Promise<Credential | null> {
-    return this.repository.findByProviderIdentifier(provider, identifier);
+  findByProviderIdentifier(provider: string, identifier: string): Promise<Credential | null> {
+    return present(integration(() => this.repository.findByProviderIdentifier(provider, identifier)));
   }
 
-  async findById(id: string): Promise<Credential | null> {
-    return this.repository.findById(id);
+  findById(id: string): Promise<Credential | null> {
+    return present(integration(() => this.repository.findById(id)));
   }
 
-  async update(credential: Credential): Promise<Credential> {
+  update(credential: Credential): Promise<Credential> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<Credential, IntegrationFailure> {
     if (!credential.id || !credential.accountId || !credential.provider || !credential.identifier) {
       throw new IdentityValidationError("Credential updates require a complete credential.");
     }
-    return this.repository.update({
+    return (yield* integrationValue(self.repository.update({
       ...credential,
       updatedAt: new Date(),
-    });
+    })));
+  }));
   }
 
-  async listByAccountId(accountId: string): Promise<Credential[]> {
-    return this.repository.listByAccountId(accountId);
+  listByAccountId(accountId: string): Promise<Credential[]> {
+    return present(integration(() => this.repository.listByAccountId(accountId)));
   }
 }

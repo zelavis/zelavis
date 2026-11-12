@@ -38,18 +38,36 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-geo-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({ name: "places", ...(spatial === undefined ? {} : { spatial }) });
       for (const [id, where, kind] of PLACES) {
         yield* docs.insert({ collection: "places", id, data: { where, kind } });
       }
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
   const ids = (found) => found.map((d) => d.id).sort();
   const find = (docs, input) => Effect.map(docs.findMany({ collection: "places", ...input }), ids);
   const tagOf = (effect) => Effect.map(Effect.flip(effect), (error) => error._tag);
+
+  test(`${engine}: cells belong to one tenant's collection`, (t) =>
+    setup(t, (docs, _store, shard) => Effect.gen(function* () {
+      // Two neighbours of the gate that a radius would admit, filed under the
+      // same path: one in another collection, one in another tenant. Cells are
+      // read by field alone, so the field is what keeps them out.
+      yield* docs.createCollection({ name: "events", spatial: SPATIAL });
+      yield* docs.insert({ collection: "events", id: "concert", data: { where: point(13.3778, 52.5164) } });
+      const other = documentsFor(shard.partition("t2"), "t2");
+      yield* other.createCollection({ name: "places", spatial: SPATIAL });
+      yield* other.insert({ collection: "places", id: "foreign", data: { where: point(13.3779, 52.5162) } });
+
+      const near = { geometry: { field: "where", near: BRANDENBURG, radius: 500 } };
+      assert.deepEqual(yield* find(docs, near), ["gate"]);
+      assert.deepEqual(yield* find(other, near), ["foreign"]);
+    })));
 
   test(`${engine}: a radius is metres, not whichever cells happened to match`, (t) =>
     setup(t, (docs) => Effect.gen(function* () {

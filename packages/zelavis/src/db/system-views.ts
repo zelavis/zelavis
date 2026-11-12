@@ -4,7 +4,7 @@ import type { DomainEventsApi } from "./domain-events.js";
 import { UnknownSystemView } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import type { ProjectionsApi } from "./projections.js";
-import type { SchemasApi } from "./schemas.js";
+import type { SchemasApi } from "./schema-activation.js";
 import type { TimeSeriesApi } from "./time-series.js";
 
 export type SystemViewName =
@@ -130,11 +130,11 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
           // The event log has its own continuation, so this view forwards it
           // rather than counting rows it would have to re-read to skip.
           const limit = boundedLimit(input.limit);
-          const events = yield* sources.events.read({
+          const page = yield* Effect.orDie(sources.events.read({
             ...(input.after === undefined ? {} : { after: input.after as never }),
             limit,
-          });
-          const rows = events.map((event) => ({
+          }));
+          const rows = page.events.map((event) => ({
             id: event.eventId,
             data: {
               type: event.type,
@@ -145,10 +145,12 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
               nodeId: event.nodeId,
             } as JsonObject,
           }));
-          const last = events[events.length - 1];
-          return events.length < limit || last === undefined
-            ? { rows }
-            : { rows, next: last.cursor as string };
+          // `next` is where the read stopped, which may be past entries that
+          // were not events of this tenant's: a page can hold fewer rows than
+          // asked for and still not be the last one.
+          return page.more && page.cursor !== undefined
+            ? { rows, next: page.cursor as string }
+            : { rows };
         }
 
         case "schemas": {

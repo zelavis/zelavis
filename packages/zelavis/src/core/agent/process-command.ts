@@ -44,6 +44,9 @@ export interface ZelavisAgentProcessCommand {
   readonly cwd: string;
   /** Opens stdin only for interactive workloads; ordinary Project children see EOF. */
   readonly stdin?: "pipe";
+  /** Private reconnectable host-control endpoint. Contains paths, never keys.
+   * Mutually exclusive with interactive stdin; write() forwards commands here. */
+  readonly control?: { readonly socketPath: string; readonly credentialsFile: string };
   /**
    * The complete environment. Not merged with the host's.
    *
@@ -61,6 +64,8 @@ export interface ZelavisAgentProcessOutput {
 }
 
 export interface ZelavisAgentProcessExit {
+  /** Transport recovery exhaustion or unknown adopted-process status. */
+  readonly reason?: string;
   readonly code: number | null;
   readonly signal: string | null;
   /**
@@ -100,12 +105,14 @@ export interface ZelavisAgentProcessStartOptions {
 export interface ZelavisAgentAttachedProcess {
   readonly process: ZelavisAgentProcess;
   /** Execution identity for adoption; environment and private keys are withheld. */
-  readonly command: Pick<ZelavisAgentProcessCommand, "workloadId" | "executable" | "args" | "cwd">;
+  readonly command: Pick<ZelavisAgentProcessCommand, "workloadId" | "executable" | "args" | "cwd" | "placement" | "control">;
   /** Output the Agent buffered while no client was listening, oldest first. */
   readonly replay: readonly ZelavisAgentProcessOutput[];
 }
 
 export interface ZelavisAgentProcess {
+  /** Host-local diagnostic identity; authority still requires the process handle. */
+  readonly pid?: number;
   /** Stable inside a supervised Agent; used to reconnect higher-level records. */
   readonly id?: string;
   readonly workloadId: string;
@@ -136,6 +143,10 @@ export interface ZelavisAgentProcess {
 }
 
 export interface ZelavisAgentProcessRunner {
+  /** Reconstructs all durable process handles before daemon admission. */
+  recover?(): Promise<readonly ZelavisAgentAttachedProcess[]>;
+  /** Releases supervision for handover, stopping non-survivable sessions. */
+  detach?(): Promise<void>;
   /** Identifies the execution boundary, for honest capability reporting. */
   readonly name: string;
   start(

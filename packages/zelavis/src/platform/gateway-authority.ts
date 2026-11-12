@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Signed authority envelope for the Project Gateway.
  *
@@ -43,6 +45,8 @@ export interface ZelavisGatewayAuthorityClaims {
   readonly tenantId: string;
   /** Permissions the caller actually holds for this Project. Never a wildcard. */
   readonly permissions: readonly string[];
+  /** Optional proof for a single conditional App account access edit. */
+  readonly accountAccessDigest?: string;
   /** Milliseconds since the epoch after which this envelope is refused. */
   readonly expiresAt: number;
   /** Single-use value so a captured envelope cannot be replayed inside its window. */
@@ -81,34 +85,37 @@ function canonicalClaims(claims: ZelavisGatewayAuthorityClaims): string {
     [...claims.permissions],
     claims.expiresAt,
     claims.nonce,
+    ...(claims.accountAccessDigest === undefined ? [] : [claims.accountAccessDigest]),
   ]);
 }
 
-async function importSigningKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+function importSigningKey(secret: string): Promise<CryptoKey> {
+    return present(integration(() => crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
-  );
-}
+  )));
+  }
 
 /** Signs claims into a `payload.signature` token. */
-export async function signGatewayAuthority(
+export function signGatewayAuthority(
   secret: string,
   claims: ZelavisGatewayAuthorityClaims,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const payload = canonicalClaims(claims);
-  const signature = await crypto.subtle.sign(
+  const signature = (yield* integrationValue(crypto.subtle.sign(
     "HMAC",
-    await importSigningKey(secret),
+    (yield* integrationValue(importSigningKey(secret))),
     new TextEncoder().encode(payload),
-  );
+  )));
   return `${base64UrlEncode(new TextEncoder().encode(payload))}.${base64UrlEncode(
     new Uint8Array(signature),
   )}`;
-}
+}));
+  }
 
 export interface VerifyGatewayAuthorityOptions {
   /** Only envelopes issued for this Project are accepted. */
@@ -123,11 +130,12 @@ export interface VerifyGatewayAuthorityOptions {
  * failure — a malformed token, a bad signature, the wrong Project, an expired
  * envelope, or a replayed nonce are all simply "not authorized".
  */
-export async function verifyGatewayAuthority(
+export function verifyGatewayAuthority(
   secret: string,
   token: string,
   options: VerifyGatewayAuthorityOptions,
 ): Promise<ZelavisGatewayAuthorityClaims | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisGatewayAuthorityClaims | undefined, IntegrationFailure> {
   const separator = token.indexOf(".");
   if (separator <= 0 || separator === token.length - 1) return undefined;
 
@@ -144,12 +152,12 @@ export async function verifyGatewayAuthority(
   }
 
   // `crypto.subtle.verify` is constant-time with respect to the signature.
-  const valid = await crypto.subtle.verify(
+  const valid = (yield* integrationValue(crypto.subtle.verify(
     "HMAC",
-    await importSigningKey(secret),
+    (yield* integrationValue(importSigningKey(secret))),
     signatureBytes,
     payloadBytes,
-  );
+  )));
   if (!valid) return undefined;
 
   let decoded: unknown;
@@ -158,7 +166,7 @@ export async function verifyGatewayAuthority(
   } catch {
     return undefined;
   }
-  if (!Array.isArray(decoded) || decoded.length !== 10) return undefined;
+  if (!Array.isArray(decoded) || (decoded.length !== 10 && decoded.length !== 11)) return undefined;
 
   const [
     projectId,
@@ -171,6 +179,7 @@ export async function verifyGatewayAuthority(
     permissions,
     expiresAt,
     nonce,
+    accountAccessDigest,
   ] = decoded;
 
   if (
@@ -185,7 +194,8 @@ export async function verifyGatewayAuthority(
     !Array.isArray(permissions) ||
     permissions.some((entry) => typeof entry !== "string") ||
     typeof expiresAt !== "number" ||
-    typeof nonce !== "string"
+    typeof nonce !== "string" ||
+    (decoded.length === 11 && (typeof accountAccessDigest !== "string" || !/^[a-f0-9]{64}$/u.test(accountAccessDigest)))
   ) {
     return undefined;
   }
@@ -217,8 +227,10 @@ export async function verifyGatewayAuthority(
     permissions: permissions as readonly string[],
     expiresAt,
     nonce,
+    ...(accountAccessDigest === undefined ? {} : { accountAccessDigest }),
   };
-}
+}));
+  }
 
 /**
  * Bounded single-use nonce tracker for one Project runtime.

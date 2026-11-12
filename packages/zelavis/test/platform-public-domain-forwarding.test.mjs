@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   forwardPublicRequest,
@@ -9,8 +13,11 @@ import {
   resolveVerifiedBinding,
 } from "../dist/platform/public-domain-forwarder.js";
 import { fetchNodeSite } from "../dist/adapters/_node-site-fetch.js";
-import { zelavis, createInMemoryDomainBindingStore } from "../dist/index.js";
+import { Zelavis, zelavis, createInMemoryDomainBindingStore, defineAdapter } from "../dist/index.js";
+import { nodeAdapter } from "../dist/adapters/node.js";
+import { createZelavisClient } from "../dist/sdk/fetch.js";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
+import { zelavisUiIdentityFrontend } from "@zelavis/ui/identity-frontend";
 
 function bindingStore(bindings) {
   return { get: async (host) => bindings[host.toLowerCase()] };
@@ -65,7 +72,7 @@ function platform(site, overrides = {}) {
     fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
     projects: () => ({
-      get: async () => ({
+      view: async () => ({
         id: "site",
         kind: "zelavis",
         runtime: { status: "running", url: site.url },
@@ -156,7 +163,7 @@ test("a stopped Project answers instead of hanging", async () => {
       fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
       projects: () => ({
-        get: async () => ({ id: "site", kind: "zelavis", runtime: { status: "stopped" } }),
+        view: async () => ({ id: "site", kind: "zelavis", runtime: { status: "stopped" } }),
         listOwned: async () => [],
       }),
     },
@@ -175,7 +182,7 @@ test("a running frontend takes precedence over the Project runtime", async () =>
         fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
         projects: () => ({
-          get: async () => ({
+          view: async () => ({
             id: "site",
             kind: "zelavis",
             runtime: { status: "running", url: site.url },
@@ -263,6 +270,15 @@ test("a composed runtime refuses the dashboard on a bound domain", async () => {
   assert.equal(dashboard.status, 200);
 });
 
+test("a root-mounted dashboard leaves only mounted verification handlers on a bound domain", async () => {
+  const options = { domainBindings: bindingStore({ "example.com": verified() }) };
+  const get = path => new Request(`http://example.com${path}`);
+  assert.equal((await guardControlPlaneHost(options, get("/login"), "/")).status, 404);
+  assert.equal(await guardControlPlaneHost(options, get("/.well-known/zelavis-challenge/token"), "/"), undefined);
+  assert.equal((await guardControlPlaneHost(options, get("/.well-known/acme-challenge/token"), "/")).status, 404);
+  assert.equal(await guardControlPlaneHost({ ...options, acmeChallengeMounted: true }, get("/.well-known/acme-challenge/token"), "/"), undefined);
+});
+
 test("host spelling variants of a bound domain never reach the dashboard", async () => {
   const bindings = createInMemoryDomainBindingStore();
   await bindings.put({ ...verified(), host: "customer.example" });
@@ -344,4 +360,171 @@ test("ingress cancels oversized request and response streams at its bound", asyn
   const response=await forwardProjectSiteRequest({...options,fetchSite:async()=>new Response(stream())},new Request("http://example.com/"));
   assert.equal(response.status,502);
   assert.equal(cancelled,true);
+});
+
+const authBase = "/zelavis/api/v1/auth";
+const appCookieName = (id) => `zelavis_app_${createHash("sha256").update(id).digest("hex").slice(0, 24)}`;
+const siteAuthCookie = (id) => `${appCookieName(id)}=zvs_app_${appCookieName(id).slice(12)}_${"a".repeat(43)}`;
+
+test("only exact native App auth requests bypass a running server frontend", async () => {
+  const options = platform({ url: "http://127.0.0.1:4001" }, {
+    view: async () => ({ id: "site", recipe: { name: "@zelavis/app" }, runtime: { status: "running", url: "http://127.0.0.1:4001" } }),
+    listOwned: async () => [{ id: "site-frontend", kind: "frontend", runtime: { status: "running", url: "http://127.0.0.1:4002" } }],
+  });
+  const calls = [];
+  const own = siteAuthCookie("site");
+  const sibling = siteAuthCookie("sibling");
+  const token = own.split("=")[1];
+  options.protectedCookieNames = ["custom_platform"];
+  options.fetchSite = async (url, init) => {
+    calls.push({ url, init });
+    const headers = new Headers();
+    for (const cookie of [own, sibling, "custom_platform=secret", "zelavis_session=platform", "site_theme=dark"]) headers.append("set-cookie", `${cookie}; Path=/`);
+    return new Response("child", { headers });
+  };
+  const headers = { cookie: `${own}; ${sibling}; custom_platform=secret; zelavis_session=secret; site_theme=dark`,
+    authorization: `Bearer ${token}`, "x-zelavis-authority": "inbound", "x-forwarded-host": "wrong.example", "x-forwarded-proto": "http" };
+  const request = (path, init) => new Request(`https://EXAMPLE.com:4443${path}`, { headers, ...init });
+  const response = await guardControlPlaneHost(options, request(`${authBase}/session`), "/ops/panel");
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(response.headers.getSetCookie(), [`${own}; Path=/`]);
+  const [{ url, init }] = calls;
+  assert.equal(url.href, "http://127.0.0.1:4001/zelavis/_site-auth/GET/api/v1/auth/session");
+  assert.equal(init.method, "POST");
+  assert.equal(init.headers.get("cookie"), own);
+  assert.equal(init.headers.get("authorization"), `Bearer ${token}`);
+  assert.equal(init.headers.get("x-zelavis-authority"), null);
+  assert.equal(init.headers.get("host"), "example.com:4443");
+  assert.equal(init.headers.get("x-forwarded-host"), "example.com:4443");
+  assert.equal(init.headers.get("x-forwarded-proto"), "https");
+  const site = await forwardPublicRequest(options, request("/"));
+  assert.equal(calls.at(-1).url.port, "4002");
+  assert.equal(calls.at(-1).init.headers.get("cookie"), "site_theme=dark");
+  assert.equal(calls.at(-1).init.headers.get("authorization"), null);
+  assert.deepEqual(site.headers.getSetCookie(), ["site_theme=dark; Path=/"]);
+
+  const count = calls.length;
+  for (const [method, path] of [
+    ["GET", "/zelavis"], ["GET", "/zelavis/login/"], ["HEAD", "/zelavis/login"], ["POST", "/zelavis/login"],
+    ["GET", "/%7aelavis/login"], ["GET", "/zelavis/%6cogin"], ["GET", "/zelavis//login"],
+    ["GET", "/Zelavis/Login"], ["GET", "/zelavis%2flogin"], ["GET", "/zelavis%5clogin"],
+    ["GET", "/zelavis/auth-assets/other.js"], ["GET", "/zelavis/_site-auth/GET/login"], ["GET", "/ops/panel/login"],
+    ["GET", `${authBase}/accounts`], ["GET", `${authBase}/registration/settings`],
+    ["POST", `${authBase}/sign-up/other`], ["GET", `${authBase}/oauth/oidc/callback`],
+    ["PUT", `${authBase}/session`], ["GET", `${authBase}/session/rotate`],
+  ]) assert.equal((await guardControlPlaneHost(options, request(path, { method }), "/ops/panel")).status, 404, `${method} ${path}`);
+  assert.equal((await guardControlPlaneHost(options, request("/zelavis/login"), "/ops/panel", false)).status, 404);
+  const oversized = await guardControlPlaneHost(options, request(`${authBase}/sign-up/password`, { method: "POST", body: "x".repeat(8193) }), "/ops/panel");
+  assert.equal(oversized.status, 413);
+  assert.equal(calls.length, count);
+
+  for (const [project, status] of [
+    [undefined, 404],
+    [{ id: "site", recipe: { name: "@acme/wordpress", managed: {} }, runtime: { status: "running", url: "http://127.0.0.1:4001" } }, 404],
+    [{ id: "site", recipe: { name: "@zelavis/app" }, runtime: { status: "stopped" } }, 503],
+  ]) {
+    const unavailable = { ...options, projects: () => ({ ...options.projects(), view: async () => project }) };
+    assert.equal((await guardControlPlaneHost(unavailable, request("/zelavis/login"), "/ops/panel")).status, status);
+  }
+  assert.equal(calls.length, count);
+  const older = { ...options, fetchSite: async (url, init) => {
+    assert.equal(init.method, "POST");
+    assert.equal(url.pathname, "/zelavis/_site-auth/POST/api/v1/auth/sign-up/password");
+    return new Response("Not found", { status: 404 });
+  } };
+  assert.equal((await guardControlPlaneHost(older, request(`${authBase}/sign-up/password`, { method: "POST", body: "{}" }), "/ops/panel")).status, 404);
+});
+
+test("a verified HTTPS origin reaches the exact native engine, cookie and SDK session", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-verified-app-auth-"));
+  const domainBindings = createInMemoryDomainBindingStore();
+  const forwardedCookies = [];
+  const node = nodeAdapter({ dataDirectory: directory });
+  const adapter = defineAdapter({ ...node,
+    async resolve(options) {
+      const resolved = await node.resolve(options);
+      return { ...resolved, subsystems: { ...resolved.subsystems, auth: { authOptions: { sessionCookieName: "platform_custom" } } },
+        resources: { ...resolved.resources, domainBindings, publicSiteFetch: (url, init) => {
+          forwardedCookies.push(new Headers(init.headers).get("cookie"));
+          return fetchNodeSite(url, init);
+        } },
+      };
+    },
+  });
+  const instance = new Zelavis({ rootPath: "/ops/panel", adapter });
+  t.after(async () => { await instance.close(); await rm(directory, { recursive: true, force: true }); });
+  const runtime = await instance.runtime();
+  const projects = runtime.endpointGroups["platform.control-plane"].context.projects;
+  for (const id of ["site", "sibling"]) {
+    await projects.create({ id, name: id, recipeName: "@zelavis/app", start: true });
+    await domainBindings.put({ ...verified(id), host: `${id}.example.com` });
+  }
+  const origin = "https://site.example.com";
+  const sibling = "https://sibling.example.com";
+  const send = (path, init, host = origin) => runtime.fetch(new Request(`${host}${path}`, init));
+  assert.equal((await send("/ops/panel/login")).status, 404);
+  assert.equal((await send("/zelavis/sign-up")).status, 404);
+  await send("/", { headers: { cookie: "platform_custom=secret; site_theme=dark" } });
+  assert.equal(forwardedCookies.at(-1), "site_theme=dark");
+  const settings = "/ops/panel/api/v1/runtime/projects/site/auth/registration/settings";
+  const change = await runtime.dispatch(new Request(`http://platform.local${settings}`, { method: "PUT",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, expectedRevision: 0 }) }),
+  { principal: { id: "operator", type: "system", permissions: ["*"] } });
+  assert.equal(change.response.status, 200, await change.response.text());
+  const login = await send("/zelavis/login");
+  assert.equal(login.status, 200);
+  assert.match(login.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  assert.match(await login.text(), /href="\/zelavis\/sign-up"/);
+  assert.equal((await send("/zelavis/sign-up", undefined, sibling)).status, 404);
+  const asset = await send("/zelavis/auth-assets/identity.js");
+  assert.match(asset.headers.get("content-type"), /javascript/);
+  assert.ok((await asset.text()).length > 100);
+
+  const input = { identifier: "app@example.com", password: "a long unique App password" };
+  const signUp = await send(`${authBase}/sign-up/password`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) });
+  assert.equal(signUp.status, 201);
+  const enrolled = await signUp.json();
+  assert.deepEqual(enrolled.account.roles, ["user"]);
+  const session = signUp.headers.get("set-cookie");
+  assert.match(session, new RegExp(`^${appCookieName("site")}=.+; Path=/zelavis; HttpOnly; SameSite=Lax; Secure;`));
+  assert.doesNotMatch(session, /Domain=/i);
+  const cookie = session.split(";", 1)[0];
+  const authClient = (baseUrl, token) => createZelavisClient({ baseUrl, headers: token ? { authorization: `Bearer ${token}` } : undefined,
+    fetch: (input, init) => runtime.fetch(new Request(input, init)) }).auth;
+  assert.equal((await authClient(origin, enrolled.session.token).getSession()).principal.id, enrolled.account.id);
+  assert.equal((await authClient(origin).signInWithPassword(input)).account.id, enrolled.account.id);
+  assert.equal((await send(`${authBase}/session`, { headers: { cookie } })).status, 200);
+  assert.equal((await send(`${authBase}/session`, { headers: { cookie, authorization: `Bearer ${enrolled.session.token}` } }, sibling)).status, 401);
+  assert.equal((await send(`${authBase}/session`, { method: "DELETE", headers: { cookie, origin: sibling } })).status, 401);
+  assert.equal((await send(`${authBase}/accounts`, { headers: { cookie } })).status, 404);
+  const logout = await send(`${authBase}/session`, { method: "DELETE", headers: { cookie, origin } });
+  assert.equal(logout.status, 204);
+  assert.match(logout.headers.get("set-cookie"), new RegExp(`^${appCookieName("site")}=; .*Max-Age=0$`));
+  await projects.stop("site");
+  assert.equal((await send("/zelavis/login")).status, 503);
+});
+
+test("the packaged auth frontend uses the configured mount and exact assets", async (t) => {
+  const calls = [];
+  const runtime = await zelavis({ rootPath: "/ops/identity", api: { prefix: "/endpoint", version: "v9" },
+    frontend: context => zelavisUiIdentityFrontend({ ...context, fetch: async request => {
+      calls.push(new URL(request.url).pathname);
+      return Response.json({ enabled: false, providers: [] });
+    } }), subsystems: { auth: false, database: false },
+  });
+  t.after(() => runtime.close());
+  const get = path => runtime.fetch(new Request(`http://app.example${path}`));
+  const login = await get("/ops/identity/login");
+  assert.equal(login.status, 200);
+  const html = await login.text();
+  assert.match(html, /data-api="\/ops\/identity\/endpoint\/v9"/);
+  assert.match(html, /src="\/ops\/identity\/auth-assets\/identity.js"/);
+  assert.doesNotMatch(html, /href="[^\"]*sign-up/);
+  const closed = await get("/ops/identity/sign-up");
+  assert.equal(closed.status, 404);
+  assert.doesNotMatch(await closed.text(), /<form/);
+  assert.deepEqual(calls, Array(2).fill("/ops/identity/endpoint/v9/auth/registration"));
+  assert.match((await get("/ops/identity/auth-assets/identity.css")).headers.get("content-type"), /text\/css/);
+  for (const path of ["/ops/identity/login/", "/ops/identity/projects", "/ops/identity/auth-assets/extra.js"]) assert.equal((await get(path)).status, 404);
 });

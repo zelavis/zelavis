@@ -26,7 +26,9 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-rewrite-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({ name: "items" });
       yield* docs.insert({ collection: "items", id: "new", data: { price: 5 } });
@@ -44,10 +46,10 @@ for (const [engine, open] of engines) {
           })),
           {
             terms: [],
-            columns: [["zv.collection/t1", "items"], ["t1/items.price", "5"]],
+            columns: [["zv.collection", "items"], ["items.price", "5"]],
             measures: [], edges: [],
           },
-          { namespace: "doc/t1/items", key: "old" },
+          { namespace: "doc/items", key: "old" },
         ));
 
       const matching = (value) =>

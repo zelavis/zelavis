@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integration, integrationValue, IntegrationFailure, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -53,3 +53,21 @@ export function resolveBundledFrontend(
     return undefined;
   }
 }).pipe(Effect.withSpan("resolveBundledFrontend"))); }
+
+/** App auth is supplied only by the selected App engine's bundled UI. */
+export function resolveBundledIdentityFrontend(
+  options: ResolveBundledFrontendOptions,
+): Promise<ZelavisPlatformFrontendFactory | undefined> {
+  return presentProtocol(Effect.gen(function* () {
+    const directory = options.bundledDirectory("@zelavis/ui");
+    if (!directory) return undefined;
+    const entry = join(directory, "dist", "identity-frontend.js");
+    if (!existsSync(entry)) return undefined;
+    const load = options.importer ?? ((specifier: string) => import(specifier));
+    const loaded = (yield* integration(() => load(pathToFileURL(entry).href))) as { zelavisUiIdentityFrontend?: unknown } | undefined;
+    if (typeof loaded?.zelavisUiIdentityFrontend !== "function") {
+      return yield* new IntegrationFailure(new TypeError("The bundled App auth frontend has no factory."));
+    }
+    return loaded.zelavisUiIdentityFrontend as ZelavisPlatformFrontendFactory;
+  }));
+}

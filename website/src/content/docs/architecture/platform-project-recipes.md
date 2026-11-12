@@ -109,8 +109,9 @@ For the Node process driver, each project lives below
 stable virtual shard ranges across physical SQLite files in
 `.zelavis/data/primary/shards`; private topology and runtime metadata is stored
 separately in `.zelavis/runtime/zelavis.sqlite` inside that project directory.
-All shard placements begin on the same Node and can later move without changing
-the App-facing database API.
+All shard placements begin on the same Node. An operator can allow remote Nodes, and the App can then place
+ranges on a shard another Node's Agent hosts, without changing the App-facing database API
+([Shards on other Nodes](./fabric.md#shards-on-other-nodes)).
 
 There is one dashboard application, mounted by the Platform OS from
 `@zelavis/ui`. App project runtimes are headless and do not serve their own

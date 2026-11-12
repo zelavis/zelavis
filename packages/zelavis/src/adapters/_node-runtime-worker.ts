@@ -5,7 +5,7 @@ import { Deferred, Effect } from "effect";
 import { createNodeHttpServer } from "../core/runtime/node-http.js";
 import type { ZelavisServerRuntime } from "../core/runtime/contracts.js";
 import { createRuntimeAdmission } from "../core/runtime/admission.js";
-import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, IntegrationFailure, present, describeFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { NODE_RUNTIME_PROTOCOL, NODE_RUNTIME_READY_PATH } from "./_node-runtime-protocol.js";
 import { serveNodeRuntimeCommands } from "./_node-runtime-commands.js";
 import { acquireNodeRuntimeOwnership } from "./_node-runtime-ownership.js";
@@ -46,7 +46,14 @@ const run = Effect.gen(function* () {
     yield* requestOwnership.pause;
     // An aborted HTTP socket does not prove its handler finished. Track the actual
     // fetch operation as well as the server's response streams before closing stores.
-    yield* requestOwnership.drain(30_000);
+    // A handover waits for what it must: the next engine takes the stores over. An engine whose host is gone ("abort") has
+    // nobody to answer and must stop at once (it holds the writer lease, which only its close releases), and a shutdown does
+    // not wait out a follower's long poll: a request that outlives the engine is lost with it, as with any stop.
+    if (reason === "handover") yield* requestOwnership.drain(30_000);
+    else if (reason === "shutdown") {
+      const drained = yield* Effect.exit(requestOwnership.drain(3_000));
+      if (drained._tag === "Failure") yield* Effect.logWarning("Requests were still in flight when the engine shut down; they are lost with it");
+    }
     if (server?.listening) yield* Effect.callback<void, IntegrationFailure>(resume => {
       server!.close(error => resume(error ? Effect.fail(new IntegrationFailure(error)) : Effect.void));
       server!.closeIdleConnections();
@@ -103,6 +110,6 @@ const run = Effect.gen(function* () {
 });
 
 Effect.runFork(Effect.scoped(run).pipe(Effect.onExit(exit => Effect.sync(() => {
-  if (exit._tag === "Failure") console.error(String(exit.cause));
+  if (exit._tag === "Failure") console.error(exit.cause.reasons.map(reason => reason._tag === "Fail" ? describeFailure(reason.error) : reason._tag === "Die" ? `defect: ${describeFailure(reason.defect)}` : reason._tag).join("; "));
   process.exit(exit._tag === "Success" ? 0 : 1);
 }))));

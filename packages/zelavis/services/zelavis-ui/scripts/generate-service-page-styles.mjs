@@ -3,8 +3,7 @@
  *
  * A service page renders in its own document, so it inherits nothing from the
  * dashboard. Rather than let every service invent its own colours, the design
- * tokens are extracted from the dashboard's own stylesheet — the same source,
- * so the two cannot drift — and shipped with a small base layer that makes a
+ * tokens are kept in app/service-page-tokens.css — and shipped with a small base layer that makes a
  * plain HTML page look like it belongs.
  *
  * Deliberately not the whole Tailwind build: a service page should get the
@@ -14,21 +13,22 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const source = fileURLToPath(new URL("../app/styles.css", import.meta.url));
+const source = fileURLToPath(new URL("../app/service-page-tokens.css", import.meta.url));
 const output = fileURLToPath(
   new URL("../src/generated/service-page-styles.ts", import.meta.url),
 );
 
 const css = readFileSync(source, "utf8");
+const surfaceTokens = readFileSync(new URL("../app/surface-tokens.css", import.meta.url), "utf8").trimEnd();
 
 function extractBlock(selector) {
   const start = css.indexOf(`${selector} {`);
   if (start < 0) {
-    throw new Error(`app/styles.css no longer contains a "${selector}" block.`);
+    throw new Error(`app/service-page-tokens.css no longer contains a "${selector}" block.`);
   }
   const end = css.indexOf("\n}", start);
   if (end < 0) {
-    throw new Error(`The "${selector}" block in app/styles.css is unterminated.`);
+    throw new Error(`The "${selector}" block in app/service-page-tokens.css is unterminated.`);
   }
   return css.slice(start + selector.length + 2, end).trim();
 }
@@ -36,15 +36,17 @@ function extractBlock(selector) {
 const light = extractBlock(":root");
 const dark = extractBlock(".dark");
 
-const stylesheet = `/* Generated from @zelavis/ui app/styles.css. Do not edit. */
+const stylesheet = `/* Generated from app/service-page-tokens.css and app/surface-tokens.css. Do not edit. */
+${surfaceTokens}
+
 :root {
 ${light}
   color-scheme: light;
+  overscroll-behavior: contain;
 }
 
-/* Framed pages cannot see the dashboard's theme class, so they follow the
-   viewer's system preference. A page that wants to follow the dashboard's
-   explicit choice can set data-theme on its own root. */
+/* The service-page runtime sets data-theme from the dashboard. Without it,
+   use the browser's preferred color scheme. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
 ${dark}

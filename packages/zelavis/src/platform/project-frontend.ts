@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Placeholder frontend for a Project that has not selected one yet.
  *
@@ -171,11 +173,11 @@ export function createProjectFrontendPlaceholderService(
         // Intentionally no access requirement: this is the Project's own
         // front door, seen by visitors who have no Platform identity. The
         // privileged route audit treats public data-plane routes as explicit.
-        handler: async ({
+        handler: ({
           request,
         }: {
           request: Request;
-        }): Promise<ZelavisRouteResponse> => {
+        }): Promise<ZelavisRouteResponse> => present(Effect.gen(function* (): Effect.fn.Return<ZelavisRouteResponse, IntegrationFailure> {
           const path = new URL(request.url).pathname;
           if (isReserved(path)) {
             return { status: 404, body: { error: "Not found" } };
@@ -187,10 +189,10 @@ export function createProjectFrontendPlaceholderService(
           // dashboard or shown a placeholder for a Project they never asked
           // about.
           if (options.publicDomains) {
-            const forwarded = await forwardPublicRequest(
+            const forwarded = (yield* integrationValue(forwardPublicRequest(
               options.publicDomains,
               request,
-            );
+            )));
             if (forwarded) return forwarded;
           }
 
@@ -214,7 +216,7 @@ export function createProjectFrontendPlaceholderService(
             },
             body: renderProjectFrontendPlaceholder(options),
           };
-        },
+        })),
       },
       ],
     },

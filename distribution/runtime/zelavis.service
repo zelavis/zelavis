@@ -1,9 +1,9 @@
 [Unit]
 Description=Zelavis Platform OS
 After=network-online.target zelavis.socket zelavis-agent.service
-Wants=network-online.target
+Wants=network-online.target zelavis-agent.service
 # systemd owns the listening socket across restarts; see zelavis.socket.
-Requires=zelavis.socket zelavis-agent.service
+Requires=zelavis.socket
 
 [Service]
 Type=simple

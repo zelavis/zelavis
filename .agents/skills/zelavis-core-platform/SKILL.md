@@ -56,7 +56,7 @@ before editing.
   Prepare an immutable candidate without replacing canonical files. Recover an
   unfinished intent from proved host selection; deletion takes precedence. Stop
   may fence failed ownership, but never erase the intent without proof. Re-key
-  surviving App hosts only over the authenticated Agent process pipe. Installed
+  surviving App hosts only over the authenticated private Agent-to-host control channel. Installed
   Apps execute their exact engine/private Node and the updater retains qualified
   engines. The main Platform uses the same persistent host, retains preview
   listeners through its shared admission gate, and requires root acknowledgement
@@ -70,6 +70,16 @@ before editing.
   asynchronously and must remain ready despite an unavailable Project. Persist
   status refreshes under the Project lifecycle permit; Fabric fleet views remain
   read-only so scheduling cannot re-enter its own Project permit.
+  Agent conversion holds only Project traffic and lifecycle changes. Keep the
+  dashboard, authentication, status, logs, diagnostics and repair controls usable.
+  Resume recovered public workloads before private integration warmup; failed
+  conversion releases its coordination hold without weakening Project ownership
+  fencing. Test stalled recovery, failed integration and expired coordination.
+  Restore previously used private integrations without starting backends for
+  hosting-only Projects. Surface private startup failures in ordinary Project logs.
+  Complete Agent conversion at public workload recovery; restore private Apps
+  independently with bounded concurrency and a deadline per Project. The root
+  updater must wait longer than the engine's public recovery budget.
   Live updates refuse unsupported protocols. Future protocol evolution must ship
   through Update now and pass the real previous-release update gate; do not
   use a manual installer conversion as a release procedure.
@@ -265,6 +275,20 @@ before editing.
   contracts. The local Node process driver is Platform-owned and stops children
   during `Zelavis.close()`; production worker Agents should be separately
   supervised.
+- Linux Node system Project Agent handover uses validated boot/start-tick
+  records flushed before exec, kernel endpoint/runner locks, append-file output,
+  lease checks before adoption and bounded client rebind. Native/integration
+  hosts use authenticated private socket control with deduplicated commands.
+  Never replay ambiguous starts/operation submissions or persist Gateway keys.
+  Project units are process-only; root operation units retain cgroup controllers.
+  Project units omit `PrivateTmp` so temporary storage is independent of the Agent.
+  Prove database writes after the full installed sequence, not just PID survival.
+  Markerless stop stops workloads; uninstall kills remaining owned cgroup members.
+  Pre-protocol conversion is one explicit Update now restart under held admission.
+  Agent degradation must not roll back the committed engine. Embedded user Agents
+  follow on host restart; remote/Bun handover remains unqualified. The public contract
+  and its limits are in `website/src/content/docs/architecture/updates.md`.
+
 - Project/service grants require exact route scopes and cannot authorize
   unscoped routes. Unscoped/system grants match runtime-wide routes; top-level
   permissions span scopes. Signed Gateway audiences confine concrete local
@@ -369,43 +393,180 @@ before editing.
   to it.
 - When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
+  Remove completed items and their progress/validation history so the TODO
+  shrinks; retain only unfinished follow-ups and the context they need. Do not
+  append checked-off entries, release histories or audit logs.
 - Keep `AGENTS.md` as the canonical durable instruction source; there is no
   `CLAUDE.md`, so do not add one.
 - If durable Platform guidance changes, update this skill or a focused
   `.agents/references/*` resource so skill-loaded agents stay current.
-- For `zelavis/db`, preserve the event-sourced per-collection-table model.
-  Do not reintroduce a shared `documents` table, write directly to registered
-  collection tables (including indirectly through raw SQL triggers), or bury
-  `surface` in metadata.
-- Serialize unrelated top-level transactions in synchronous SQLite adapters;
-  a shared `inTransaction` boolean must never make concurrent callers join one
-  transaction. Keep physical uniqueness constraints behind event revisions.
+- For `zelavis/db`, follow "Database Architecture Rules" in `AGENTS.md`. In
+  short: one engine is one shard; each partition (a tenant, a part, or a
+  reserved partition) owns the key range under its name, with its own
+  identifiers, log, revision and writer; a transaction never writes another
+  partition's keys; records are single values whose retraction leaves a
+  versioned tombstone; events apply by version (and `follow` by position);
+  copies use a record scan plus the log tail; queries read clauses up to the
+  probe cap and check broad ones against manifests that must match the lenses;
+  a read that stops early resolves by window (`resolve(query, { after, limit,
+  within })`), a range alone driven by `within` under a check budget.
+  There is no raw SQL surface, and `surface` is never buried in metadata.
+- Logical schemas transfer through `schemas.export/import/types`: bounded v1
+  bundles, immutable version conflicts preflighted, dry run by default, activation
+  explicit through the durable workflow. Generated standalone types describe
+  active and historical versions; runtime constraints remain authoritative.
+- Follow [the storage engine policy](../../references/storage-engine-policy.md):
+  SQLite is the default; LMDB and RocksDB are optional. Both libSQL targets
+  were removed by owner decision. Do not restore aliases or substitute Turso.
+- Follow [the offline replication decision](../../references/offline-replication-decision.md):
+  retain fenced single-writer authority and adapter-neutral event replication;
+  device proposals are not commits. Independent multi-writer semantics require
+  an approved operation/collection specification before implementation.
+- Merging a Tenant branch back (`db/branch-merge.ts`, public contract in
+  `website/src/content/docs/api/database.md`) works per document from the branch point, no default
+  winner, explicit per-document resolution, repeatable by state. Storage
+  `durability` (`crash`/`power`) is chosen at open; an engine that cannot keep
+  `power` refuses it.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,
   and asset paths before composition; filesystem root containment is not enough.
+  Disk service pages read only their named bundle directory below the package root, with realpath containment.
+  Never fall back to package-root files or follow a symlink into another bundle. Public service-page UI assets
+  contain static build code/styles only, never installation state. The component entry discovers tags and loads their
+  families on demand. `runtime/service-ui/:file` reads only exact own entries of the frontend's `serviceUi.modules`
+  map (flat content-hashed JS names); it never reads filesystem or service paths. Page code waits for
+  `customElements.whenDefined` before component methods or form reads. Folder-discovered Platform extensions belong
+  in the Extensions slide and are framed without `allow-same-origin`, just like Project extensions.
 - Treat local physical sharding as the official `@zelavis/app` default, not a
   future multi-node migration. A new official App routes stable virtual shard
   ranges across several SQLite files even when all placements share one Node.
   Keep the low-level one-shard topology available only as the collapsed form of
   the same router-backed architecture for embedding and focused tests.
-- Every ordered-KV store batch atomically checks generation, fresh writer
-  session and the revision observed before dependent reads, then advances the
-  revision. Include replication, allocator, maintenance and format writes;
-  acquire generations conditionally and refuse exhaustion. Reject unsupported
-  coordination rather than using read-then-write fencing. RocksDB exclusive-file
-  mode does not support concurrent process takeover. Use LMDB's abortable child
-  transactions for batches; queued transaction callbacks can retain partial
-  writes on failure. Widen existing generation metadata without rewriting events
-  or cursors, and retain current ownership metadata during recovery.
+- Every ordered-KV batch atomically checks the shard's generation and fresh
+  writer session and the partition's revision observed before dependent reads,
+  then advances that revision. Include replication, allocator, maintenance and
+  format writes; acquire generations conditionally and refuse exhaustion. The
+  commit is the check: a partition handle keeps revision, lens state and move
+  fence instead of reading them per write, and drops them on a refused or failed
+  commit. The move fence is partition meta the store checks for every change.
+- A collection may declare `columns`; only those fields get column postings,
+  queries on other fields are refused with `UnindexedField`, and references
+  must read a declared field. JS, HTTP and CLI carry it together.
+- A consumer writing into its own partition (a time series) commits each batch
+  with its cursor in one transaction and rebuilds by generation; a projection's
+  `apply` is at least once and idempotent by `eventId`.
+- Search uses adjacent word-pair postings for phrase candidates (longer phrases
+  still verify order) and query-time single-word synonyms. Ranked scatter sums
+  matching-corpus statistics before scoring; there is no cross-partition
+  snapshot. Text/vector ranking uses bounded weighted reciprocal-rank fusion
+  under shared structured filters, qualified against exact rankings. Keep
+  hybrid/statistics and operator-only scatter in HTTP/SDK/CLI parity.
+- A multi-step read runs in one engine snapshot (`store.reading`); writes,
+  upkeep and the handle's beliefs (revision, lens state, fence, relocation) always read the
+  engine live. Every engine implements `snapshot`, taken at its first read.
+- Tenant handles route per operation (`PartitionRouter.operations`): every store
+  call of one operation goes to one placement under an in-process lease, and a
+  move drains those leases before dropping the source whole, fence included
+  (`PlacementInUse` past `drainTimeout`, finished by `resume`), leaving only
+  the map version that moved it (`relocate`): a call routed by an older map
+  (`RoutedBy`) is refused with `TenantRelocated`, never answered empty. Occupancy is
+  partition existence (`tenantsOn`), not a marker. Followers are kept level by
+  `levelFollower`/`followLeader`, which copy again only when carrying on cannot
+  be exact.
+- A live query across Tenants reads a cross-Tenant index
+  (`db.crossTenantIndexes`, `cross-tenant-index.ts`), never a fan-out: one
+  collection from every Tenant in 1–32 fixed derived shard placements, fed from each
+  Tenant partition's log by a per-partition cursor committed with its entries,
+  trusted only in the same partition `incarnation`; otherwise that partition is
+  derived again from its records. `service:` partitions are never read.
+  A source partition hashes to one placement, keeping entries and cursor atomic;
+  query pages merge bounded chunks with incarnation/query-bound cursors. Geometry,
+  vectors and non-unique composites use source paths. Durable re-derivation
+  markers refuse queries until refresh completes, including after interruption.
+  Persist full-refresh status and failures in its registry. The native Database
+  cross-Tenant index page uses those public operations and URL-backed query state.
+- A branch (`db.branchTenant`, `seed(source, { branch: true })`) copies a
+  Tenant as of one source position: records, then the source's log up to the
+  position read after them, under the target's writer. It records its lineage,
+  the only way a partition accepts another's cursor (up to the branch point, and
+  only from the source life it was branched from), which keeps copied
+  checkpoints valid without rewriting them. An event cursor names its
+  partition's life (`incarnation`); a read refuses one of another life
+  (`CursorFromAnotherLife`), since a Tenant removed and written again restarts
+  its log, and the cursor encoding is part of the data layout. The layout-4-to-5 migration
+  starts new lives and refuses branches whose lineage would be lost. It exports App-wide data
+  explicitly, verifies live durable records (including the idempotency receipts workflows can
+  need on retry), and rebuilds cross-Tenant indexes from their definitions. Old checkpoints do
+  not name the new log. An unfinished
+  branch refuses reads and writes (`TenantBranching`) until run again or the
+  database reopens. Only the target is leased; the source is read a page per
+  routed call so it can move meanwhile. The outbox is left behind by default
+  (copied, then retracted in the branch's own log before it finishes);
+  receipts are kept. A divided Tenant branches part by part, each part as of its own position
+  (per-part consistency only; cross-part writes are sagas, so one cut would not
+  make them atomic). `db.tenants` and `tenants/overview` list Tenants, a divided
+  one as one entry with its `parts`; `db.partitions` lists partition keys. No merge back.
+  JS, HTTP (`POST database/tenants/:id/branch`), SDK
+  (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
+  the dashboard's Database → Tenants Branch action.
+- Long readers (copy, branch, follower, export) hold the source's log
+  (`holdLog`, raise-only, time-limited, with the writer, at most 64) so compaction stops
+  at the lowest hold and reports `heldAt`; a move carries live holds to the target; it
+  only prevents starvation, the readers' own `CursorCompacted`/`LogCompacted` detection
+  stays the correctness.
+- Followers on other hosts use the leader transport (`db/leader.ts`): the leader serves
+  stats, record and log pages, holds, acknowledgments and a change feed
+  (`…/database/followers/*`, `database.replicate`, `client.followers(projectId)`,
+  `zelavis followers`); `remoteLeader`/`remoteAcknowledgments`/`remoteChanges` feed the
+  unchanged `levelFollower`/`followLeader`; `db.followers.follow` follows into a
+  database and tells its cross-Tenant indexes, which also take
+  `crossTenantRefresh.notifications`. Remote App shard placement (an Agent hosts the shard, the App moves Tenants into it with `db.movement`) is built; see the placement contract.
+- Managed app backups: manifest `directories[].backup` (`files` | `recipe`), the recipe
+  `backup` phase (`dumpMariaDb` for MariaDB recipes, pinned `mariadb-dump`), staged by the
+  integration runtime as the `app` component (`stageRecipeBackup`). `drillFrom`
+  (`POST runtime/backups/drills`, `client.runtime.backups.drillFrom`, `zelavis backups
+  drill-from`) drills a run from the target and recovery key alone;
+  `pnpm release:qualify:backups` qualifies both on two disposable machines. The export
+  stream (`db.exportPage`, `POST database/tenants/:id/export`,
+  `client.projects.exportTenantPage`, `zelavis projects export-stream`) is the one
+  online read-out of a Tenant: records + log pages, applied by version, `consistent`
+  once the log was read to its end after the records and true from then on, opaque
+  validated cursor, hold only until consistent, a divided Tenant one export with a
+  cursor per part (consistent per part). `exportTenant` is built on it. Database
+  images (`db.maintenance.image`, `POST database/maintenance/images`,
+  `client.projects.createDatabaseImage`, `zelavis projects create-image|images`)
+  are engine-agnostic physical backups through the key-value interface only; restore
+  is the operator's with the Project stopped, never a route. No native OLAP in the core.
+- The transactional outbox is `documents.write({ emit })` plus
+  `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
+  the batch, read in log order, at least once, deduplicated by id. JS, HTTP,
+  SDK (`client.data(id).outbox`) and CLI (`zelavis data outbox*`) carry it.
+  Reject unsupported coordination rather than using read-then-write fencing.
+  RocksDB exclusive-file mode does not support concurrent process takeover. Use
+  LMDB's abortable child transactions for batches; queued transaction callbacks
+  can retain partial writes on failure. A store written by another layout is
+  refused, never upgraded; retain current ownership metadata during recovery.
 - Never expose a physical database driver, filename, or one-file global event
   sequence as the normal App data API. Bind ordinary data access to an explicit
   logical Tenant, keep cross-shard semantics explicit, and require current
   writer generations even for colocated local placements.
 - For remote App shard placement, follow the request/grant authority contract
-  in `../../references/two-fabrics-placement-contract.md`. Internal admission
-  persists a conditional reservation only. A future committed grant and Agent
-  validation are required for activation and writes. Do not extend the
-  Project-local `PartitionMap` into physical Node authority.
+  in `../../references/two-fabrics-placement-contract.md`. It is built: a shard
+  is a remote key-value engine hosted by an Agent under a signed grant and an
+  epoch-fenced access token, and the App moves Tenants into it with
+  `db.movement`. Do not extend the Project-local `PartitionMap` into physical
+  Node authority or a remote `ObjectStoreApi`: named eligible Tenant reads run on the shard's Node under the router lease,
+  while similarity/hybrid queries and writes stay on the writer. Never fall back after a remote failure; the limits are in the contract.
+  A shard can have one disk-only durability replica on another Node. Keep its store outside the routing and
+  maintenance map and drive it from `db.shardLeaderFor(shard)` through the shared follower. Its first level
+  turn establishes readiness. Tenant reads and primary write acknowledgments do not use replicas.
+- Cloud capacity is a core capability over the `CapacityProvider` contract;
+  Alchemy (exact pin, bundled in a first-party cloud service, never in the core
+  runtime) is the default provisioning engine, and Fabric keeps all placement,
+  fencing and draining authority. Existing servers must work with no provider.
+  Do not write a general infrastructure-as-code engine. Follow
+  `../../references/alchemy-architecture-brief.md` and the "Cloud Capacity And
+  Alchemy" section of `AGENTS.md`.
 - Project runtime ownership uses the Platform System Store CAS record in
   `src/platform/project-placement-authority.ts`. The Project manager must
   acquire it before start; the Agent process lease supervisor fences local
@@ -417,8 +578,17 @@ before editing.
   fence-before-takeover, and digest-verified install-once artifact preparation
   (`_remote-project-snapshot.ts`). Read a request body only after its authority
   verifies, and never snapshot a Project that already has local runtime data.
-  Still unproven: multi-host partition drills and Bun as the Agent runtime;
-  remote App shard movement is not operational.
+  Still unproven: multi-host partition drills and Bun as the Agent runtime.
+  Remote App shard placement is built and proven on one machine (see the placement contract).
+- App data delegates only `database.read|write|define`; definitions (collections,
+  schemas, indexes, analyzers, constraints and semantic lenses) require define
+  separately from record writes. The Project grants are `project.data.*`.
+  Child operations enforce permissions even for POST reads. Operator scatter
+  uses the proxy and inspect authority. The Tenant change feed is the existing
+  event log in HTTP/SDK/CLI; persist its returned cursor on empty pages too.
+  Service-account CLI permissions remain explicit: `--permission` is global;
+  pair `--project` with repeated `--project-permission` for scoped grants.
+  Naming a Project must never add implicit operator authority.
 - The public logical database boundary is `db.forTenant(tenantId)`. Documents,
   events, and time-series reads live on that Tenant handle; schema, projection,
   and time-series definitions remain logical database concerns. Do not restore

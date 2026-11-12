@@ -198,13 +198,78 @@ plain HTML or boot a client app:
 contains a client router, tabs, or a local menu, that navigation belongs to the
 embedded page itself.
 
+### Components in a service page
+
+Zelavis adds its component runtime to every HTML page it serves from a bundle, so a plain page can write the same
+components the dashboard uses with no build step and no import:
+
+```html
+<label>Model
+  <zv-select name="model" value="opus">
+    <zv-select-trigger><zv-select-value placeholder="Choose…"></zv-select-value></zv-select-trigger>
+    <zv-select-content>
+      <zv-select-item value="opus">Opus</zv-select-item>
+      <zv-select-item value="sonnet">Sonnet</zv-select-item>
+    </zv-select-content>
+  </zv-select>
+</label>
+```
+
+The `zv-*` tags are `fuzor/ui` components under the `zv` brand: dialogs, tabs, menus, popovers,
+tooltips, accordions, switches, checkboxes, sliders, toasts, tree views and the rest of the set listed below. They
+fire `ui:*` events (`ui:value-change`, `ui:open-change`), take their colours from the page's design tokens, and a named
+`zv-select` still submits in a form. `zv-page`, `zv-card`, `zv-stack`, `zv-badge`, `zv-button` and the other
+presentational elements come from `service-elements.js` and are unchanged.
+
+The discovery entry at `/zelavis/api/v1/runtime/service-ui.js` loads only the component families whose `zv-*` or
+canonical `fuzor-*` tags appear in the document, including markup inserted later. Repeated tags share one import.
+Discovery covers the document's light DOM; a page that puts components exclusively inside a shadow root registers
+them in its own bundle.
+The stylesheet remains at `runtime/service-ui.css`; component and shared modules load from
+`runtime/service-ui/<name>-<hash>.js`. These assets are public and CORS-readable because an extension's sandboxed
+frame sends no credentials. The module route serves only exact entries from the installed frontend's static build
+map: it cannot read service bundles, arbitrary files or installation data. Page-capability routes are unchanged.
+
+Registration is asynchronous. Code that calls a component's methods or reads a form containing it waits for its tag
+after putting the markup in the document:
+
+```js
+await customElements.whenDefined("zv-select");
+const values = new FormData(document.querySelector("form"));
+```
+
+A failed import reports a console error and a document `zelavis-service-ui-error` event whose `detail.component`
+names the family. Reload to retry; repeated DOM mutations do not retry a failed import. A page that brings its own
+components opts out with `<meta name="zelavis-service-ui" content="none">`.
+
+Included: accordion, avatar, checkbox, collapsible, combobox, dialog, drawer, editable, hover card, listbox, menu, number
+input, pagination, password input, pin input, popover, progress, radio group, rating group, scroll area, select,
+separator, slider, steps, switch, tabs, tags input, toast, toggle, toggle group, tooltip, tree view. The installed frontend
+supplies the runtime (`serviceUi` on a frontend: `script`, `stylesheet`, and a `modules` map of flat content-hashed
+JavaScript filenames to static source), so another frontend can supply its own. Use an empty map for an entry that
+has no imports. Relative imports resolve under the installation's mount; the frontend owns the complete build.
+
+### Pages from an installed extension
+
+A page an installed extension ships runs in a sandboxed frame with an opaque origin, so nothing it loads carries the
+operator's session. The dashboard therefore frames it at a URL with a signed, expiring capability in its path
+(`/zelavis/api/v1/runtime/page-capabilities/<token>/<bundle>/<file>`), minted for the signed-in viewer by
+`GET runtime/service-page-capability` (a read that records nothing; a Project's page also needs `project.view` on that Project). Relative links in
+the page resolve under that path, so `./dashboard.js`, `./styles.css` and `../../../service-page.css` all load without a
+cookie. The capability reads that one bundle's files and nothing else, and a Project's page is read from the Project's
+runtime by the Platform. The page still reaches the API only through the dashboard's broker.
+
+Keep the page and its assets inside the named bundle directory (for example `dashboard/` below the package directory).
+The bundle name is one directory name. Missing files return 404; there is no package-root fallback, and symlinks cannot
+escape the bundle. The shared component runtime and styles are static build assets and contain no installation state.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.
 - `version` is service metadata; package publishing still follows the package registry.
 - `menu` is plain metadata. Services never reach into dashboard sidebar internals.
-- Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
-- `menu.path` is the dashboard URL owned by React Router. `menu.page.file` is
+- Service pages are mounted in the dashboard through a service-frame iframe. Extension frames have an opaque origin.
+- `menu.path` is the dashboard URL owned by Fuzor. `menu.page.file` is
   the browser-extension-style HTML entry file for iframe-backed service UI,
   such as `dashboard.html`, `settings.html`, or `options.html`.
 - Zelavis serves `page.file` and sibling assets from the service bundle. A page
@@ -329,7 +394,7 @@ The runtime registry stores service entries separately from Marketplace catalog 
 
 Installing a service updates registry state. Activation is adapter-owned:
 
-- Local runtime adapters can recompose the in-process runtime graph when supported.
+- An installed Platform activates a plugin or frontend by handing traffic to a fresh engine of the same release; requests wait meanwhile. A Project recipe is used by the next Project created or upgraded, with no reload.
 - Hosts without activation support can still store registry metadata, but installs may remain pending.
 
 ## Rule 5: Keep orchestration helpers only when they add real value

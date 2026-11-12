@@ -1,0 +1,184 @@
+import {
+  Activity,
+  Archive,
+  Boxes,
+  Database,
+  Fingerprint,
+  Globe2,
+  ReceiptText,
+  SquareTerminal,
+  Server,
+  ShieldCheck,
+  Waypoints,
+} from "lucide-react";
+import { Link, Outlet, useLocation } from "react-router";
+
+import {
+  DataRow,
+  ResourceNotice,
+  StatCard,
+  StatusBadge,
+} from "#/components/DashboardPage";
+import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
+import { buttonVariants } from "#/components/ui/button";
+import { cn } from "#/lib/utils";
+
+export const handle = {
+  pageLabel: "Server",
+  sidebarTrail: ["Server"],
+} as const;
+
+const serverSections = [
+  { title: "Platform Database", path: "/server/database", icon: Database,
+    detail: "Read-only Platform backend tables and records." },
+  {
+    title: "Deployment backends",
+    path: "/server/runtimes",
+    icon: Boxes,
+    detail: "Native, Docker, and future isolation backend detection and default policy.",
+  },
+  {
+    title: "Resources",
+    path: "/server/resources",
+    icon: Activity,
+    detail: "Processes, host CPU and memory usage, storage, and limits.",
+  },
+  {
+    title: "Security",
+    path: "/server/security",
+    icon: ShieldCheck,
+    detail: "Host security posture, checklist, and platform hardening.",
+  },
+  {
+    title: "Fabric",
+    path: "/server/fabric",
+    icon: Waypoints,
+    detail: "Nodes, placement, routing, balancing, data distribution, and infrastructure providers.",
+  },
+  {
+    title: "Domains",
+    path: "/server/domains",
+    icon: Globe2,
+    detail: "Hostnames, TLS, and project bindings.",
+  },
+  {
+    title: "Access",
+    path: "/server/access",
+    icon: Fingerprint,
+    detail: "Principals, grants, users, and permissions.",
+  },
+  {
+    title: "Backups",
+    path: "/server/backups",
+    icon: Archive,
+    detail: "Snapshots, retention, and restore points.",
+  },
+  {
+    title: "Logs",
+    path: "/server/logs",
+    icon: ReceiptText,
+    detail: "The Platform's recent log and the cause behind an error reference.",
+  },
+  {
+    title: "Terminal",
+    path: "/server/terminal",
+    icon: SquareTerminal,
+    detail: "A shell on this server, inside tmux.",
+  },
+] as const;
+
+function ServerRoute() {
+  const { pathname } = useLocation();
+
+  if (pathname !== "/server") {
+    return <Outlet />;
+  }
+
+  return (
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <StatCard
+          label="Deployment"
+          value="native default"
+          detail="Backend policy is explicit and existing Projects keep their assignment."
+          icon={Boxes}
+        />
+        <StatCard
+          label="Resources"
+          value="monitoring"
+          detail="Host CPU, memory, storage, and processes."
+          icon={Activity}
+        />
+        <StatCard
+          label="Security"
+          value="checklist"
+          detail="Host security posture and guidance."
+          icon={ShieldCheck}
+        />
+        <StatCard
+          label="Fabric"
+          value="single-node"
+          detail="The control plane is mounted and ready to grow into a cluster."
+          icon={Waypoints}
+        />
+        <StatCard
+          label="Domains"
+          value="planned"
+          detail="Bind hostnames to projects and system services."
+          icon={Globe2}
+        />
+        <StatCard
+          label="Access"
+          value="draft"
+          detail="Manage system principals, grants, and permission scopes."
+          icon={Fingerprint}
+        />
+        <StatCard
+          label="Backups"
+          value="planned"
+          detail="Coordinate database, file, and project snapshots."
+          icon={Archive}
+        />
+        <StatCard
+          label="Logs"
+          value="planned"
+          detail="Read server and project log streams from one place."
+          icon={ReceiptText}
+        />
+      </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Server className="size-4" />
+            Host management
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {serverSections.map((section) => (
+            <DataRow
+              key={section.title}
+              label={section.title}
+              detail={section.detail}
+              meta={
+                <Link
+                  to={section.path}
+                  className={cn(buttonVariants({ variant: "outline" }))}
+                >
+                  Open
+                </Link>
+              }
+            />
+          ))}
+        </CardContent>
+      </Card>
+
+      <ResourceNotice
+        title="Server layer placeholder"
+        description="These screens establish the cPanel/Plesk-style host boundary. Live domain, backup, and log providers can plug in here later without becoming project features."
+      />
+    </section>
+  );
+}
+
+export default ServerRoute;

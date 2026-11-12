@@ -1,5 +1,5 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
-import { Effect } from "effect";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present } from "../core/runtime/effect-boundary.js";
+import { Deferred, Effect } from "effect";
 import { parseJson, objectFields, isString, isPositiveInteger, isTimestamp, optional } from "../core/json-validation.js";
 /**
  * The local Agent process runner.
@@ -26,6 +26,8 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeNodeProjectControl } from "./_node-project-control.js";
+import { createSurvivableAgentProcessRunner } from "./_agent-survivable-process-runner.js";
 
 import type {
   ZelavisAgentProcess,
@@ -93,7 +95,7 @@ function hasExited(child: ChildProcess): boolean {
  * child output produced a truncation on one machine and a 70KB line on
  * another.
  */
-function lineReader(emit: (line: string) => void): (chunk: Buffer) => void {
+export function lineReader(emit: (line: string) => void): (chunk: Buffer) => void {
   let buffer = "";
   // True while the remainder of an already-truncated line is being skipped.
   let skippingRest = false;
@@ -158,6 +160,8 @@ const samePlacement = (left: AgentPlacementIdentity | undefined, right: AgentPla
   left.ownerSession === right.ownerSession && left.epoch === right.epoch;
 
 export interface LocalAgentProcessRunnerOptions {
+  /** Linux daemon mode with durable records and append-file output. */
+  readonly survivable?: boolean;
   /** Default grace period before a stop escalates to SIGKILL. */
   readonly graceMs?: number;
   /**
@@ -198,10 +202,11 @@ export function isAlive(pid: number): boolean {
  * work but arrives from `ps` as a local-time string that has to be parsed back;
  * elapsed time is a number of seconds and needs no timezone at all.
  */
-export async function processAgeMs(pid: number): Promise<number | undefined> {
-  const elapsed = await new Promise<string | undefined>((resolveElapsed) => {
+export function processAgeMs(pid: number): Promise<number | undefined> {
+  return present(Effect.gen(function* () {
+  const elapsed = yield* Effect.callback<string | undefined>((resume) => {
     execFile("ps", ["-o", "etime=", "-p", String(pid)], (error, stdout) => {
-      resolveElapsed(error ? undefined : stdout.trim() || undefined);
+      resume(Effect.succeed(error ? undefined : stdout.trim() || undefined));
     });
   });
   if (!elapsed) return undefined;
@@ -215,6 +220,7 @@ export async function processAgeMs(pid: number): Promise<number | undefined> {
     ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 +
     Number(seconds)
   ) * 1000;
+  }));
 }
 
 /**
@@ -230,6 +236,10 @@ const START_TIME_TOLERANCE_MS = 30_000;
 export function createLocalAgentProcessRunner(
   options: LocalAgentProcessRunnerOptions = {},
 ): ZelavisAgentProcessRunner {
+  if (options.survivable) {
+    if (!options.stateDirectory) throw new Error("Survivable execution requires a state directory.");
+    return createSurvivableAgentProcessRunner({ stateDirectory: options.stateDirectory, graceMs: options.graceMs });
+  }
   const defaultGraceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const started = new Set<ZelavisAgentProcess>();
   const startedPlacements = new Map<ZelavisAgentProcess, AgentPlacementIdentity>();
@@ -245,19 +255,20 @@ export function createLocalAgentProcessRunner(
    */
   let sweep: Promise<number> | undefined;
 
-  async function writeRecord(record: ProcessRecord): Promise<string | undefined> {
-    if (!stateDirectory) return undefined;
-    const file = join(stateDirectory, `${randomUUID()}.json`);
-    try {
-      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
-      await writeFile(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-      return file;
-    } catch {
+  function writeRecord(record: ProcessRecord): Effect.Effect<string | undefined> {
+    if (!stateDirectory) return Effect.succeed(undefined);
+    const directory = stateDirectory;
+    const file = join(directory, `${randomUUID()}.json`);
+    return Effect.gen(function* () {
+      yield* integrationValue(mkdir(directory, { recursive: true, mode: 0o700 }));
+      yield* integrationValue(writeFile(file, `${JSON.stringify(record)}\n`, { mode: 0o600 }));
+      return file as string | undefined;
+    }).pipe(
       // Recording is a recovery aid, not a precondition for running. A host
       // that cannot write here still starts Projects; it just cannot clean up
       // after a crash.
-      return undefined;
-    }
+      Effect.orElseSucceed(() => undefined),
+    );
   }
 
   function readRecords(): Promise<{ file: string; record: ProcessRecord }[]> { return presentProtocol(Effect.gen(function* () {
@@ -347,7 +358,7 @@ export function createLocalAgentProcessRunner(
         process.kill(record.pid, "SIGTERM");
         const deadline = Date.now() + defaultGraceMs;
         while (isAlive(record.pid) && Date.now() < deadline) {
-          unwrapIntegrationResult(yield* Effect.result(integrationValue(new Promise((wait) => setTimeout(wait, 100)))));
+          yield* Effect.sleep(100);
         }
         if (isAlive(record.pid)) process.kill(record.pid, "SIGKILL");
         reclaimed += 1;
@@ -398,14 +409,14 @@ export function createLocalAgentProcessRunner(
             catch { if (isAlive(record.pid)) return false; }
             const deadline = Date.now() + defaultGraceMs;
             while (isAlive(record.pid) && Date.now() < deadline) {
-              (yield* integrationValue(new Promise((wait) => setTimeout(wait, 25))));
+              yield* Effect.sleep(25);
             }
             if (isAlive(record.pid)) {
               try { process.kill(record.pid, "SIGKILL"); }
               catch { if (isAlive(record.pid)) return false; }
               const killDeadline = Date.now() + 1_000;
               while (isAlive(record.pid) && Date.now() < killDeadline) {
-                (yield* integrationValue(new Promise((wait) => setTimeout(wait, 25))));
+                yield* Effect.sleep(25);
               }
               if (isAlive(record.pid)) return false;
             }
@@ -416,16 +427,16 @@ export function createLocalAgentProcessRunner(
       return true;
     }).pipe(Effect.withSpan("createLocalAgentProcessRunner/fencePlacement"))); },
 
-    async start(command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) {
+    start(command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) { return present(Effect.gen(function* () {
       // Before anything is started for this workload, stop what a previous
       // Platform left running for it. Doing this here rather than at boot means
       // no ordering discipline for callers: the reclamation happens on exactly
       // the path where a leftover does damage.
       sweep ??= reclaim();
-      await sweep;
+      yield* integrationValue(sweep);
       // Cheap insurance for a record written after that sweep — another
       // Platform crashing while this one runs.
-      await reclaim(command.workloadId);
+      yield* integrationValue(reclaim(command.workloadId));
 
       const child = spawn(command.executable, [...(command.args ?? [])], {
         cwd: command.cwd,
@@ -439,7 +450,7 @@ export function createLocalAgentProcessRunner(
       registerChild(child);
 
       const recordFile = child.pid
-        ? await writeRecord({
+        ? yield* writeRecord({
             workloadId: command.workloadId,
             pid: child.pid,
             executable: command.executable,
@@ -462,7 +473,9 @@ export function createLocalAgentProcessRunner(
       child.stdout?.on("data", emit("stdout"));
       child.stderr?.on("data", emit("stderr"));
 
-      const exit = new Promise<ZelavisAgentProcessExit>((resolveExit) => {
+      const exited = Deferred.makeUnsafe<ZelavisAgentProcessExit>();
+      const exit = Effect.runPromise(Deferred.await(exited));
+      {
         const finish = (code: number | null, signal: NodeJS.Signals | null) => {
           if (settled) return;
           settled = { code, signal, requested };
@@ -471,61 +484,65 @@ export function createLocalAgentProcessRunner(
           // pids the operating system has since handed to something else.
           if (recordFile) void rm(recordFile, { force: true }).catch(() => undefined);
           startOptions.onExit?.(settled);
-          resolveExit(settled);
+          Deferred.doneUnsafe(exited, Effect.succeed(settled));
         };
 
         // A spawn failure — a missing executable, most often — never produces
         // an `exit`, so a caller awaiting one would wait forever.
         child.once("error", () => finish(null, null));
         child.once("exit", (code, signal) => finish(code, signal));
-      });
+      }
 
       const handle: ZelavisAgentProcess = {
+        pid: child.pid,
         workloadId: command.workloadId,
         get running() {
           return !settled && !hasExited(child);
         },
         exit,
-        async stop(stopOptions) {
-          requested = true;
-          if (settled) return settled;
-          if (hasExited(child)) return exit;
+        stop(stopOptions) {
+          return present(Effect.gen(function* () {
+            requested = true;
+            if (settled) return settled;
+            if (hasExited(child)) return yield* integrationValue(exit);
 
-          child.kill("SIGTERM");
+            child.kill("SIGTERM");
 
-          const graceMs = stopOptions?.graceMs ?? defaultGraceMs;
-          const escalation = setTimeout(() => {
-            if (!hasExited(child)) child.kill("SIGKILL");
-          }, graceMs);
+            const graceMs = stopOptions?.graceMs ?? defaultGraceMs;
+            const escalation = setTimeout(() => {
+              if (!hasExited(child)) child.kill("SIGKILL");
+            }, graceMs);
 
-          try {
-            return await exit;
-          } finally {
-            clearTimeout(escalation);
-          }
+            return yield* integrationValue(exit).pipe(Effect.ensuring(Effect.sync(() => clearTimeout(escalation))));
+          }));
         },
-        async write(data) {
-          const stdin = child.stdin;
-          if (settled || !stdin || stdin.destroyed || !stdin.writable) return false;
-          if (stdin.write(data)) return true;
-          return new Promise<boolean>((resolveWrite) => {
-            const onDrain = () => finish(true);
-            const onClose = () => finish(false);
-            const finish = (accepted: boolean) => {
-              stdin.removeListener("drain", onDrain);
-              stdin.removeListener("close", onClose);
-              stdin.removeListener("error", onClose);
-              resolveWrite(accepted);
-            };
-            stdin.once("drain", onDrain);
-            stdin.once("close", onClose);
-            stdin.once("error", onClose);
-          });
+        write(data) {
+          return present(Effect.gen(function* () {
+            if (command.control && child.pid && !settled && !hasExited(child)) return yield* writeNodeProjectControl(command.control, child.pid, data);
+            const stdin = child.stdin;
+            if (settled || !stdin || stdin.destroyed || !stdin.writable) return false;
+            if (stdin.write(data)) return true;
+            return yield* Effect.callback<boolean>((resume) => {
+              const onDrain = () => finish(true);
+              const onClose = () => finish(false);
+              const finish = (accepted: boolean) => {
+                stdin.removeListener("drain", onDrain);
+                stdin.removeListener("close", onClose);
+                stdin.removeListener("error", onClose);
+                resume(Effect.succeed(accepted));
+              };
+              stdin.once("drain", onDrain);
+              stdin.once("close", onClose);
+              stdin.once("error", onClose);
+            });
+          }));
         },
-        async signal(signal) {
+        signal(signal) {
+    return present(Effect.gen(function* () {
           if (settled || hasExited(child)) return false;
-          return child.kill(signal as NodeJS.Signals);
-        },
+          return (yield* integrationValue(child.kill(signal as NodeJS.Signals)));
+        }));
+  },
       };
 
       started.add(handle);
@@ -535,12 +552,16 @@ export function createLocalAgentProcessRunner(
         startedPlacements.delete(handle);
       });
       return handle;
-    },
+    })); },
 
-    async close() {
+    close() {
       // Concurrently: closing is on the Platform's shutdown path, and stopping
       // Projects one grace period at a time turns a fleet into a timeout.
-      await Promise.all([...started].map((handle) => handle.stop().catch(() => undefined)));
+      return present(Effect.forEach(
+        [...started],
+        (handle) => integrationValue(handle.stop()).pipe(Effect.orElseSucceed(() => undefined)),
+        { concurrency: Math.max(1, started.size), discard: true },
+      ));
     },
   };
 }

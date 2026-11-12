@@ -195,6 +195,41 @@ export const UrlFieldSchema = Schema.TaggedStruct("UrlField", {
 });
 export type UrlField = Schema.Schema.Type<typeof UrlFieldSchema>;
 
+/**
+ * Geometry in one declared coordinate model. The spatial lens indexes WGS84
+ * longitude/latitude only, so the model is a literal a schema must state rather
+ * than one the database assumes; `resolution` is the cell size it is indexed at.
+ */
+export const GeometryFieldSchema = Schema.TaggedStruct("GeometryField", {
+  label: Schema.String,
+  required: Schema.Boolean,
+  description: Schema.optionalKey(Schema.String),
+  helpText: Schema.optionalKey(Schema.String),
+  group: Schema.optionalKey(Schema.String),
+  coordinates: Schema.Literal("wgs84"),
+  resolution: Schema.Finite,
+});
+export type GeometryField = Schema.Schema.Type<typeof GeometryFieldSchema>;
+
+/**
+ * An embedding, with everything that makes two of them comparable: the model
+ * and its version that produced it, its dimension and the metric it is compared
+ * by. Vectors from a different model are not comparable, so none is optional.
+ */
+export const VectorFieldSchema = Schema.TaggedStruct("VectorField", {
+  label: Schema.String,
+  required: Schema.Boolean,
+  description: Schema.optionalKey(Schema.String),
+  helpText: Schema.optionalKey(Schema.String),
+  group: Schema.optionalKey(Schema.String),
+  model: Schema.String,
+  modelVersion: Schema.String,
+  dimension: Schema.Finite,
+  metric: Schema.Literals(["cosine", "dot", "euclidean"]),
+  quantization: Schema.optionalKey(Schema.Literals(["f32", "f16", "i8", "b1"])),
+});
+export type VectorField = Schema.Schema.Type<typeof VectorFieldSchema>;
+
 // ─── Recursive types (declared before schema to allow forward reference) ────
 
 export interface RepeaterField {
@@ -232,6 +267,8 @@ export type CollectionField =
   | JsonField
   | SlugField
   | UrlField
+  | GeometryField
+  | VectorField
   | RepeaterField;
 
 // ─── Recursive schemas ────────────────────────────────────────────────────────
@@ -275,5 +312,7 @@ export const CollectionFieldSchema: Schema.Codec<CollectionField> =
     JsonFieldSchema,
     SlugFieldSchema,
     UrlFieldSchema,
+    GeometryFieldSchema,
+    VectorFieldSchema,
     RepeaterFieldSchema,
   ]);

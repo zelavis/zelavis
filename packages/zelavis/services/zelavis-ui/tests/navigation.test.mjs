@@ -1,0 +1,308 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { panelsFor, resolveTrail, workspacePanels, trailForLocation, activeItemIndex, createMenuStore } from "../app/navigation-model.ts";
+import { canAccess, platformMenu, projectMenu } from "../app/navigation-menu.ts";
+const ownerAccess = { principal: { type: "user", id: "owner", roles: ["owner"], permissions: ["*"] } };
+const project = { id: "customer café", name: "Customer", recipe: {} };
+
+test("authenticated customers can reach Projects with empty or exact scoped grants", () => {
+  const access = { principal: { type: "user", id: "customer", roles: ["customer"], permissions: [], grants: [] } };
+  const config = { access, services: [{ name: "server", scope: "system", menu: { title: "Server", path: "/server", surface: "platform", access: { permissions: ["server.manage"], scope: { type: "system" } } } }] };
+  assert.deepEqual(platformMenu(config, []).map(item => item.title), ["Projects"]);
+  assert.equal(canAccess(access, { authenticated: true }), true);
+  assert.equal(canAccess(undefined, { authenticated: true }), false);
+  const requirement = { permissions: ["project.view"], scope: { type: "project", projectId: "one" } };
+  access.principal.grants.push({ permission: "project.view", scope: { type: "project", projectId: "one" } });
+  assert.equal(canAccess(access, requirement), true);
+  assert.equal(canAccess(access, { permissions: ["project.view"] }), false);
+  assert.equal(canAccess(access, { permissions: ["project.view"], scope: { type: "project", projectId: "other" } }), false);
+  assert.equal(canAccess(access, { permissions: ["project.view"], scope: { type: "project" } }), false);
+  access.principal.grants = [{ permission: "*", scope: { type: "project" } }];
+  assert.equal(canAccess(access, requirement), false);
+  access.principal.grants = [{ permission: "server.manage", scope: { type: "system" } }];
+  assert.equal(canAccess(access, { permissions: ["server.manage"] }), true);
+});
+
+test("a Project viewer gets inspection navigation and exact settings delegates get Auth", () => {
+  const runtime = { capabilities: { identity: { available: true }, database: { available: true } }, services: [] };
+  const grant = permission => ({ permission, scope: { type: "project", projectId: project.id } });
+  const principal = { type: "user", id: "customer", permissions: [], grants: [grant("project.view")] };
+  const input = { control: { access: { principal }, services: [] }, project, runtime, content: [], tables: [], workloads: {} };
+  let menu = projectMenu(input);
+  assert.ok(menu.some(item => item.title === "Overview"));
+  assert.ok(menu.find(item => item.title === "Backend").items.some(item => item.title === "Database"));
+  assert.equal(menu.find(item => item.title === "Backend").items.some(item => item.title === "Auth"), false);
+  assert.equal(menu.some(item => item.title === "Users"), false);
+  principal.grants = [grant("project.settings.manage")];
+  menu = projectMenu(input);
+  assert.ok(menu.some(item => item.title === "Auth"));
+  assert.equal(menu.some(item => item.title === "Backend"), false);
+});
+
+test("native and managed Project domain menus use exact view and domain grants", () => {
+  const grant = (permission, projectId = project.id) => ({ permission, scope: { type: "project", projectId } });
+  const principal = { type: "user", id: "customer", permissions: [], grants: [] };
+  const control = { access: { principal }, services: [] };
+  for (const recipe of [{}, { managed: { adminTitle: "App Admin" } }]) {
+    const input = { control, project: { ...project, recipe }, runtime: { services: [] }, content: [], tables: [], workloads: {} };
+    const visible = () => projectMenu(input).some(item => item.title === "Domains");
+    principal.grants = [grant("project.domains.manage")];
+    assert.equal(visible(), false);
+    principal.grants = [grant("project.view"), grant("project.domains.manage", "other")];
+    assert.equal(visible(), false);
+    principal.grants.push(grant("project.domains.view"));
+    assert.equal(visible(), true);
+  }
+});
+
+test("permission-filtered navigation removes provisional server links and preserves the Project", () => {
+  const base = panelsFor("one", { id: "one", name: "One" }, undefined, undefined, [{ id: "one", name: "One" }], true);
+  const platform = workspacePanels(base, [{ title: "Projects", path: "/projects" }]);
+  const scoped = workspacePanels(platform, [{ title: "Overview", path: "/projects/one" }], "one");
+  assert.deepEqual(scoped[0].items.map(item => item.label), ["Projects", "One"]);
+  assert.equal(scoped.find(panel => panel.id === "project").label, "One");
+});
+test("Platform extensions appear only in their own slide regardless of claimed surface", () => {
+  const services = ["extension", undefined].map((scope, index) => ({ name: `@example/ext${index}`, scope, menus: [{ title: `Extension ${index}`, path: `/ext${index}`, surface: "platform" }] }));
+  const menu = platformMenu({ services, access: ownerAccess }, []);
+  assert.deepEqual(menu.map(item => item.title), ["Projects", "Extensions", "Assistant", "Settings"]);
+  assert.deepEqual(menu[1].items.map(item => item.path), ["/ext0", "/ext1"]);
+});
+test("reconstructs Project domain ancestry and validates explicit URL trails", () => {
+  const panels = panelsFor(project.id, project);
+  assert.deepEqual(resolveTrail(panels, ["projects", "project", "database"], null).map(p => p.id), ["platform", "projects", "project", "database"]);
+  assert.deepEqual(resolveTrail(panels, ["server"], "projects/project").map(p => p.id), ["platform", "projects", "project"]);
+  assert.deepEqual(resolveTrail(panels, ["server"], "").map(p => p.id), ["platform"]);
+  assert.deepEqual(resolveTrail(panels, [], "server/project/database").map(p => p.id), ["platform", "server"]);
+});
+test("parent landing URLs always identify the corresponding page and encoded Project", () => {
+  const panels = panelsFor(project.id, project);
+  assert.equal(panels.find(p => p.id === "project").path, "/projects/customer%20caf%C3%A9");
+  assert.equal(panels.find(p => p.id === "server").path, "/server");
+  for (const panel of panels) for (const item of panel.items) assert.ok(item.path.startsWith("/"));
+});
+test("managed Project menus expose only used native capabilities", () => {
+  const managed = { ...project, recipe: { managed: true } };
+  const panels = panelsFor(project.id, managed, { capabilities: { database: { available: true, used: false }, auth: { available: true, used: true } } });
+  assert.deepEqual(panels.find(p => p.id === "project").items.map(i => i.label), ["Overview", "Auth", "Marketplace"]);
+});
+test("dynamic tables preserve tenant selection and group read-only system views", () => {
+  const menu = { items: [{ title: "Orders", search: { databaseTenant: "tenant/a", databaseTable: "orders" } }, { title: "System · Events", search: { databaseTenant: "tenant/a", databaseSystemView: "events" } }] };
+  const panels = panelsFor(project.id, project, undefined, menu);
+  const database = panels.find(p => p.id === "database");
+  const table = database.items.find(i => i.label === "Orders");
+  assert.equal(new URL(table.path, "http://test").searchParams.get("databaseTenant"), "tenant/a");
+  assert.equal(new URL(table.path, "http://test").searchParams.get("databaseTable"), "orders");
+  const trail = resolveTrail(panels, [], "projects/project/database/system-tables");
+  assert.equal(trail.at(-1).id, "system-tables");
+  assert.equal(new URL(trail.at(-1).path, "http://test").searchParams.get("databaseSystemView"), "events");
+});
+test("Projects panel uses the complete runtime list without duplicating the current Project", () => {
+  const panels = panelsFor(project.id, project, undefined, undefined, [project, { ...project, id: "other", name: "Other" }]);
+  assert.deepEqual(panels.find(p => p.id === "projects").items.map(i => i.label), ["Overview", "Create project", "Customer", "Other"]);
+});
+
+
+test("explicit Project routes recover their domain without an invented section parameter", async () => {
+  const { dashboardSection } = await import("../app/routes.ts");
+  assert.equal(dashboardSection("/projects/project/storage", { projectId: "project" }), "storage");
+  assert.equal(dashboardSection("/projects/project/marketplace", { projectId: "project" }), "marketplace");
+  assert.equal(dashboardSection("/projects/p%2Fx/auth/users", { projectId: "p/x" }), "auth/users");
+  assert.equal(dashboardSection("/projects/project", { projectId: "project" }), undefined);
+  assert.equal(dashboardSection("/server/domains", { section: "domains" }), "domains");
+  assert.equal(dashboardSection("/projects/project/storage", {}), undefined);
+});
+
+test("workspace menu descendants survive URL serialization and restore their deepest search view", async () => {
+  const { workspacePanels, trailForLocation } = await import("../app/navigation-model.ts");
+  const panels = workspacePanels(panelsFor("p", { id: "p", name: "P", recipe: {} }), [
+    { title: "Backend", path: "/projects/p/backend", items: [{ title: "Workloads", path: "/projects/p/workloads", items: [{ title: "Functions", path: "/projects/p/workloads/functions" }] }] },
+    { title: "Content", path: "/projects/p/content", items: [{ title: "Articles", path: "/projects/p/content/articles", items: [{ title: "Fields", path: "/projects/p/content/articles/fields" }] }] }
+  ], "p");
+  const trail = trailForLocation(panels, new URL("http://test/zelavis/projects/p/workloads/functions"));
+  assert.deepEqual(resolveTrail(panels, [], trail.join("/")).map(panel => panel.id), ["platform", ...trail]);
+  assert.equal(resolveTrail(panels, [], trail.join("/")).at(-1).label, "Workloads");
+  assert.ok(panels.every(panel => !panel.id.includes("/")));
+  assert.ok(panels.find(panel => panel.id === "server"), "Platform branch remains available in Project workspaces");
+});
+
+test("a table URL opens the Database slide and a system view URL the System Tables slide", () => {
+  const tables = [
+    { title: "zelavis-app · orders", search: { databaseTenant: "zelavis-app", databaseTable: "orders" } },
+    { title: "service:auth · settings", search: { databaseTenant: "service:auth", databaseTable: "settings" } },
+    { title: "System · Events", search: { databaseTenant: "zelavis-app", databaseSystemView: "events" } },
+    { title: "System · Schemas", search: { databaseTenant: "zelavis-app", databaseSystemView: "schemas" } },
+  ];
+  const runtime = { capabilities: { database: { available: true } }, services: [] };
+  const menu = projectMenu({ control: { services: [], access: ownerAccess }, project, runtime, content: [], tables, workloads: {} });
+  const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
+  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "Tenants", "Cross-Tenant Indexes", "Shards", "Images", "orders", "Plugin Tables", "System Tables"]);
+  assert.deepEqual(database.items[0], { title: "Create Table", path: `/projects/${encodeURIComponent(project.id)}/database`, search: { databaseDialog: "create-table" } });
+  const plugin = database.items.find(item => item.title === "Plugin Tables");
+  assert.deepEqual(plugin.items.map(item => item.title), ["auth · settings"]);
+  assert.deepEqual(plugin.items[0].search, { databaseTenant: "service:auth", databaseTable: "settings" });
+  const system = database.items.find(item => item.title === "System Tables");
+  assert.deepEqual(system.items.map(item => item.search), [{ databaseSystemView: "events" }, { databaseSystemView: "schemas" }]);
+  assert.deepEqual(system.search, { databaseSystemView: "events" });
+  const panels = workspacePanels(panelsFor(project.id, project, runtime, { items: tables }), menu, project.id);
+  const trail = search => trailForLocation(panels, new URL(`http://test/projects/${encodeURIComponent(project.id)}/database?${search}`));
+  const last = ids => ids.at(-1);
+  assert.match(last(trail("databaseTenant=zelavis-app&databaseTable=orders")), /database$/);
+  assert.match(last(trail("databaseTenant=zelavis-app&databaseSystemView=events")), /system-tables$/);
+  assert.match(last(trail("databaseTenant=service%3Aauth&databaseTable=settings")), /plugin-tables$/);
+  assert.match(last(trail("databaseTenant=service%3Aauth&databaseSystemView=schemas")), /system-tables$/);
+});
+
+test("only the slide a page belongs to is active, not every item sharing its path", () => {
+  const tables = [
+    { title: "zelavis-app · orders", search: { databaseTenant: "zelavis-app", databaseTable: "orders" } },
+    { title: "service:auth · settings", search: { databaseTenant: "service:auth", databaseTable: "settings" } },
+    { title: "System · Events", search: { databaseTenant: "zelavis-app", databaseSystemView: "events" } },
+  ];
+  const runtime = { capabilities: { database: { available: true } }, services: [] };
+  const menu = projectMenu({ control: { services: [], access: ownerAccess }, project, runtime, content: [], tables, workloads: {} });
+  const panels = workspacePanels(panelsFor(project.id, project, runtime, { items: tables }), menu, project.id);
+  const base = `/projects/${encodeURIComponent(project.id)}/database`;
+  const holder = panels.find(panel => panel.items.some(item => item.label === "Plugin Tables"));
+  const active = (pathname, search = "") => {
+    const url = new URL(`http://test${base}${pathname}${search}`);
+    const trail = trailForLocation(panels, url);
+    const index = activeItemIndex(holder.items, { current: url.pathname, search: url.searchParams, trail });
+    return index < 0 ? undefined : holder.items[index].label;
+  };
+  // The Tenants page belongs to the Database slide alone: neither of the slides beside its tables lights up.
+  assert.equal(active("/tenants"), "Tenants");
+  assert.equal(active("/cross-tenant-indexes"), "Cross-Tenant Indexes");
+  assert.equal(active("/shards"), "Shards");
+  assert.equal(active("", "?databaseTenant=zelavis-app&databaseTable=orders"), "orders");
+  assert.equal(active("", "?databaseSystemView=events"), "System Tables");
+  assert.equal(active("", "?databaseTenant=service%3Aauth&databaseTable=settings"), "Plugin Tables");
+  // The slide that holds a page stays active: the Database item itself is on the trail of the Tenants page.
+  assert.equal(activeItemIndex([{ path: base, branch: "database" }], { current: `${base}/tenants`, search: new URLSearchParams(), trail: ["database"] }), 0);
+});
+
+test("items that share a path and differ by a query parameter never light together", () => {
+  // The Server slide's Resources items: one path, told apart by `resourceView`.
+  const items = [
+    { path: "/server/resources" },
+    { path: "/server/resources?resourceView=processes" },
+    { path: "/server/resources?resourceView=storage" },
+    { path: "/server/resources?resourceView=limits" },
+  ];
+  const at = (search) => activeItemIndex(items, { current: "/server/resources", search: new URLSearchParams(search), trail: [] });
+  assert.equal(at(""), 0, "no view named: the overview");
+  assert.equal(at("resourceView=processes"), 1);
+  assert.equal(at("resourceView=storage"), 2);
+  assert.equal(at("resourceView=limits"), 3);
+  assert.equal(at("resourceView=nonsense"), 0, "a view no item names falls back to the overview, and lights one item");
+  assert.equal(at("resourceView=storage&sidebar=resources&sidebarView=content"), 2, "navigation parameters are not part of the page");
+  assert.equal(at("somethingElse=1&resourceView=limits"), 3, "parameters the item does not declare belong to the page and are ignored");
+  assert.equal(activeItemIndex(items, { current: "/server/other", search: new URLSearchParams(), trail: [] }), -1, "another path lights nothing here");
+  // Two identical items still light one.
+  assert.equal(activeItemIndex([{ path: "/a" }, { path: "/a" }], { current: "/a", search: new URLSearchParams(), trail: [] }), 0);
+});
+
+test("one slide opened from several items names one branch, and only the page's own item lights", () => {
+  // Every project opens the same `project` slide; being inside one project lights that project alone.
+  const items = [{ path: "/projects/a", branch: "project" }, { path: "/projects/b", branch: "project" }, { path: "/projects/c", branch: "project" }];
+  const at = (current) => activeItemIndex(items, { current, search: new URLSearchParams(), trail: ["project"] });
+  assert.equal(at("/projects/b"), 1);
+  assert.equal(at("/projects/b/database"), 1, "a page inside the project");
+  assert.equal(at("/projects/zzz"), -1, "a project not in the list lights none rather than all");
+});
+
+test("selection uses query specificity, ignores shell state and canonicalizes landing paths", () => {
+  const items = [{ path: "/" }, { path: "/projects?view=all" }, { path: "/projects?view=all&tab=recent" }];
+  const at = (current, search) => activeItemIndex(items, { current, search: new URLSearchParams(search), trail: [] });
+  assert.equal(at("/projects/", ""), 0);
+  assert.equal(at("/", "view=all&tab=recent"), 2);
+  assert.equal(at("/projects", "view=all&tab=other"), 1);
+  assert.equal(at("/projects", "view=other&tab=recent"), 0);
+  assert.equal(activeItemIndex([{ path: "/projects?sidebar=projects&sidebarView=menu" }], { current: "/", search: new URLSearchParams(), trail: [] }), 0);
+  const dialog = [{ path: "/database?databaseTable=orders" }, { path: "/database?databaseDialog=create-table" }];
+  assert.equal(activeItemIndex(dialog, { current: "/database", search: new URLSearchParams("databaseTable=orders&databaseDialog=create-table"), trail: [] }), 0, "equally specific links have a stable first winner");
+});
+
+test("a Project's menu survives the Platform's menu being reported after it", () => {
+  const store = createMenuStore();
+  const projectMenuItems = [{ title: "Backend" }];
+  const platformMenuItems = [{ title: "Server" }];
+  store.set("trellix", projectMenuItems);
+  store.set(undefined, platformMenuItems);
+  // The dashboard leaves an unchanged menu alone, so nothing sets the Project's again when it is visited next.
+  assert.equal(store.get("trellix"), projectMenuItems);
+  assert.equal(store.get(undefined), platformMenuItems);
+  assert.equal(store.get("other"), undefined, "a scope with no reported menu has none, and falls back to the basic one");
+});
+
+test("a Project is offered the menus of trusted Platform services, never an extension's", () => {
+  const service = (name, scope, surface, title) => ({ name, scope, menu: { title, path: `/${name.split("/")[1]}`, surface, page: { id: "main", title, file: "page.html", src: "/x" } } });
+  const control = { access: ownerAccess, services: [
+    service("@zelavis/core-thing", "system", "core", "Core Thing"),
+    service("@example/ext-thing", "extension", "core", "Extension Thing"),
+    // The Platform's own `platform` surface menus never cross into a Project, whoever ships them.
+    service("@zelavis/shell-thing", "system", "platform", "Shell Thing"),
+  ] };
+  const runtime = { capabilities: {}, services: [service("@example/own-ext", "extension", undefined, "Own Extension")] };
+  const menu = projectMenu({ control, project, runtime, content: [], tables: [], workloads: {} });
+  const titles = items => items.flatMap(item => [item.title, ...(item.items ? titles(item.items) : [])]);
+  const all = titles(menu);
+  assert.ok(all.includes("Core Thing"), "a trusted Platform service's Project-surface menu is offered");
+  assert.ok(!all.includes("Extension Thing"), "an extension installed on the Platform is not offered to every Project");
+  assert.ok(!all.includes("Shell Thing"), "platform-surface menus never cross into a Project");
+  // A Project's own extension lands in the Extensions slide, not in a trusted slide.
+  const extensions = menu.find(item => item.title === "Extensions");
+  assert.ok(titles(extensions.items).includes("Own Extension"));
+  assert.ok(!titles(menu.filter(item => item.title !== "Extensions")).includes("Own Extension"));
+});
+
+test("the Marketplace lists an extension under Plugins and keeps trusted services out of that tab", async () => {
+  const { selectItems } = await import("../app/marketplace-pages.ts");
+  const registry = [
+    { name: "@zelavis/auth", kind: "plugin", scope: "system", status: "installed" },
+    { name: "@example/ext-page", kind: "plugin", scope: "extension", status: "installed" },
+    { name: "@example/available", kind: "plugin", scope: "extension", status: "available" },
+    { name: "@zelavis/app", kind: "app", scope: "system", status: "installed" },
+  ];
+  assert.deepEqual(selectItems(registry, "plugins").map(item => item.name), ["@example/ext-page", "@example/available"]);
+  assert.deepEqual(selectItems(registry, "apps").map(item => item.name), ["@zelavis/app"], "apps keep their own tab, trusted or not");
+});
+
+test("the desktop root slide lists Projects and the projects under it, with no Projects slide to open", async () => {
+  const { trailForLocation } = await import("../app/navigation-model.ts");
+  const other = { ...project, id: "other", name: "Other" };
+  const flat = panelsFor(undefined, undefined, undefined, undefined, [project, other], true);
+  const root = flat.find(panel => panel.id === "platform");
+  assert.deepEqual(root.items.slice(0, 3).map(item => [item.label, item.branch, item.nested === true]), [["Projects", undefined, false], ["Customer", "project", true], ["Other", "project", true]],
+    "Projects is a plain item, and each project drills into its own slide");
+  assert.ok(!root.items.some(item => item.branch === "projects"), "nothing opens a Projects slide");
+  assert.equal(root.items.find(item => item.label === "Projects").path, "/projects");
+  // Landing on the overview stays on the root slide instead of descending into a duplicate of the page.
+  assert.deepEqual(trailForLocation(flat, new URL("http://test/projects")), []);
+  assert.deepEqual(trailForLocation(flat, new URL(`http://test/projects/${project.id}`)).length >= 0, true);
+  // Narrow screens keep the slide: the sidebar is the whole app there.
+  const compact = panelsFor(undefined, undefined, undefined, undefined, [project, other], false);
+  assert.ok(compact.find(panel => panel.id === "platform").items.some(item => item.branch === "projects"));
+  assert.deepEqual(compact.find(panel => panel.id === "projects").items.map(i => i.label), ["Overview", "Create project", "Customer", "Other"]);
+});
+
+test("a project opened from the desktop root slide drills straight into its own slide, and Back is the root", () => {
+  const flat = panelsFor(project.id, project, undefined, undefined, [project], true);
+  const trail = resolveTrail(flat, ["project"], null);
+  assert.deepEqual(trail.map(panel => panel.id), ["platform", "project"]);
+  // A link that still names the Projects slide (an older URL) lands on the same place.
+  assert.deepEqual(resolveTrail(flat, [], "project").map(panel => panel.id), ["platform", "project"]);
+});
+
+
+test("Home restores the root menu without an empty sidebar query, while Projects can still open its slide", () => {
+  const panels = workspacePanels(panelsFor(), [{ title: "Projects", path: "/projects" }]);
+  for (const search of ["", "?sidebarView=menu"]) {
+    const url = new URL(`http://test/zelavis/${search}`);
+    const fallback = trailForLocation(panels, url);
+    assert.deepEqual(resolveTrail(panels, fallback, url.searchParams.get("sidebar")).map(panel => panel.id), ["platform"]);
+  }
+  const projects = new URL("http://test/zelavis/projects");
+  assert.deepEqual(resolveTrail(panels, trailForLocation(panels, projects), null).map(panel => panel.id), ["platform", "projects"]);
+  assert.deepEqual(resolveTrail(panels, [], "projects").map(panel => panel.id), ["platform", "projects"]);
+});

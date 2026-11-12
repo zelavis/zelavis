@@ -1,8 +1,9 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   op: Schema.String,
   cause: Schema.Defect(),
+  shard: Schema.optional(Schema.String),
 }) {}
 
 export class PartitionUnavailable extends Schema.TaggedError<PartitionUnavailable>()(
@@ -52,6 +53,22 @@ export class SchemaMigrationBlocked extends Schema.TaggedError<SchemaMigrationBl
  * request with that outcome would be worse than doing the work twice: the
  * caller would be told something happened that did not.
  */
+/**
+ * A message was emitted with an id the tenant's outbox already holds.
+ *
+ * Refused rather than replaced: a consumer that has the message may have acted
+ * on it, and a second message under its id would be lost to every consumer
+ * that deduplicates by id — which is what the id is for.
+ */
+export class MessageExists extends Schema.TaggedError<MessageExists>()("MessageExists", {
+  id: Schema.String,
+}) {}
+
+/** A message that cannot be one: an empty or overlong topic or id, or a payload that is not JSON. */
+export class InvalidMessage extends Schema.TaggedError<InvalidMessage>()("InvalidMessage", {
+  reason: Schema.String,
+}) {}
+
 export class IdempotencyKeyReused extends Schema.TaggedError<IdempotencyKeyReused>()(
   "IdempotencyKeyReused",
   {
@@ -66,7 +83,8 @@ export class IdempotencyKeyReused extends Schema.TaggedError<IdempotencyKeyReuse
  *
  * A move copies a tenant to another shard and then changes where it routes.
  * Between those two moments a write to the shard being left would land in
- * records nobody reads again, so it is refused instead. Reads are unaffected:
+ * records nobody reads again, so the store refuses it — every change to the
+ * fenced partition, whichever layer makes it. Reads are unaffected:
  * the source still holds the data until routing moves, and the target holds it
  * afterwards.
  */
@@ -74,6 +92,92 @@ export class TenantMoving extends Schema.TaggedError<TenantMoving>()("TenantMovi
   tenant: Schema.String,
   from: Schema.String,
   to: Schema.String,
+}) {}
+
+/**
+ * A call reached a shard a tenant has left, routed by a map older than the move.
+ *
+ * Once a move has cleared the source, what is left there is empty, and an
+ * empty answer would read as an empty tenant. The shard keeps the map version
+ * that moved the tenant away instead, and refuses a call routed by any older
+ * map: refresh routing to at least `mapVersion` and send the call again. It
+ * names no shard to go to, because routing, not the shard left behind, says
+ * where the tenant lives.
+ */
+export class TenantRelocated extends Schema.TaggedError<TenantRelocated>()("TenantRelocated", {
+  partition: Schema.String,
+  shard: Schema.String,
+  /** The partition-map version that moved the tenant off this shard. */
+  mapVersion: Schema.Finite,
+  /** The map version the refused call was routed by. */
+  routedBy: Schema.Finite,
+}) {
+  override get message() {
+    return `"${this.partition}" left shard "${this.shard}" at partition-map version ${this.mapVersion}; ` +
+      `this call was routed by version ${this.routedBy}. Refresh routing and retry.`;
+  }
+}
+
+/**
+ * A divided tenant was addressed as a whole.
+ *
+ * There is no one shard to answer for it, and answering from one part would
+ * describe a fraction of the tenant as though it were all of it. Address a
+ * part with `forPart`, or scatter over its parts.
+ */
+export class TenantDivided extends Schema.TaggedError<TenantDivided>()("TenantDivided", {
+  tenant: Schema.String,
+  parts: Schema.Array(Schema.String),
+}) {
+  // Thrown synchronously by `forTenant`, so it has to read on its own.
+  override get message() {
+    return `Tenant "${this.tenant}" is divided into ${this.parts.join(", ")}; use forPart, or scatter over its parts.`;
+  }
+}
+
+/** A part was named that the tenant is not divided into, or a tenant that is not divided at all. */
+export class UnknownPart extends Schema.TaggedError<UnknownPart>()("UnknownPart", {
+  tenant: Schema.String,
+  part: Schema.String,
+  parts: Schema.Array(Schema.String),
+}) {
+  // Thrown synchronously by `forPart`, so it has to read on its own.
+  override get message() {
+    return this.parts.length === 0
+      ? `Tenant "${this.tenant}" is not divided, so it has no part "${this.part}".`
+      : `Tenant "${this.tenant}" has no part "${this.part}"; it is divided into ${this.parts.join(", ")}.`;
+  }
+}
+
+/**
+ * A move stopped because its copy did not match the source.
+ *
+ * Checked with writes fenced, just before routing would move, and the last
+ * moment it can be: afterwards the source is cleared and a copy that came up
+ * short would surface later as missing records, with nothing left to compare
+ * against. Routing has not moved and the source is intact; the tenant stays
+ * fenced until the move is resumed, which copies it again from scratch.
+ */
+export class TenantMoveFailed extends Schema.TaggedError<TenantMoveFailed>()("TenantMoveFailed", {
+  tenant: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/**
+ * A move routed a tenant to its new shard, but calls that reached the old shard
+ * before routing moved were still running when the move stopped waiting.
+ *
+ * Routing has moved and the tenant takes writes on its new shard. The old
+ * shard still holds the tenant, fenced, so those calls read whole data and any
+ * write among them is refused; it is cleared once they finish, by resuming the
+ * move.
+ */
+export class PlacementInUse extends Schema.TaggedError<PlacementInUse>()("PlacementInUse", {
+  partition: Schema.String,
+  shard: Schema.String,
+  calls: Schema.Finite,
 }) {}
 
 /**
@@ -98,12 +202,70 @@ export class WriterFenced extends Schema.TaggedError<WriterFenced>()("WriterFenc
   partition: Schema.String,
   claimed: Schema.Finite,
   current: Schema.Finite,
+  /** For a writer lease: `superseded` (another epoch holds it) or `lease-expired` (this writer cannot prove it still holds it). */
+  reason: Schema.optional(Schema.String),
+}) {}
+
+/** A partition's writer lease is held, unexpired, by its owner: it changes hands when it expires or is released. */
+export class LeaseStillHeld extends Schema.TaggedError<LeaseStillHeld>()("LeaseStillHeld", {
+  partition: Schema.String,
+  owner: Schema.String,
+  epoch: Schema.Finite,
+  expiresAt: Schema.Finite,
+}) {}
+
+/** The follower has not reached the highest position the lost writer's followers acknowledged; promoting it would lose them. */
+export class FollowerBehind extends Schema.TaggedError<FollowerBehind>()("FollowerBehind", {
+  partition: Schema.String,
+  head: Schema.Finite,
+  required: Schema.Finite,
+}) {}
+
+/** Another owner holds the partition's lease; it changes hands only by promoting a follower that has caught up. */
+export class LeaseOwnedByAnother extends Schema.TaggedError<LeaseOwnedByAnother>()("LeaseOwnedByAnother", {
+  partition: Schema.String,
+  owner: Schema.String,
+  epoch: Schema.Finite,
+}) {}
+
+/**
+ * The writer named a standby, the one follower whose acknowledgment its writes wait for, and this is another: only the
+ * designated standby is known to hold every acknowledged write. An operator accepts that loss with `allowDataLoss`.
+ */
+export class NotDesignatedStandby extends Schema.TaggedError<NotDesignatedStandby>()("NotDesignatedStandby", {
+  partition: Schema.String,
+  standby: Schema.String,
+  owner: Schema.String,
+}) {}
+
+/** The partition has never had a writer lease, so there is no writer to take over from. */
+export class NoWriterLease extends Schema.TaggedError<NoWriterLease>()("NoWriterLease", {
+  partition: Schema.String,
+}) {}
+
+/** The partition is held by a writer lease; it cannot be moved or removed until the lease is released. */
+export class PartitionLeased extends Schema.TaggedError<PartitionLeased>()("PartitionLeased", {
+  partition: Schema.String,
 }) {}
 
 /** A cursor was issued by a different partition than the one being read. */
 export class ForeignCursor extends Schema.TaggedError<ForeignCursor>()("ForeignCursor", {
   expected: Schema.String,
   received: Schema.String,
+}) {}
+
+/**
+ * An event cursor issued by another life of the partition it names: one the
+ * Tenant had before it was removed and written again, or one of a branch's
+ * source other than the life it was branched from.
+ *
+ * A new life starts its log over, so the cursor's position names a place in a
+ * history that is gone. Read as a place in the new log it would skip every
+ * event up to that position, and nobody would hear about it. A reader holding
+ * one reads the partition again from the start.
+ */
+export class CursorFromAnotherLife extends Schema.TaggedError<CursorFromAnotherLife>()("CursorFromAnotherLife", {
+  partition: Schema.String,
 }) {}
 
 /**
@@ -177,6 +339,19 @@ export class UnanalyzedCollection extends Schema.TaggedError<UnanalyzedCollectio
   "UnanalyzedCollection",
   { collection: Schema.String },
 ) {}
+
+/**
+ * A query or an order named a field its collection does not index.
+ *
+ * A collection that declares `columns` indexes only those fields, which is what
+ * keeps a wide document from writing an index entry per field. An equality, a
+ * range or an order on any other field would have nothing to read but every
+ * document in the collection, so it is refused rather than run as a scan.
+ */
+export class UnindexedField extends Schema.TaggedError<UnindexedField>()("UnindexedField", {
+  collection: Schema.String,
+  path: Schema.String,
+}) {}
 
 /** A spatial filter named a field the collection's index does not cover. */
 export class UnindexedGeometry extends Schema.TaggedError<UnindexedGeometry>()("UnindexedGeometry", {
@@ -255,6 +430,30 @@ export class DocumentConflict extends Schema.TaggedError<DocumentConflict>()("Do
   reason: Schema.String,
 }) {}
 
+/** No cross-Tenant index has this name. */
+export class CrossTenantIndexNotFound extends Schema.TaggedError<CrossTenantIndexNotFound>()(
+  "CrossTenantIndexNotFound",
+  { name: Schema.String },
+) {}
+
+/** A cross-Tenant index with this name already exists; drop it to define it differently. */
+export class CrossTenantIndexExists extends Schema.TaggedError<CrossTenantIndexExists>()(
+  "CrossTenantIndexExists",
+  { name: Schema.String },
+) {}
+
+/** A durable re-derivation has not published complete entries yet. */
+export class CrossTenantIndexRefreshing extends Schema.TaggedError<CrossTenantIndexRefreshing>()("CrossTenantIndexRefreshing", {
+  name: Schema.String,
+  partition: Schema.String,
+}) {}
+
+/** A cross-Tenant index definition that cannot be built as given. */
+export class InvalidCrossTenantIndex extends Schema.TaggedError<InvalidCrossTenantIndex>()(
+  "InvalidCrossTenantIndex",
+  { name: Schema.String, reason: Schema.String },
+) {}
+
 export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()(
   "ProjectionNotFound",
   { name: Schema.String },
@@ -272,9 +471,36 @@ export class SchemaVersionExists extends Schema.TaggedError<SchemaVersionExists>
   { collection: Schema.String, version: Schema.Finite },
 ) {}
 
+export class SchemaTransferRefused extends Schema.TaggedError<SchemaTransferRefused>()("SchemaTransferRefused", {
+  reason: Schema.String,
+}) {}
+
+export class InvalidMeasureQuery extends Schema.TaggedError<InvalidMeasureQuery>()("InvalidMeasureQuery", {
+  reason: Schema.String,
+}) {}
+
+export class AggregateRefused extends Schema.TaggedError<AggregateRefused>()("AggregateRefused", {
+  name: Schema.String, reason: Schema.String,
+}) {}
+export class AggregateNotFound extends Schema.TaggedError<AggregateNotFound>()("AggregateNotFound", { name: Schema.String }) {}
+export class AggregateChanged extends Schema.TaggedError<AggregateChanged>()("AggregateChanged", {
+  name: Schema.String, reason: Schema.String,
+}) {}
+
 export class SchemaNotFound extends Schema.TaggedError<SchemaNotFound>()("SchemaNotFound", {
   collection: Schema.String,
   version: Schema.Finite,
+}) {}
+
+/**
+ * A schema version was not activated: the declarations it implies do not hold
+ * for the documents already stored, so it was left inactive and the collection
+ * declared as it was.
+ */
+export class SchemaActivationRefused extends Schema.TaggedError<SchemaActivationRefused>()("SchemaActivationRefused", {
+  collection: Schema.String,
+  version: Schema.Finite,
+  reason: Schema.String,
 }) {}
 
 /** A write did not satisfy the collection's active schema. */
@@ -289,14 +515,113 @@ export class TimeSeriesNotFound extends Schema.TaggedError<TimeSeriesNotFound>()
   { name: Schema.String },
 ) {}
 
+/**
+ * A time series' mapper threw, or returned a point that cannot be stored — a
+ * timestamp that is not one, a value that is not a finite number, a tag that
+ * is not a string. Nothing of the batch holding that event is written, and the
+ * series stays where its last committed batch left it, so fixing the mapper
+ * and ingesting again picks up at that event.
+ */
+export class TimeSeriesMapFailed extends Schema.TaggedError<TimeSeriesMapFailed>()("TimeSeriesMapFailed", {
+  series: Schema.String,
+  eventId: Schema.String,
+  reason: Schema.String,
+}) {}
+
 export class BackupTenantMismatch extends Schema.TaggedError<BackupTenantMismatch>()(
   "BackupTenantMismatch",
   { expected: Schema.String, received: Schema.String },
 ) {}
 
+/**
+ * A Tenant cannot be removed: it is reserved, divided into parts, mid-relocation, or holds nothing.
+ *
+ * Refused rather than half done: removal is the one operation that cannot be undone, so it never guesses.
+ */
+export class TenantNotDroppable extends Schema.TaggedError<TenantNotDroppable>()("TenantNotDroppable", {
+  tenant: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/**
+ * A Tenant cannot be branched: one of the two is reserved or a plugin's, divided into parts, the source
+ * holds nothing, the target already holds data, or a relocation is pending.
+ */
+/** A merge of a branch back into its source refused before anything was written; see `mergeBranch`. */
+export class BranchNotMergeable extends Schema.TaggedError<BranchNotMergeable>()("BranchNotMergeable", {
+  branch: Schema.String,
+  into: Schema.String,
+  reason: Schema.String,
+}) {}
+
+export class TenantNotBranchable extends Schema.TaggedError<TenantNotBranchable>()("TenantNotBranchable", {
+  tenant: Schema.String,
+  into: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** An export was asked for with a cursor that is not the Tenant's, or a limit it does not allow. */
+export class InvalidExport extends Schema.TaggedError<InvalidExport>()("InvalidExport", {
+  reason: Schema.String,
+}) {}
+
+/** A backup schedule, run, verification or restore refused, with the reason; see `node-backups.ts`. */
+export class InvalidBackup extends Schema.TaggedError<InvalidBackup>()("InvalidBackup", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
+/** An import's source, options or plan refused before anything was written; see `ImportsApi`. */
+export class InvalidImport extends Schema.TaggedError<InvalidImport>()("InvalidImport", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
+/**
+ * A divided Tenant's restore stopped at one part after earlier parts were restored. Parts are separate partitions,
+ * restored one after another, so nothing undoes the earlier ones; restoring the same backup again with
+ * `into: "purge"` replaces every part and completes it.
+ */
+export class DividedRestoreIncomplete extends Schema.TaggedError<DividedRestoreIncomplete>()("DividedRestoreIncomplete", {
+  tenant: Schema.String,
+  restored: Schema.Array(Schema.String),
+  failedPart: Schema.String,
+  reason: Schema.String,
+}) {
+  override get message() {
+    return `Restoring "${this.tenant}" stopped at part "${this.failedPart}" (${this.reason}) after ${this.restored.length === 0 ? "no parts" : `parts ${this.restored.join(", ")}`} were restored; restore the same backup again with into: "purge" to complete it.`;
+  }
+}
+
+/** A database image was asked for with a name or engine it does not take, or under a name already taken. */
+export class InvalidImage extends Schema.TaggedError<InvalidImage>()("InvalidImage", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
 /** Restoring over live data would orphan whatever the tenant already holds. */
 export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("TenantNotEmpty", {
   tenant: Schema.String,
+}) {}
+
+/**
+ * A restore named a mode it does not have.
+ *
+ * Refused rather than read as one of them: each mode does something different
+ * to the data already there, and a guess is how a restore purges what it was
+ * meant to keep or replays over what it was meant to refuse.
+ */
+export class InvalidRestoreMode extends Schema.TaggedError<InvalidRestoreMode>()("InvalidRestoreMode", {
+  mode: Schema.String,
 }) {}
 
 export class BackupFormatUnsupported extends Schema.TaggedError<BackupFormatUnsupported>()(
@@ -377,11 +702,196 @@ export class LogCompacted extends Schema.TaggedError<LogCompacted>()("LogCompact
   compactedTo: Schema.Finite,
 }) {}
 
+/**
+ * A partition has handed out every identifier, or used every log position, it
+ * can.
+ *
+ * Identifiers are never reused, so a partition that creates and deletes
+ * constantly runs through them faster than it grows. Refused rather than
+ * wrapped: a wrapped identifier would name a record that already exists, and a
+ * wrapped position an event already logged.
+ */
+export class PartitionExhausted extends Schema.TaggedError<PartitionExhausted>()("PartitionExhausted", {
+  partition: Schema.String,
+  resource: Schema.Literals(["identifiers", "log"]),
+  limit: Schema.Finite,
+}) {}
+
+/**
+ * A follower was handed an event past the next position in its log.
+ *
+ * Applying it would leave a hole that nothing ever fills, and the follower
+ * would report a history it does not have.
+ */
+export class EventGap extends Schema.TaggedError<EventGap>()("EventGap", {
+  partition: Schema.String,
+  expected: Schema.Finite,
+  received: Schema.Finite,
+}) {}
+
+/**
+ * A follower already holds a different event at the position it was handed.
+ *
+ * Two logs that disagree about one position are two histories, and skipping
+ * the event as a duplicate would hide that.
+ */
+export class ReplicaDiverged extends Schema.TaggedError<ReplicaDiverged>()("ReplicaDiverged", {
+  partition: Schema.String,
+  position: Schema.Finite,
+}) {}
+
+/**
+ * Fewer followers than a policy requires reported holding a position before
+ * its time limit. The write that reached that position is committed on the
+ * leader all the same: this reports that it is not yet held elsewhere, and
+ * undoes nothing.
+ */
+export class FollowersNotAcknowledged extends Schema.TaggedError<FollowersNotAcknowledged>()("FollowersNotAcknowledged", {
+  position: Schema.Finite,
+  required: Schema.Finite,
+  acknowledged: Schema.Array(Schema.String),
+}) {}
+
+/**
+ * A partition's lenses are being rebuilt or reindexed, or a run that was doing
+ * so was interrupted and has not been resumed.
+ *
+ * Rebuilding runs in many batches under the partition's writer, so between the
+ * first and the last its lenses — and, for a rebuild, its records — are partly
+ * cleared. Reads and writes are refused for that time rather than answered from
+ * half an index; reopening the database resumes an interrupted run.
+ */
+export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("LensesRebuilding", {
+  partition: Schema.String,
+  operation: Schema.Literals(["rebuild", "reindex"]),
+}) {}
+
+/**
+ * A branch into this Tenant began and has not finished: it holds part of a
+ * copy, so reads and writes are refused rather than answered from it. Running
+ * the same branch again starts it over and finishes it; dropping the Tenant
+ * removes what was copied.
+ */
+export class TenantBranching extends Schema.TaggedError<TenantBranching>()("TenantBranching", {
+  tenant: Schema.String,
+  from: Schema.String,
+}) {}
+
+/** A message for a durable entity, or a step its handler answered, that cannot be taken as it is. */
+export class InvalidEntityMessage extends Schema.TaggedError<InvalidEntityMessage>()("InvalidEntityMessage", {
+  reason: Schema.String,
+}) {}
+
+/** An entity already holds as many unfinished messages as its mailbox takes; send again once it has caught up. */
+export class MailboxFull extends Schema.TaggedError<MailboxFull>()("MailboxFull", {
+  type: Schema.String,
+  id: Schema.String,
+  capacity: Schema.Finite,
+}) {}
+
+/**
+ * A read on another Node spent more work than its budget allows and was refused whole: no part of an answer is
+ * returned and nothing is read again elsewhere. `limit` names what ran out (`bytes` of stored data copied,
+ * `entries` read from the store, `postings` identifiers expanded) and `max` is that limit. Narrow the query
+ * (a filter, a smaller page) and ask again.
+ */
+export class ReadBudgetExceeded extends Schema.TaggedError<ReadBudgetExceeded>()("ReadBudgetExceeded", {
+  limit: Schema.Literals(["bytes", "entries", "postings"]),
+  max: Schema.Finite,
+}) {}
+
+/** A follower route was asked for a partition it does not serve, or with a request it does not take. */
+export class InvalidFollowerRequest extends Schema.TaggedError<InvalidFollowerRequest>()("InvalidFollowerRequest", {
+  partition: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** Shard placement has no Platform to ask: this database has no channel, or the Platform cannot be reached. */
+export class ShardPlacementUnavailable extends Schema.TaggedError<ShardPlacementUnavailable>()("ShardPlacementUnavailable", {
+  reason: Schema.String,
+}) {}
+
+/** The Platform refused a shard request; `reason` is its refusal code. */
+export class ShardPlacementRefused extends Schema.TaggedError<ShardPlacementRefused>()("ShardPlacementRefused", {
+  reason: Schema.String,
+}) {}
+
+/** A shard operation is already unfinished; operations run one at a time. */
+export class ShardOperationInProgress extends Schema.TaggedError<ShardOperationInProgress>()("ShardOperationInProgress", {
+  operationId: Schema.String,
+  kind: Schema.String,
+  phase: Schema.String,
+}) {}
+
+/** A shard the map, a pending move or a partition still names cannot be closed or released. */
+export class ShardInUse extends Schema.TaggedError<ShardInUse>()("ShardInUse", {
+  shard: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** A shard operation was asked for something it cannot do: bad ranges, an unknown target, a shard that is not remote. */
+export class ShardOperationInvalid extends Schema.TaggedError<ShardOperationInvalid>()("ShardOperationInvalid", {
+  reason: Schema.String,
+}) {}
+
+/** Every failure shard placement answers with. */
+export type ShardPlacementError =
+  | ShardPlacementUnavailable
+  | ShardPlacementRefused
+  | ShardOperationInProgress
+  | ShardInUse
+  | ShardOperationInvalid;
+
 /** Every failure the store contract can raise. */
 export type DbError =
   | StoreError
   | WriterFenced
   | ForeignCursor
+  | CursorFromAnotherLife
   | CursorCompacted
   | LogCompacted
-  | PartitionUnavailable;
+  | PartitionUnavailable
+  | PartitionExhausted
+  | LensesRebuilding
+  | TenantBranching
+  | TenantRelocated
+  | TenantMoving
+  | PartitionLeased;
+
+/**
+ * Every store failure but a move's fence, which is the one a caller above the
+ * store can act on. Keyed by tag so that a store failure added to `DbError`
+ * without a place here does not compile.
+ */
+const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]: true } = {
+  StoreError: true,
+  PartitionLeased: true,
+  WriterFenced: true,
+  ForeignCursor: true,
+  CursorFromAnotherLife: true,
+  CursorCompacted: true,
+  LogCompacted: true,
+  PartitionUnavailable: true,
+  PartitionExhausted: true,
+  LensesRebuilding: true,
+  TenantBranching: true,
+  // The in-process router routes every call by the map in force, which is never
+  // older than a move it made, so reaching a relocated partition here is a
+  // broken invariant. A caller routing by a map of its own sees it typed, at
+  // the store.
+  TenantRelocated: true,
+};
+
+/**
+ * A store's failures as defects, but for `TenantMoving`: a write refused while
+ * its tenant is being moved is the caller's to see, and succeeds once routing
+ * points at the new shard. Anything else a store fails with is a broken engine
+ * or a broken invariant. Failures that are not the store's pass through.
+ */
+export const dieUnlessMoving = <A, E extends { readonly _tag: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, Exclude<E, Exclude<DbError, TenantMoving>>, R> =>
+  Effect.catch(effect, (error) =>
+    Object.hasOwn(STORE_DEFECTS, error._tag)
+      ? Effect.die(error)
+      : Effect.fail(error as Exclude<E, Exclude<DbError, TenantMoving>>));

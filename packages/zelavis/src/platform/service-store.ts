@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue } from "../core/runtime/effect-boundary.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -44,22 +46,28 @@ export function createServiceStore(
   const namespace = serviceStoreNamespace(serviceName);
 
   const store: ZelavisServiceStore = {
-    async get(key: string) {
-      return (await systemStore.get(namespace, key))?.value;
-    },
-    async set(key: string, value: ZelavisSystemStoreValue) {
-      await systemStore.set(namespace, key, value);
-    },
-    async delete(key: string) {
-      return systemStore.delete(namespace, key);
-    },
-    async list() {
-      return Object.freeze(
-        (await systemStore.list(namespace)).map((record) =>
+    get(key: string) {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(systemStore.get(namespace, key))))?.value;
+    }));
+  },
+    set(key: string, value: ZelavisSystemStoreValue) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(systemStore.set(namespace, key, value)));
+    }));
+  },
+    delete(key: string) {
+    return present(integration(() => systemStore.delete(namespace, key)));
+  },
+    list() {
+    return present(Effect.gen(function* () {
+      return (yield* integrationValue(Object.freeze(
+        ((yield* integrationValue(systemStore.list(namespace)))).map((record) =>
           Object.freeze({ key: record.key, value: record.value }),
         ),
-      );
-    },
+      )));
+    }));
+  },
   };
   return Object.freeze(store);
 }

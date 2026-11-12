@@ -47,8 +47,11 @@ Project runs. Moving a stopped Project to a newer recipe is an explicit
 **recipe upgrade**, and the new copy is frozen and swapped in only when complete.
 A failed upgrade restores the previous frozen recipe and host descriptor.
 Custom runtime modules load from verified digest-specific copies under
-`<project>/.zelavis/recipe-modules`, including their relative imports, so a
-Platform process cannot reuse the old runtime when upgrading. The Project's
+`<projects>/.recipe-modules`, including their relative imports, so a
+Platform process cannot reuse the old runtime when upgrading. Projects frozen to
+the same digest share one copy, which is why it lives beside the Projects rather
+than inside one: deleting a Project never removes code another Project runs.
+Copies no Project uses are pruned when the Platform starts. The Project's
 data is untouched.
 
 The host records the locked recipe before provisioning begins, so custom
@@ -117,10 +120,13 @@ No Project runtime gains host package authority through Effect.
 
 The public `zelavis/recipe` subpath provides an initial runtime-neutral contract
 for recipes written with Effect v4. It is available for authoring and validation;
-package admission and Project execution still use the runtime-module model above.
-The JS recipe driver, Node host layer and OCI execution remain planned.
+A recipe either brings a whole runtime module (the model above) or, as `@zelavis/wordpress`
+does, brings only phases and lets the Platform's `createRecipeProjectRuntime` run them. A
+package declares this contract's manifest as
+`zelavis.project.install` in its `package.json`, validated when the package is loaded
+(an invalid one fails the load, naming the package). OCI execution remains planned.
 
-`parseRecipeManifest` validates contract 1 metadata: named methods, bounded host
+`parseRecipeManifest` validates contract 1 and 2 metadata: named methods, bounded host
 requirements, declared ports and software releases with HTTPS archives, SHA-256
 digests and download size limits. JS methods name a relative module entry. OCI
 methods declare digest-pinned images; declaring an image does not enable execution.
@@ -129,8 +135,30 @@ are refused. The returned manifest is an immutable snapshot.
 
 Software versions belong to verified recipe metadata independently of the npm
 recipe revision. `selectRecipeMethod` picks the first method the supplied host
-capabilities can satisfy, or refuses an unavailable explicit choice. Integration
-must lock the selected method ID at creation; a Project start must use that lock.
+capabilities can satisfy, or refuses an unavailable explicit choice.
+`selectRecipeSoftware` takes the requested version, which must be offered, or the newest.
+
+Creating a Project from a recipe that declares `install` makes both choices once and
+locks them in the Project's recipe lock (`install: { method, driver, requires, software }`):
+`projects create --method ID --software-version V`, `client.projects.create({ method,
+softwareVersion })`, `POST /runtime/projects`, and two pickers in the dashboard's create form
+(`GET /runtime/project-recipes` and the CLI `projects recipes` list what is on offer). With
+no choice named the Platform locks the first method this host can run and the newest
+software. The host's capabilities are the drivers it has (JavaScript today; OCI has no driver)
+and the requirements it has or can install through an approved package set. A host that cannot
+prove its capabilities refuses such a recipe instead of guessing. A start or restart checks the lock
+and refuses, naming what is missing, when the host no longer provides the method; it never
+selects another. A recipe upgrade keeps the choice when the newer recipe still offers that
+method and software version, and is refused otherwise.
+
+Once its start phase has returned a process plan, `startProcessPlan` runs it through the Agent's
+process contract: processes start in dependency order, each only after its dependencies' ports
+accept connections (independent ones together, at most four at a time), executables and ports
+come from the host's tables and never from the plan's text, the environment is exactly what the
+plan names, and secret references are resolved at the last moment. A process that is not ready in
+time, or exits first, fails the start after everything already started is stopped; one that exits
+later is reported and not restarted; stopping goes dependents first; interruption stops what was
+started.
 
 `defineRecipe` describes Effect `install` and `start` phases, with optional `stop`,
 `upgrade`, `backup` and `remove`. Phases request the `RecipeHost` service, which
@@ -148,6 +176,232 @@ The service interface itself does not enforce those restrictions and is not a
 sandbox for arbitrary JavaScript. Privileged package installation belongs to the
 Platform's audited host-operation broker, outside RecipeHost.
 
+### Where an app's files live
+
+A third-party app's Project keeps the application, and only the application, in `app/`: the
+directories its recipe names in the manifest (`directories`), such as `app/site` for the code,
+uploads and configuration and `app/db` for the database. Zelavis writes there only to install the
+application; recipe updates, integration code, dashboard menus and APIs, and Platform updates never
+touch it. What Zelavis runs the application with (web server and PHP-FPM configuration, pid files,
+logs, `run/`, `tmp/`, `sessions/`) is the recipe's root, `.zelavis/server`, which Zelavis may rewrite
+freely.
+
+That layout is manifest **contract 2**. A recipe names its application directories by their
+absolute paths (`context.directories.named`) and writes everything else relative to its root
+(`context.directories.root`); the recipe file API reaches `app/` by absolute path and nothing else
+outside the root. Under **contract 1** the application and those files share `app/`; such a recipe
+runs unchanged, and its Project moves to contract 2 with an ordinary recipe upgrade, live or from a
+stop: the new recipe writes its files into `.zelavis/server`, the processes switch over, and only then
+is what contract 1 kept in `app/` beside the application moved to `.zelavis/server/contract-1`.
+
+### Upgrading a Project to a recipe with a different layout
+
+An application is a folder of files and a database directory, and a recipe's upgrade does not
+convert them. A recipe whose layout differs from an earlier version of itself says how to take
+the earlier one over in its manifest (`adopt`): the earlier state file that marks the layout, the
+folders to rename (`move`), the values to carry over from that file (the ports the existing
+configuration already names, the database password, the socket identity), empty marker files to
+create, and generated leftovers to discard. Upgrading a stopped Project to such a recipe then:
+
+1. validates the earlier state and writes a journal before anything moves;
+2. renames the folders (atomic and instant whatever the database's size; nothing is read,
+   copied or rewritten, and symbolic links are refused), writes the carried-over password to the
+   Project's secrets and creates the markers;
+3. keeps the Project's address, because the ports are carried over;
+4. lets the recipe's own `install` resume over what is there (it regenerates configuration at
+   the new paths and skips what already exists);
+5. keeps the earlier state until the Project runs on the new layout. If anything fails first,
+   or the upgrade cannot be recorded, every folder is moved back and what was created is
+   removed, so the earlier recipe finds its Project as it left it; the interrupted case resumes.
+
+A **running** Project of such an earlier layout (a WordPress made by the hand-written runtime of
+releases before alpha.26) crosses without being stopped by hand. While it still serves, the
+Platform fetches the new recipe's programs and checks the host (`prefetchUpdate`). Then it holds the
+Project's requests (dashboard, site previews and the Project's own domains alike, for at most two
+minutes), stops the old processes, takes the folders over as above and starts the new recipe.
+Visitors wait for that moment instead of receiving an error, the Project record says "running"
+throughout, so its preview address never closes, and a failure puts the earlier recipe back and
+starts it again.
+
+### Upgrading a running Project
+
+A running Project whose new recipe keeps the same layout upgrades without stopping. The
+Platform stages the new recipe beside the running one, runs its `start` phase to get the new
+process plan, and reconciles that plan against the running processes by fingerprint:
+
+- a process whose launch (executable, arguments, directory, environment) and configuration are
+  unchanged is **kept** and never touched;
+- a process whose plan lists `config` files and an `update` signal (for example Caddy `SIGUSR1`,
+  PHP-FPM `SIGUSR2`) and whose only change is those files is **reloaded** in place;
+- a process whose launch changed, or that had exited, is **replaced**, and new ones are added,
+  in dependency order, each waiting for readiness before its dependents are touched.
+
+A durable journal records the upgrade, so after a crash the physical state decides whether the
+Project is on the previous or the target recipe. Any failure (an unready process, a failed
+phase, a commit that cannot be recorded) reconciles back to the previous plan. Proven with real
+processes: a running Project upgraded through the manager with no failed request and an
+unchanged database PID, and the real WordPress recipe (Caddy, PHP-FPM, MariaDB) switching to a
+changed web configuration under continuous traffic with all three PIDs unchanged.
+
+Managed apps (WordPress, and any other recipe that declares `managed`) take the same path in one
+transaction with their Zelavis integration: the processes are reconciled first and can be put
+back, the integration host's handover is the single commit point, and a crash is settled from
+the host's journal, so the processes, their configuration and the integration are always on the
+same recipe. A recipe upgraded while its Project is stopped runs its `install` phase the next
+time the Project starts. Nothing in this is specific to one application.
+
+### Moving data to a new place
+
+A recipe can place its application data by name, in the manifest (`directories`: a name and a
+path below the recipe's root), and reads the current place from `context.directories.named` in
+its phases, never by joining the path itself. When a newer recipe names another path, a running
+Project is upgraded with its data where it is (the database is not touched, so it is not
+restarted), and the layout map in the Project's recipe state remembers the old place. The next
+time the Project starts from a stop, the data is moved to the new place with one atomic rename
+(an existing destination that holds data is never overwritten; the data then stays where it is
+and keeps working), and the install phase runs again so configuration names the new place. A
+crash in between is finished by the next start, because the physical state decides.
+
+### Backing up the application's data
+
+Each named directory also says how a backup captures it (`backup`): `files` copies it as it is (code, uploads,
+configuration), and `recipe` leaves it to the recipe's `backup` phase, which writes a consistent copy below its root and
+returns where (`{ path }`). The MariaDB recipes use the shared `dumpMariaDb` from `zelavis/recipe`: one transaction
+(`--single-transaction`) while the site keeps serving, by the `mariadb-dump` of the same build that runs the database (the
+recipe pins it beside `mariadbd`), with the application's password in the program's environment, never its arguments; the
+container method runs the image's own dump and copies the file out. A Project's integration runtime runs the phase
+exactly as the driver runs any phase (the frozen recipe, the Project's resolved programs, secrets and account) as the
+`app` component of the Project's backup schedules, and copies the `files` directories beside it. A directory that says
+neither is not captured, and the backup's `recipe.json` says so. See [Backups and restore](../../api/database/#backups-and-restore).
+
+### Programs a recipe brings with it
+
+A recipe is its own installer, so it does not borrow the host's PHP. Its manifest's `runtimes` pin the
+programs it needs: a command name (`php`, `php-fpm`), a version, and one download per platform
+(`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`) with an https address, a SHA-256, a
+size bound and the program's path inside the archive. The Platform downloads each once, verifies it,
+unpacks it into a store under `<data>/runtimes/<sha256>/` shared read-only by every Project that pins the
+same build, and offers it to the recipe as that command. A host without a build for its platform is
+refused by name; a build that does not match its digest is discarded; a recipe may not both require a
+command from the host and bring it. Different Projects therefore run different PHP versions side by
+side, and the PHP version is chosen by the recipe, not by what the host happens to have.
+
+A download may also list up to three `mirrors`: other places holding the very same archive, tried in order
+after the official address fails (a throttled build host, a vendor that challenges non-browser clients).
+The pinned digest is the only trust, so a mirror can be any https origin and a wrong copy is discarded like
+any other mismatch. No mirror is operated yet; the mechanism is what ships.
+
+A recipe can offer a second install method that runs its database in a container: a JavaScript method that
+requires `docker` and names a `containers.database` image pinned by digest (the official multi-arch `mariadb`
+image). The person creating the Project picks the method (`--method container`, the create form's Install
+method, or the API's `method`); it is locked with the Project and never chosen again by the host. The
+recipe's shared MariaDB code (`zelavis/recipe`: `requireMariaDb`, `initializeMariaDb`, `mariaDbProcess`,
+`releaseMariaDb`) runs `docker run` for it as one supervised process: the Project's account (`--user uid:gid`),
+the port published on `127.0.0.1` only, the data directory bind-mounted, the password handed over through the
+client's environment rather than its arguments, and the administrator reachable only from inside the container.
+It is ready when the server sends its handshake, not when the port opens (a published port accepts before the
+server behind it is up). Zelavis does not ship or install a container engine; a missing or stopped one is
+reported when the Project is created or started. A Project killed during the image's first initialization can
+leave its container behind, so stopping or removing the Project removes it by name. The programs a container
+method does not use (the MariaDB download) are not fetched for it, and the `mariadb-server` host package is not
+offered for it.
+
+A program may also be built for only some platforms. MariaDB is: the vendor publishes it for Linux x86_64
+only, so the recipes list it with that one download and a `hostRequirement` (`mariadb`). On Linux x86_64 the
+recipe runs its own pinned MariaDB (a 377 MB download, 1.2 GB unpacked, shared by every Project that pins
+it) and needs nothing installed; on any other platform the host's MariaDB is used, as before. A host package set (`mariadb-server`) is neither offered nor installed where the recipe brings what the set would provide. An archive of
+a pinned program may hold relative symbolic links that stay inside its own tree (MariaDB's `bin/mysql` →
+`mariadb`); an application's own archive may not.
+
+An upgrade can change the build: the new recipe's programs are fetched while the Project is still
+serving, the process that uses another program is replaced (under the ingress gate), and the previous
+build stays in the store for rollback until no Project (and no unfinished upgrade) names it, when the Platform prunes it, never one unpacked in the last ten minutes. A download that stumbles (a dropped connection, a 5xx or 429) is tried again twice; one that carries the wrong bytes or is refused is not. The pinned PHP builds are static builds from
+`dl.static-php.dev` (static-php-cli), pinned by our own SHA-256 because the publisher lists none; if that
+host disappears or changes, the digests make the change visible, and the builds can be rebuilt and hosted
+by us. The web server is Caddy, whose official releases publish checksums that the pinned digests were checked against. Only MariaDB is still the host's, installed through the fixed `mariadb-server` set: its official binary tarballs exist for Linux x86_64 only, and a recipe has no way yet to name the base directory its tools need.
+
+### Setup values
+
+Some applications cannot finish their own setup without values the Platform generated: Joomla's
+installer asks for the database's address, name, user and password. A recipe declares them in the
+manifest (`setup`: an id, a label and a template over `{ports.NAME}`, `{dir.NAME}`, `{secret.NAME}`,
+`{root}`, `{sockets}` and `{user}`; a template naming something the recipe does not declare is refused
+when the recipe loads). `zelavis projects setup <id>`, `client.projects.setup(id)` and
+`GET /zelavis/api/v1/runtime/projects/:projectId/setup` list them with `project.view`; a value that
+contains a secret carries none. `--reveal`, `client.projects.revealSetup(id)` and
+`POST .../setup/reveal` return the secrets too, need `project.setup.reveal`, and are recorded (the
+Project, the caller and the value ids, never the values) in the System Store namespace
+`projects.setup-audit.v1`, capped at 500 records and 90 days; a reveal that cannot be recorded is not
+given. The dashboard shows them on each managed Project's **Setup** page, with a **Reveal secrets** button and the most recent reveals; `GET .../setup/audit`, `zelavis projects setup-audit <id>` and `client.projects.setupReveals(id)` read the trail (also `project.setup.reveal`).
+
+### Replacing a serving process
+
+When a newer recipe changes how a process is launched (not only its configuration), that process is
+replaced, which would otherwise show as failed requests. While a replacement runs, the Platform's
+gateway holds public requests for the Project at its ingress (`ingressReady`) and releases them when
+the new process is ready, after first giving requests already inside the Project 300 ms to finish. A
+request waits at most 15 seconds. Reloads and kept processes never close the gate. The gate holds
+requests; it cannot keep a database available while it restarts, so a replaced database is still a
+short pause for the requests that need it.
+
+### Four managed recipes
+
+WordPress (Caddy, PHP-FPM, MariaDB, generated credentials), DokuWiki (Caddy and PHP-FPM, no database,
+no credentials), Joomla and TYPO3 (like WordPress, whose installers need the generated values; each is
+set up with its own command-line installer in the Debian qualification) are managed recipes on this
+path, with no code in the Platform that names any of them. The others exist to keep that true. Two
+of the applications we looked at could not be offered honestly: phpBB's only official download host
+refuses every client that does not present itself as `curl`, and PrestaShop 8 does not run on the
+PHP 8.2 that Debian 12 ships while PrestaShop 9 has no pinned release archive we could find. 
+
+Limits today: a replaced process is covered by the ingress gate for requests, but a database whose launch changed still pauses what needs it; a layout
+move (adoption of an earlier layout) still needs the Project stopped, because a running
+database directory cannot be renamed, so the dashboard **Upgrade** action,
+`projects upgrade <id> --restart`, `client.projects.upgrade(id, { restart: true })` and
+`{"restart": true}` over HTTP stop, upgrade and start again; and a new recipe that needs
+requirements or commands the Project does not already hold is refused on the live path and
+rolled back. Recipe upgrades never change the application's own software.
+
+WordPress uses this: an existing WordPress Project (its site, uploads and database) upgrades to
+the current recipe with its address, content and admin login unchanged. The application's own
+software is not updated; WordPress updates itself from wp-admin.
+
+### The Node RecipeHost and the phase process
+
+The Node implementation (`adapters/_recipe-host.ts`) enforces what the interface only
+describes. Every path is relative to the Project directory; absolute paths, `..` and any
+symbolic link along the way are refused, and files are written through a temporary file
+opened with `O_NOFOLLOW`. A command runs only from a table of absolute executables the host
+builds from the recipe's declared requirements, with no shell, a clean environment (none of
+the host's variables), a deadline, bounded output, and its whole process group killed when
+the deadline passes or the phase is interrupted. A download must be https (redirects only to
+https, at most three), is bounded by the manifest's size, and is kept only if its SHA-256
+equals the pinned digest. `extract` unpacks `.tar.gz` into a staging directory, refuses names
+that climb or are absolute, keeps nothing but plain files and directories, and moves the
+result into place only when it is whole. Secrets are generated once into a private directory
+outside the Project, travel only as references, and are replaced by `[secret]` in anything a
+command prints or a progress message carries. A conformance suite
+(`test/fixtures/recipe-host-conformance.mjs`) holds any adapter to the same behavior.
+
+A phase never runs inside the Platform. `runRecipePhase` starts a fresh Node for each phase
+(as the Project's OS user when given one), with a clean environment and Node's permission
+model on: the process may write only to the Project directory and its secrets directory and
+read only those, the recipe's own folder and the packages it loads. The Platform sends one
+request and receives progress and one result over a private descriptor; what the recipe prints
+is only a log, and the parent validates the plan or path it receives against the manifest's
+own names, because the recipe shares that descriptor. This confines files Node itself
+touches. Commands a recipe declared start from inside the phase and can do what the OS user
+can do; the boundaries that remain are the allow-list of official recipes, the OS user, and
+the host-operation broker. Network access, CPU and memory are limited only by the deadline and
+output caps. They are connected to Project creation: the recipe runtime (`createRecipeProjectRuntime`)
+resolves the executables for the locked method's requirements, allocates and keeps the ports,
+runs `install` once per Project and `start` each time in a phase process (as the Project's OS
+user), supervises the returned plan, and after a Platform restart asks the recipe for its plan
+again and adopts the processes the Agent kept running. Executables are found by the host from a
+requirement catalogue (`nginx`, `php-fpm`, `mariadb`, `node`): on PATH or the usual sbin
+directories, or Homebrew's prefix; a missing one is installed through Homebrew on macOS and
+reported with how to approve the package set on Linux.
+
 System installations and updates configure `zelavis-host-agent.service`, a separate
 root Agent accepting only operation catalog/submit/get. Its endpoint and token are
 root-owned and accessible only to the dedicated Platform group. The Platform uses
@@ -156,7 +410,7 @@ separate. The root Agent uses systemd-delegated cgroup v2 containment and refuse
 arbitrary process commands.
 
 Recipes may declare bounded `zelavis.project.hostPackages` sets such as
-`["wordpress-stack"]`. These are fixed operations, never supplied package names or
+`["mariadb-server"]`. These are fixed operations, never supplied package names or
 commands. Project creation accepts `installHostPackages: true` through HTTP/SDK,
 `--install-host-packages` through CLI, and an explicit dashboard checkbox. It
 requires the broker's `server.packages.install` permission independently of

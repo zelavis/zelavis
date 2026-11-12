@@ -2,6 +2,7 @@ import {
   createErrorCorrelationId,
   genericErrorBody,
   publicErrorMessage,
+  reportUnexpectedError,
 } from "./error-policy.js";
 
 export interface ZelavisServerErrorStatusRule {
@@ -37,9 +38,11 @@ export function createJsonErrorResponse(status: number, error: unknown) {
     return { status, body: { error: message } };
   }
 
+  const correlationId = createErrorCorrelationId();
+  reportUnexpectedError(correlationId, error);
   return {
     status,
-    body: genericErrorBody(createErrorCorrelationId()),
+    body: genericErrorBody(correlationId),
   };
 }
 

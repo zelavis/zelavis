@@ -1,5 +1,10 @@
+import { parseRecipeManifest, type RecipeManifest } from "./core/recipe/index.js";
+import { Effect } from "effect";
+import { IntegrationFailure, present, integrationValue } from "./core/runtime/effect-boundary.js";
 import { normalizeProjectHostPackages } from "./project-host-packages.js";
 import type { ZelavisServiceStore } from "./platform/service-store.js";
+import type { ZelavisHostOperationRecord, ZelavisHostOperationSubmitInput } from "./platform/host-operations.js";
+import type { ZelavisPrincipal } from "./core/runtime/contracts.js";
 import {
   normalizeProjectIsolationIntent,
   type ZelavisProjectIsolationIntent,
@@ -108,6 +113,11 @@ export interface ZelavisProjectRecipeDefinition {
   readonly isolation?: ZelavisProjectIsolationIntent;
   /** Present for a managed app (WordPress and the like); see `ZelavisProjectManagedDefinition`. */
   readonly managed?: ZelavisProjectManagedDefinition;
+  /**
+   * How to install and run the software: named methods and the software versions the recipe
+   * can install. Contract 1 (`zelavis/recipe`). A Project locks one method and one version.
+   */
+  readonly install?: RecipeManifest;
 }
 
 export interface ZelavisServiceRegistryEntry<TContext = unknown> {
@@ -217,6 +227,19 @@ export interface ZelavisServiceSetupCoreContext {
    * service that received it, so a plugin cannot reach another one's records.
    */
   store?: ZelavisServiceStore;
+  /**
+   * Present when the manifest names host operations (`zelavis.hostOperations`) and the host has an operation
+   * Agent. A plugin asks for the operations it was allowed to name, on behalf of the caller whose request it is
+   * serving: the broker authorizes the caller's own permissions, so a plugin never has authority of its own.
+   */
+  hostOperations?: ZelavisServiceHostOperations;
+}
+
+export interface ZelavisServiceHostOperations {
+  /** The operation ids the manifest allows, nothing more. */
+  readonly allowed: readonly string[];
+  submit(input: ZelavisHostOperationSubmitInput, principal: ZelavisPrincipal | undefined): Promise<ZelavisHostOperationRecord>;
+  get(operationId: string, principal: ZelavisPrincipal | undefined): Promise<ZelavisHostOperationRecord>;
 }
 
 export interface ZelavisServiceSetupContext {
@@ -337,6 +360,7 @@ export function resolveServiceModule<TContext = unknown>(
     return Object.freeze({
       name: manifest.name,
       namespace: manifest.zelavis?.namespace,
+      ...(manifest.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
       kind: manifest.zelavis?.kind ?? "plugin",
       version: manifest.version,
       packageDir: (manifest as any)?.packageDir,
@@ -373,6 +397,8 @@ export function resolveServiceModule<TContext = unknown>(
     return Object.freeze({
       name,
       namespace: manifest?.zelavis?.namespace ?? (raw.namespace as string | undefined),
+      // Only the manifest can grant it: a module's own exports never widen what a plugin may ask the host.
+      ...(manifest?.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
       basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
       packageDir: (raw.packageDir as string | undefined) ?? (manifest as any)?.packageDir,
       api: (raw.api as Record<string, any>) ?? {},
@@ -421,17 +447,28 @@ const ASYNC_CONTEXT_LOAD_CONCURRENCY = 8;
 let activeLoads = 0;
 const loadWaiters: (() => void)[] = [];
 
-async function acquireLoadSlot(limit: number): Promise<void> {
+const acquireLoadSlot = (limit: number): Effect.Effect<void> => Effect.gen(function* () {
   while (activeLoads >= limit) {
-    await new Promise<void>((resolveSlot) => loadWaiters.push(resolveSlot));
+    yield* Effect.callback<void>((resume) => {
+      const waiter = () => resume(Effect.void);
+      loadWaiters.push(waiter);
+      // A waiter that was interrupted must not consume a wake-up meant for another load.
+      return Effect.sync(() => {
+        const index = loadWaiters.indexOf(waiter);
+        if (index >= 0) loadWaiters.splice(index, 1);
+      });
+    });
   }
   activeLoads += 1;
-}
+});
 
 function releaseLoadSlot() {
   activeLoads -= 1;
   loadWaiters.shift()?.();
 }
+
+/** Built outside the generators that throw it: a synchronous callback hands it to plugin code, not to a failure channel. */
+const admissionRefusal = (message: string): ZelavisPluginAdmissionError => new ZelavisPluginAdmissionError(message);
 
 export class ZelavisPluginAdmissionError extends Error {
   constructor(message: string) {
@@ -440,7 +477,7 @@ export class ZelavisPluginAdmissionError extends Error {
   }
 }
 
-export async function loadPluginPackage(options: {
+export function loadPluginPackage(options: {
   manifest: unknown;
   specifier?: string;
   importer?: (entry: string) => Promise<unknown>;
@@ -455,6 +492,7 @@ export async function loadPluginPackage(options: {
    */
   admissionTimeoutMs?: number;
 }): Promise<Readonly<ZelavisServiceRegistryEntry<any>["service"]>> {
+  return present(Effect.gen(function* (): Effect.fn.Return<Readonly<ZelavisServiceRegistryEntry<any>["service"]>, IntegrationFailure | ZelavisPluginAdmissionError> {
   const manifest = validatePluginPackageManifest(options.manifest);
   const rawEntrypoint = resolvePackageExportsEntry(manifest.exports);
   const context = createPluginExecutionContext(manifest);
@@ -475,46 +513,40 @@ export async function loadPluginPackage(options: {
     ((specifier: string) => import(specifier));
 
   const asyncContext = activePluginStorage.propagatesAsyncContext === true;
-  await acquireLoadSlot(asyncContext ? ASYNC_CONTEXT_LOAD_CONCURRENCY : 1);
-  let moduleResult: unknown;
-  try {
-    const evaluation = activePluginStorage.run(context, async () => {
-      const module = await importer(entrypoint);
+  yield* acquireLoadSlot(asyncContext ? ASYNC_CONTEXT_LOAD_CONCURRENCY : 1);
+  const moduleResult: unknown = yield* Effect.gen(function* (): Effect.fn.Return<unknown, IntegrationFailure | ZelavisPluginAdmissionError> {
+    const evaluation = activePluginStorage.run(context, () => present(Effect.gen(function* () {
+      const module = (yield* integrationValue(importer(entrypoint)));
       if (module && typeof module === "object" && "register" in module) {
         if (typeof module.register !== "function") {
           throw new TypeError("A package register export must be a function.");
         }
-        await module.register(options.configuration);
+        (yield* integrationValue(module.register(options.configuration)));
       }
       return module;
-    });
-    if (!asyncContext) {
-      moduleResult = await evaluation;
-    } else {
-      const timeoutMs = options.admissionTimeoutMs ?? DEFAULT_PLUGIN_ADMISSION_TIMEOUT_MS;
-      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-        throw new TypeError("admissionTimeoutMs must be a positive integer.");
-      }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          context.sealed = `its load exceeded the ${timeoutMs} ms admission deadline.`;
-          reject(new ZelavisPluginAdmissionError(
-            `Package "${manifest.name}" did not finish loading within ${timeoutMs} ms and was not admitted.`,
-          ));
-        }, timeoutMs);
-      });
-      // The abandoned evaluation may still settle later; nothing awaits it.
-      evaluation.catch(() => undefined);
-      try {
-        moduleResult = await Promise.race([evaluation, deadline]);
-      } finally {
-        clearTimeout(timer);
-      }
+    })));
+    if (!asyncContext) return yield* integrationValue(evaluation);
+    const timeoutMs = options.admissionTimeoutMs ?? DEFAULT_PLUGIN_ADMISSION_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      return yield* new IntegrationFailure(new TypeError("admissionTimeoutMs must be a positive integer."));
     }
-  } finally {
-    releaseLoadSlot();
-  }
+    // The abandoned evaluation may still settle later; nothing waits for it
+    // once the deadline passes, and its rejection is handled here.
+    return yield* Effect.callback<unknown, IntegrationFailure>((resume) => {
+      evaluation.then(
+        (value) => resume(Effect.succeed(value)),
+        (error) => resume(Effect.fail(new IntegrationFailure(error))),
+      );
+    }).pipe(Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => Effect.suspend(() => {
+        context.sealed = `its load exceeded the ${timeoutMs} ms admission deadline.`;
+        return Effect.fail(new IntegrationFailure(new ZelavisPluginAdmissionError(
+          `Package "${manifest.name}" did not finish loading within ${timeoutMs} ms and was not admitted.`,
+        )));
+      }),
+    }));
+  }).pipe(Effect.ensuring(Effect.sync(() => releaseLoadSlot())));
 
   const rawExport =
     moduleResult && typeof moduleResult === "object" && "default" in moduleResult
@@ -538,29 +570,29 @@ export async function loadPluginPackage(options: {
           : undefined;
 
   if (exportObj?.menu !== undefined || exportObj?.menus !== undefined) {
-    throw new TypeError(
+    return yield* new IntegrationFailure(new TypeError(
       `Package "${manifest.name}" must register menus with zelavis.plugins.ui.menus.create() from zelavis/sdk, not exported menu or menus fields.`,
-    );
+    ));
   }
   if (exportObj?.namespace !== undefined && exportObj.namespace !== manifest.zelavis?.namespace) {
-    throw new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`);
+    return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`));
   }
 
-  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "marketplace", "project", "packageDir"]) {
+  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "hostOperations", "marketplace", "project", "packageDir"]) {
     if (exportObj?.[field] !== undefined) {
-      throw new TypeError(`Package "${manifest.name}" must declare ${field} through its manifest or host loading options, not a module export.`);
+      return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" must declare ${field} through its manifest or host loading options, not a module export.`));
     }
   }
   if (exportObj?.api !== undefined) {
-    throw new TypeError(`Package "${manifest.name}" must register APIs through zelavis.createAPI or zelavis.operations.create, not an api export.`);
+    return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" must register APIs through zelavis.createAPI or zelavis.operations.create, not an api export.`));
   }
   if (
     exportObj?.services !== undefined ||
     exportObj?.runtimeServices !== undefined
   ) {
-    throw new TypeError(
+    return yield* new IntegrationFailure(new TypeError(
       `Package "${manifest.name}" cannot export nested or runtime services. Register its own APIs, operations, menus and frontend behavior through the SDK.`,
-    );
+    ));
   }
   const packageDir = initialPackageDir;
 
@@ -579,6 +611,7 @@ export async function loadPluginPackage(options: {
     kind: manifest.zelavis?.kind ?? "plugin",
     packageDir,
     capabilities,
+    ...(manifest.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
     marketplace,
     basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
     api: { v1: [...context.routes] },
@@ -596,6 +629,7 @@ export async function loadPluginPackage(options: {
   };
 
   return Object.freeze(runtimeService);
+  }));
 }
 
 /**
@@ -607,10 +641,20 @@ export function manifestProjectRecipe(
   manifest: ZelavisPackageManifest,
 ): ZelavisProjectRecipeDefinition | undefined {
   const project = (manifest.zelavis as { project?: unknown } | undefined)?.project as
-    | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed"> & { isolation?: unknown; managed?: unknown })
+    | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed" | "install"> & { isolation?: unknown; managed?: unknown; install?: unknown })
     | undefined;
   if (!project) return undefined;
   const hostPackages = normalizeProjectHostPackages(project.hostPackages);
+  let install: RecipeManifest | undefined;
+  if (project.install !== undefined) {
+    try {
+      install = parseRecipeManifest(project.install);
+    } catch (error) {
+      throw new TypeError(
+        `Package "${manifest.name}" declares invalid zelavis.project.install: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   let managed: ZelavisProjectManagedDefinition | undefined;
   try {
     managed = normalizeProjectManaged(project.managed);
@@ -620,8 +664,8 @@ export function manifestProjectRecipe(
     );
   }
   if (project.isolation === undefined) {
-    const { managed: _managed, isolation: _isolation, ...rest } = project;
-    return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(managed ? { managed } : {}) };
+    const { managed: _managed, isolation: _isolation, install: _install, ...rest } = project;
+    return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(managed ? { managed } : {}), ...(install ? { install } : {}) };
   }
   let isolation: ZelavisProjectIsolationIntent | undefined;
   try {
@@ -631,8 +675,8 @@ export function manifestProjectRecipe(
       `Package "${manifest.name}" declares invalid zelavis.project.isolation: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const { isolation: _declared, managed: _managed, ...rest } = project;
-  return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}) };
+  const { isolation: _declared, managed: _managed, install: _install, ...rest } = project;
+  return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}), ...(install ? { install } : {}) };
 }
 
 /**
@@ -655,60 +699,62 @@ function loadFrontendPackage(
   }) as any;
 }
 
-export async function loadService<TContext = unknown>(
+export function loadService<TContext = unknown>(
   specifier: string,
   options: ZelavisServiceLoadOptions = {},
 ): Promise<Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>, IntegrationFailure> {
   if (!specifier || typeof specifier !== "string") {
     throw new TypeError("A service module specifier string is required.");
   }
 
   if (options.manifest) {
     if (options.manifest.zelavis?.kind === "frontend" && (options.manifest.exports === undefined || readFrontendManifest(options.manifest)?.runtime === "server")) {
-      return loadFrontendPackage(options.manifest) as any;
+      return (yield* integrationValue(loadFrontendPackage(options.manifest) as any));
     }
-    return loadPluginPackage({
+    return (yield* integrationValue(loadPluginPackage({
       manifest: options.manifest,
       configuration: options.configuration,
       scope: options.scope,
       importer: options.importer,
       packageDir: options.packageDir ?? (options.manifest as any)?.packageDir,
-    }) as any;
+    }) as any));
   }
 
   // The core never touches a filesystem. A host that can resolve a manifest
   // for this specifier installs a resolver explicitly.
   const resolver = options.manifestResolver;
-  const manifest = resolver ? await resolver(specifier) : undefined;
+  const manifest = resolver ? (yield* integrationValue(resolver(specifier))) : undefined;
 
   if (manifest) {
     if (manifest.zelavis?.kind === "frontend" && (manifest.exports === undefined || readFrontendManifest(manifest)?.runtime === "server")) {
-      return loadFrontendPackage(manifest) as any;
+      return (yield* integrationValue(loadFrontendPackage(manifest) as any));
     }
-    return loadPluginPackage({
+    return (yield* integrationValue(loadPluginPackage({
       manifest,
       specifier,
       configuration: options.configuration,
       scope: options.scope,
       importer: options.importer,
       packageDir: options.packageDir ?? (manifest as any)?.packageDir,
-    }) as any;
+    }) as any));
   }
 
   const importer =
     options.importer ??
     ((moduleSpecifier: string) => import(moduleSpecifier));
 
-  const mod = await importer(specifier);
-  return resolveServiceModule<TContext>(mod);
-}
+  const mod = (yield* integrationValue(importer(specifier)));
+  return (yield* integrationValue(resolveServiceModule<TContext>(mod)));
+}));
+  }
 
-export async function loadServiceRegistry<TContext = unknown>(
+export function loadServiceRegistry<TContext = unknown>(
   entries: readonly ZelavisServiceRegistryModuleEntry[],
   options: ZelavisServiceLoadOptions = {},
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[]> {
-  const resolvedEntries = await Promise.all(
-    entries.map(async (entry) => {
+  return present(Effect.gen(function* (): Effect.fn.Return<readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[], IntegrationFailure> {
+    const resolvedEntries = yield* Effect.forEach(entries, (entry) => Effect.gen(function* () {
       if (!entry || typeof entry !== "object") {
         throw new TypeError("A service registry module entry object is required.");
       }
@@ -719,11 +765,11 @@ export async function loadServiceRegistry<TContext = unknown>(
         );
       }
 
-      const service = await loadService<TContext>(entry.specifier, {
+      const service = (yield* integrationValue(loadService<TContext>(entry.specifier, {
         ...options,
         manifest: entry.manifest ?? options.manifest,
         packageDir: entry.packageDir ?? (entry.manifest as any)?.packageDir ?? options.packageDir,
-      });
+      })));
 
       return {
         service,
@@ -735,10 +781,10 @@ export async function loadServiceRegistry<TContext = unknown>(
         packageDir: entry.packageDir ?? service.packageDir,
         ...(entry.order !== undefined ? { order: entry.order } : {}),
       };
-    }),
-  );
+    }), { concurrency: Math.max(1, entries.length) });
 
-  return createServiceRegistry(resolvedEntries);
+    return createServiceRegistry(resolvedEntries);
+  }));
 }
 
 export function removeServiceFromRegistry<TContext = unknown>(
@@ -812,6 +858,8 @@ export interface ActivateServiceRegistryOptions {
   domainBindings?: DomainBindingStore;
   /** Builds the durable store a named service is given. */
   serviceStore?: (serviceName: string) => ZelavisServiceStore;
+  /** Builds the host-operation handle a service whose manifest names operations is given. */
+  hostOperations?: (serviceName: string, allowed: readonly string[]) => ZelavisServiceHostOperations | undefined;
   /**
    * The frontend serving this runtime's root path. It is mounted where the
    * runtime's face belongs rather than corralled under `/apps/<name>` like an
@@ -820,7 +868,7 @@ export interface ActivateServiceRegistryOptions {
   siteFrontendName?: string;
 }
 
-export async function activateServiceRegistry<
+export function activateServiceRegistry<
   TContext extends ZelavisServiceSetupContext = ZelavisServiceSetupContext,
 >(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[],
@@ -838,6 +886,11 @@ export async function activateServiceRegistry<
   services: readonly ZelavisAnyRuntimeServiceInput[];
   endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
 }> {
+  return present(Effect.gen(function* (): Effect.fn.Return<{
+    registry: readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[];
+    services: readonly ZelavisAnyRuntimeServiceInput[];
+    endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
+  }, IntegrationFailure | ZelavisPluginAdmissionError> {
   const activatedServices: ZelavisAnyRuntimeServiceInput[] = [];
   const activatedEndpointGroups: ZelavisEndpointGroupInput<any>[] = [];
   const installedServices = [...registry]
@@ -854,7 +907,7 @@ export async function activateServiceRegistry<
     );
 
     if (entry.service.app && options.bundleStore) {
-      const appService = await synthesizeServiceAppService({
+      const appService = yield* integrationValue(synthesizeServiceAppService({
         service: entry.service as any,
         bundleStore: options.bundleStore,
         projectId: options.projectId,
@@ -862,7 +915,7 @@ export async function activateServiceRegistry<
         ...(options.siteFrontendName === entry.service.name
           ? { effectiveMount: entry.service.app.mount ?? "/" }
           : {}),
-      });
+      }));
       if (appService) {
         activatedEndpointGroups.push({
           ...endpointGroupFromService(appService),
@@ -877,7 +930,7 @@ export async function activateServiceRegistry<
     let setupAbandoned = false;
     const addEndpointGroup = (endpointGroup: ZelavisEndpointGroupInput<any>) => {
       if (setupAbandoned) {
-        throw new ZelavisPluginAdmissionError(
+        throw admissionRefusal(
           `Service "${entry.service.name}" can no longer add endpoint groups: its setup exceeded its deadline.`,
         );
       }
@@ -895,7 +948,7 @@ export async function activateServiceRegistry<
 
     const setupTimeoutMs = options.setupTimeoutMs ?? DEFAULT_SERVICE_SETUP_TIMEOUT_MS;
     if (!Number.isSafeInteger(setupTimeoutMs) || setupTimeoutMs <= 0) {
-      throw new TypeError("setupTimeoutMs must be a positive integer.");
+      return yield* new IntegrationFailure(new TypeError("setupTimeoutMs must be a positive integer."));
     }
     const setup = Promise.resolve(entry.service.setup({
       ...(context as TContext),
@@ -906,6 +959,12 @@ export async function activateServiceRegistry<
         ...(options.serviceStore
           ? { store: options.serviceStore(entry.service.name) }
           : {}),
+        ...(options.hostOperations && entry.service.hostOperations?.length
+          ? (() => {
+              const handle = options.hostOperations!(entry.service.name, entry.service.hostOperations!);
+              return handle ? { hostOperations: handle } : {};
+            })()
+          : {}),
       },
       service: entry.service as any,
       registry: registry as any,
@@ -913,19 +972,22 @@ export async function activateServiceRegistry<
       addEndpointGroup,
       addEndpointGroups,
     } as TContext));
-    setup.catch(() => undefined);
-    let setupTimer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      setup,
-      new Promise<never>((_resolve, reject) => {
-        setupTimer = setTimeout(() => {
-          setupAbandoned = true;
-          reject(new ZelavisPluginAdmissionError(
-            `Service "${entry.service.name}" setup did not finish within ${setupTimeoutMs} ms.`,
-          ));
-        }, setupTimeoutMs);
+    // An abandoned setup may still settle later; its rejection is handled here
+    // and nothing waits for it once the deadline passes.
+    const result = yield* Effect.callback<Awaited<typeof setup>, IntegrationFailure>((resume) => {
+      setup.then(
+        (value) => resume(Effect.succeed(value)),
+        (error) => resume(Effect.fail(new IntegrationFailure(error))),
+      );
+    }).pipe(Effect.timeoutOrElse({
+      duration: setupTimeoutMs,
+      orElse: () => Effect.suspend(() => {
+        setupAbandoned = true;
+        return Effect.fail(new IntegrationFailure(new ZelavisPluginAdmissionError(
+          `Service "${entry.service.name}" setup did not finish within ${setupTimeoutMs} ms.`,
+        )));
       }),
-    ]).finally(() => clearTimeout(setupTimer));
+    }));
 
     if (result?.endpointGroups?.length) {
       addEndpointGroups(result.endpointGroups);
@@ -937,4 +999,5 @@ export async function activateServiceRegistry<
     services: Object.freeze([...activatedServices]),
     endpointGroups: Object.freeze([...activatedEndpointGroups]),
   };
+  }));
 }

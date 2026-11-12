@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Traefik dynamic configuration compiler for Zelavis Edge.
  *
@@ -269,6 +271,16 @@ export function compileTraefikPublication(
         ...(routeMiddlewares.length > 0 ? { middlewares: routeMiddlewares } : {}),
       };
 
+      // Project-managed ACME renewal must reach the host-matched challenge before redirection.
+      if (hostnameConfig?.projectDomain && hostnameConfig.tlsMode === "managed") {
+        routers[`router_${route.scope}_${safeId}_acme`] = {
+          entryPoints: [httpEntryPoint],
+          rule: `${rule} && (PathPrefix(\`/.well-known/acme-challenge/\`) || Path(\`/.well-known/zelavis-project-domain\`))`,
+          service: serviceName,
+          priority: Math.max(1, priority + 1),
+        };
+      }
+
       // HTTP redirect router
       if (redirectHttpToHttps) {
         needsRedirectMiddleware = true;
@@ -360,16 +372,18 @@ export function compileTraefikPublication(
 /**
  * Write a compiled Traefik generation to a target directory on disk.
  */
-export async function writeTraefikGeneration(
+export function writeTraefikGeneration(
   generation: TraefikCompiledGeneration,
   targetDirectory: string,
 ): Promise<void> {
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+  const { mkdir, writeFile } = (yield* integrationValue(import("node:fs/promises")));
+  const { join } = (yield* integrationValue(import("node:path")));
 
-  await mkdir(targetDirectory, { recursive: true });
+  (yield* integrationValue(mkdir(targetDirectory, { recursive: true })));
   for (const [filename, content] of Object.entries(generation.files)) {
     const filePath = join(targetDirectory, filename);
-    await writeFile(filePath, content, "utf8");
+    (yield* integrationValue(writeFile(filePath, content, "utf8")));
   }
-}
+}));
+  }

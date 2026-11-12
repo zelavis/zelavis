@@ -1,4 +1,4 @@
-import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { parseJson, objectFields, isString, isTimestamp } from "../core/json-validation.js";
 /**
@@ -32,28 +32,32 @@ interface StoredKey {
   readonly notAfter: string;
 }
 
-async function generate(now: number): Promise<StoredKey> {
-  const { privateKey, publicKey } = await crypto.subtle.generateKey(
+function generate(now: number): Promise<StoredKey> {
+    return present(Effect.gen(function* (): Effect.fn.Return<StoredKey, IntegrationFailure> {
+  const { privateKey, publicKey } = (yield* integrationValue(crypto.subtle.generateKey(
     { name: "Ed25519" }, true, ["sign", "verify"],
-  );
-  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", publicKey));
-  const fingerprint = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))]
+  )));
+  const raw = new Uint8Array((yield* integrationValue(crypto.subtle.exportKey("raw", publicKey))));
+  const fingerprint = [...new Uint8Array((yield* integrationValue(crypto.subtle.digest("SHA-256", raw))))]
     .slice(0, 8).map((value) => value.toString(16).padStart(2, "0")).join("");
   return {
     keyId: `platform-${fingerprint}`,
-    privateKeyPkcs8: Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64"),
+    privateKeyPkcs8: Buffer.from((yield* integrationValue(crypto.subtle.exportKey("pkcs8", privateKey)))).toString("base64"),
     publicKey: Buffer.from(raw).toString("base64"),
     notBefore: new Date(now - 60_000).toISOString(),
     notAfter: new Date(now + VALIDITY_MS).toISOString(),
   };
-}
+}));
+  }
 
-async function writeAtomically(path: string, body: string, mode: number) {
+function writeAtomically(path: string, body: string, mode: number) {
+    return present(Effect.gen(function* () {
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, body, { mode, flag: "w" });
-  await chmod(temporary, mode);
-  await rename(temporary, path);
-}
+  (yield* integrationValue(writeFile(temporary, body, { mode, flag: "w" })));
+  (yield* integrationValue(chmod(temporary, mode)));
+  (yield* integrationValue(rename(temporary, path)));
+}));
+  }
 
 export function readOrCreatePlatformAuthorityKey(
   directory: string,

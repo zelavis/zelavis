@@ -244,16 +244,17 @@ test("the deployment backend runtime exposes every member of the driver contract
     name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
     recipeDefinition: () => ({ runtimeKinds: ["native"], managed: { adminTitle: "Verified app" } }),
     capabilities: () => ({}),
-    async prepare() {}, async start() { return { status: "running" }; },
+    async prepare() {}, async start() { return { status: "running" }; }, async startStandby() { return { status: "standby" }; },
     async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
     async logs() { return []; }, async destroy() {}, async close() {},
     async signGatewayAuthority() { return "signed"; },
     async gatewayTarget() { return "http://127.0.0.1:3000"; },
     async fencePrevious() { return true; }, async adopt() {}, async detach() {},
+    async commitUpgrade() {}, async abandonUpgrade() {}, async migrateData() { return undefined; }, async prepareData() {}, async retainedData() { return []; }, async removeRetainedData() {},
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },
     async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },
-    async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; },
+    async prepareUpdate() { return {}; }, async prefetchUpdate() {}, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; }, async settleUpdate() {}, async ingressReady() {}, async setupValues() { return []; },
   };
   const runtime = createDeploymentBackendProjectRuntime({
     store,
@@ -927,6 +928,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     // Platform dashboard owns the menus that render them.
     assert.equal(projectConfig.capabilities.database.available, true);
     assert.equal(projectConfig.capabilities.identity.available, true);
+    assert.equal(projectConfig.capabilities.appPublicAuth.available, true);
     assert.equal(projectConfig.capabilities.workloads.available, true);
     assert.ok(
       !projectConfig.services.some((service) =>
@@ -945,8 +947,8 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
 
     const childDashboardResponse = await fetch(`${projectRuntimeUrls.get("alpha")}/zelavis`);
     const childDashboardBody = await childDashboardResponse.text();
-    assert.doesNotMatch(childDashboardBody, /Zelavis Dashboard/);
-    assert.doesNotMatch(childDashboardBody, /__ZELAVIS_RUNTIME_CONFIG__/);
+    assert.doesNotMatch(childDashboardBody, /dashboard-shell|Zelavis · Fuzor/);
+    assert.doesNotMatch(childDashboardBody, /__zelavis__/);
 
     const updateSettingsResponse = await runtimeRequest(
       "/projects/alpha/proxy/zelavis/api/v1/runtime/settings",

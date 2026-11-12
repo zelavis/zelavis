@@ -62,6 +62,8 @@ export interface ZelavisSystemStore {
     namespace: string,
     key: string,
     expectedUpdatedAt: string,
+    /** When supplied, compare the observed value atomically too (ABA protection). */
+    expectedValue?: ZelavisSystemStoreValue,
   ): Promise<boolean> | boolean;
   delete(namespace: string, key: string): Promise<boolean> | boolean;
   list(
@@ -181,12 +183,13 @@ export function createMemorySystemStore(): ZelavisSystemStore {
       records.set(id, record);
       return cloneRecord(record);
     },
-    compareAndDelete(namespace, key, expectedUpdatedAt) {
+    compareAndDelete(namespace, key, expectedUpdatedAt, expectedValue) {
       const normalizedNamespace = normalizePart(namespace, "namespace");
       const normalizedKey = normalizePart(key, "key");
       const id = recordId(normalizedNamespace, normalizedKey);
       const existing = records.get(id);
-      if (!existing || existing.updatedAt !== expectedUpdatedAt) return false;
+      if (!existing || existing.updatedAt !== expectedUpdatedAt ||
+          (expectedValue !== undefined && JSON.stringify(existing.value) !== JSON.stringify(expectedValue))) return false;
       return records.delete(id);
     },
     delete(namespace, key) {

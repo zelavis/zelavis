@@ -44,9 +44,8 @@ test-results/
 # Runtime data
 .zelavis/
 
-# Claude local state (.claude/skills/ is auto-symlinked from .agents/skills/ on SessionStart)
-.claude/*
-!.claude/settings.json
+# Claude local state only: agent guidance lives in AGENTS.md and .agents/
+.claude/
 
 # Wrangler local state
 .wrangler/
@@ -69,3 +68,6 @@ Thumbs.db
 
 # Local experiments; no generated cross-language SDKs are published.
 /scripts/sdk-codegen/generated/
+
+# Alchemy working directory
+.alchemy/

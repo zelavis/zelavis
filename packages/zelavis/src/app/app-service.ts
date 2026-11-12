@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue } from "../core/runtime/effect-boundary.js";
 import {
   identityEndpointGroup,
   createDatabaseAuthRepositories,
@@ -5,6 +7,7 @@ import {
   createPasswordProvider,
   PASSWORD_PROVIDER,
   type IdentityMethodPlugin,
+  type RegistrationRecovery,
   type IdentityServiceOptions,
 } from "./identity/index.js";
 import type { DatabaseRuntimeApi } from "../db/index.js";
@@ -15,56 +18,72 @@ function createProjectAuthSettingsStore(database: DatabaseRuntimeApi) {
   const documents = tenant?.documents;
   if (!documents) {
     return Object.freeze({
-      async get(_key: string) { return undefined; },
-      async set(_key: string, _value: any) {
+      get(_key: string) {
+    return present(integration(() => undefined));
+  },
+      set(_key: string, _value: any) {
+    return present(Effect.gen(function* () {
         throw new Error("Project Auth provider settings require the document database API.");
-      },
-      async delete(_key: string) { return false; },
-      async list() { return []; },
+      }));
+  },
+      delete(_key: string) {
+    return present(integration(() => false));
+  },
+      list() {
+    return present(integration(() => []));
+  },
     });
   }
   const collection = "auth_provider_settings";
   let ready: Promise<void> | undefined;
-  const ensure = () => ready ??= (async () => {
-    if (!(await documents.collectionExists(collection))) {
-      await documents.createCollection({
+  const ensure = () => ready ??= (() => present(Effect.gen(function* () {
+    if (!((yield* integrationValue(documents.collectionExists(collection))))) {
+      (yield* integrationValue(documents.createCollection({
         name: collection,
         surface: "database",
         metadata: { owner: "zelavis/app/identity", purpose: "provider-settings" },
-      });
+      })));
     }
-  })();
+  })))();
   return Object.freeze({
-    async get(key: string) {
-      await ensure();
-      return (await documents.findById({ collection, id: key }))?.data.value;
-    },
-    async set(key: string, value: any) {
-      await ensure();
-      const current = await documents.findById({ collection, id: key });
+    get(key: string) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(ensure()));
+      return ((yield* integrationValue(documents.findById({ collection, id: key }))))?.data.value;
+    }));
+  },
+    set(key: string, value: any) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(ensure()));
+      const current = (yield* integrationValue(documents.findById({ collection, id: key })));
       if (current) {
-        await documents.update({
+        (yield* integrationValue(documents.update({
           collection,
           id: key,
           data: { value },
           mode: "replace",
           expectedVersion: current.version,
-        });
+        })));
       } else {
-        await documents.insert({ collection, id: key, data: { value } });
+        (yield* integrationValue(documents.insert({ collection, id: key, data: { value } })));
       }
-    },
-    async delete(key: string) {
-      await ensure();
-      return documents.delete({ collection, id: key });
-    },
-    async list() {
-      await ensure();
-      return (await documents.findMany({ collection })).map((document) => ({
+    }));
+  },
+    delete(key: string) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(ensure()));
+      return (yield* integrationValue(documents.delete({ collection, id: key })));
+    }));
+  },
+    list() {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(ensure()));
+      return (yield* integrationValue(((yield* integrationValue(documents.findMany({ collection })))).map((document) => ({
         key: document.id,
         value: document.data.value,
-      }));
-    },
+      }))));
+    }));
+  },
   });
 }
 
@@ -84,7 +103,9 @@ export interface ProjectIdentityInput {
   /** Installed credential providers discovered by capability. */
   readonly methods: readonly IdentityMethodPlugin[];
   readonly projectId?: string;
+  readonly rootPath: string;
   readonly options?: IdentityServiceOptions;
+  readonly registrationRecovery?: RegistrationRecovery;
 }
 
 /**
@@ -95,9 +116,14 @@ export interface ProjectIdentityInput {
  * System Store; a Project keeps them in its own database, so they travel with
  * the Project and are never visible to another.
  */
-export async function createProjectIdentityEndpointGroup(input: ProjectIdentityInput) {
+export function createProjectIdentityEndpointGroup(input: ProjectIdentityInput) {
+    return present(Effect.gen(function* () {
   const { database } = input;
   const authOptions = input.options ?? {};
+  const configuredCookie = authOptions.definition?.sessionCookie;
+  const cookiesDisabled = configuredCookie === false || authOptions.authOptions?.sessionCookieName === false;
+  const standaloneCookie = input.projectId === undefined && configuredCookie ? configuredCookie : undefined;
+  const cookieName = input.projectId === undefined ? standaloneCookie?.name ?? authOptions.authOptions?.sessionCookieName : undefined;
   const settingsStore = createProjectAuthSettingsStore(database);
   const oauth = createOAuthProviderRuntime(authOptions.oauth ?? {});
   const password: IdentityMethodPlugin = {
@@ -110,12 +136,14 @@ export async function createProjectIdentityEndpointGroup(input: ProjectIdentityI
   };
   const inheritedMethodContext = authOptions.authOptions?.methodContext;
 
-  return identityEndpointGroup({
+  return (yield* integrationValue(identityEndpointGroup({
     ...authOptions,
-    registration: authOptions.registration ?? true,
     authOptions: {
       ...(authOptions.authOptions ?? {}),
       projectId: input.projectId ?? authOptions.authOptions?.projectId,
+      sessionCookieName: cookiesDisabled ? false : cookieName,
+      registrationRecovery: input.registrationRecovery,
+      accountAccessWriter: authOptions.authOptions?.repositories?.accounts ?? database,
       repositories: {
         ...createDatabaseAuthRepositories(database),
         ...(authOptions.authOptions?.repositories ?? {}),
@@ -137,7 +165,11 @@ export async function createProjectIdentityEndpointGroup(input: ProjectIdentityI
     ],
     definition: {
       ...(authOptions.definition ?? {}),
+      authority: "project",
+      sessionCookie: cookiesDisabled ? false : { path: input.rootPath, ...standaloneCookie },
+      registrationRecovery: input.registrationRecovery,
       oauthConnections: oauth.connections,
     },
-  });
-}
+  })));
+}));
+  }

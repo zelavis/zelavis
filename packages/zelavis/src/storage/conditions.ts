@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { integration, present, integrationValue, unwrapFailure, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { ZelavisConflictError } from "../platform/shared.js";
 import type {
   ZelavisFileStorage,
@@ -57,10 +59,17 @@ const decoder = new TextDecoder();
  * outage, or a store that cannot tell a lost race from a failed write — and
  * the probe can be retried.
  */
-export async function probeFileStorageGuarantees(
+export function probeFileStorageGuarantees(
   storage: ZelavisFileStorage,
   options: ZelavisFileStorageProbeOptions = {},
 ): Promise<ZelavisFileStorageProbeResult> {
+  return present(probeFileStorageGuaranteesProgram(storage, options));
+}
+
+const probeFileStorageGuaranteesProgram = (
+  storage: ZelavisFileStorage,
+  options: ZelavisFileStorageProbeOptions,
+): Effect.Effect<ZelavisFileStorageProbeResult, Error | IntegrationFailure> => Effect.gen(function* () {
   const path = `${options.prefix ?? "zelavis-probe"}/conditions-${Date.now()}-${crypto.randomUUID()}`;
   const violation = (message: string): ZelavisFileStorageProbeResult => ({
     conformant: false,
@@ -68,29 +77,29 @@ export async function probeFileStorageGuarantees(
   });
 
   /** The write's entry, or `undefined` when the store rejected its condition. */
-  const attempt = async (
+  const attempt = (
     body: string,
     condition: ZelavisFileStorageCondition,
     step: string,
-  ): Promise<ZelavisFileStorageEntry | undefined> => {
-    try {
-      return await storage.put({ path, body, condition });
-    } catch (error) {
-      if (error instanceof ZelavisStorageConditionError) return undefined;
-      throw new Error(
-        `The storage probe could not complete step ${step}: the store answered a ` +
-          "conditional write with an error rather than success or a clean rejection.",
-        { cause: error },
-      );
-    }
-  };
+  ): Effect.Effect<ZelavisFileStorageEntry | undefined, Error> =>
+    integration(() => storage.put({ path, body, condition })).pipe(
+      Effect.catch((failure) => {
+        const error = unwrapFailure(failure);
+        if (error instanceof ZelavisStorageConditionError) return Effect.succeed(undefined);
+        return Effect.fail(new IntegrationFailure(new Error(
+          `The storage probe could not complete step ${step}: the store answered a ` +
+            "conditional write with an error rather than success or a clean rejection.",
+          { cause: error },
+        )));
+      }),
+    );
 
   /** A violation when a read does not return the last write, else `undefined`. */
-  const readsBack = async (
+  const readsBack = (
     expected: string,
     etag: string,
-  ): Promise<ZelavisFileStorageProbeResult | undefined> => {
-    const object = await storage.get(path);
+  ): Effect.Effect<ZelavisFileStorageProbeResult | undefined, IntegrationFailure> => Effect.gen(function* () {
+    const object = yield* integration(() => storage.get(path));
     if (object === undefined || decoder.decode(object.body) !== expected) {
       return violation(
         "a read after a successful write did not return that write, so a reader " +
@@ -103,10 +112,10 @@ export async function probeFileStorageGuarantees(
       );
     }
     return undefined;
-  };
+  });
 
-  try {
-    const created = await attempt("probe-create", { ifAbsent: true }, "1");
+  return yield* Effect.gen(function* (): Effect.fn.Return<ZelavisFileStorageProbeResult, Error | IntegrationFailure> {
+    const created = yield* attempt("probe-create", { ifAbsent: true }, "1");
     if (created === undefined) {
       return violation("the store rejected a conditional create of an object that does not exist");
     }
@@ -116,10 +125,10 @@ export async function probeFileStorageGuarantees(
       );
     }
     const first = created.etag;
-    const afterCreate = await readsBack("probe-create", first);
+    const afterCreate = yield* readsBack("probe-create", first);
     if (afterCreate) return afterCreate;
 
-    if ((await attempt("probe-recreate", { ifAbsent: true }, "2")) !== undefined) {
+    if ((yield* attempt("probe-recreate", { ifAbsent: true }, "2")) !== undefined) {
       return violation(
         "the store overwrote an object although the write was conditional on it being " +
           "absent; it accepts the condition and does not enforce it, so two writers can " +
@@ -127,10 +136,10 @@ export async function probeFileStorageGuarantees(
       );
     }
 
-    const afterRejectedCreate = await readsBack("probe-create", first);
+    const afterRejectedCreate = yield* readsBack("probe-create", first);
     if (afterRejectedCreate) return afterRejectedCreate;
 
-    const updated = await attempt("probe-update", { ifMatch: first }, "3");
+    const updated = yield* attempt("probe-update", { ifMatch: first }, "3");
     if (updated === undefined) {
       return violation("the store rejected a conditional update that carried the current version");
     }
@@ -140,31 +149,31 @@ export async function probeFileStorageGuarantees(
           "write cannot be told from a current one",
       );
     }
-    const afterUpdate = await readsBack("probe-update", updated.etag);
+    const afterUpdate = yield* readsBack("probe-update", updated.etag);
     if (afterUpdate) return afterUpdate;
 
-    if ((await attempt("probe-stale", { ifMatch: first }, "4")) !== undefined) {
+    if ((yield* attempt("probe-stale", { ifMatch: first }, "4")) !== undefined) {
       return violation(
         "the store applied a write conditional on a version that had already been " +
           "replaced; it accepts the condition and does not enforce it, so a fenced " +
           "writer can still overwrite its successor",
       );
     }
-    const afterStale = await readsBack("probe-update", updated.etag);
+    const afterStale = yield* readsBack("probe-update", updated.etag);
     if (afterStale) return afterStale;
 
-    await storage.delete(path);
-    if ((await attempt("probe-missing", { ifMatch: updated.etag }, "5")) !== undefined) {
+    yield* integration(() => storage.delete(path));
+    if ((yield* attempt("probe-missing", { ifMatch: updated.etag }, "5")) !== undefined) {
       return violation("the store accepted ifMatch for an absent object");
     }
-    if (await storage.get(path)) return violation("a rejected absent-object write created an object");
+    if (yield* integration(() => storage.get(path))) return violation("a rejected absent-object write created an object");
     return { conformant: true };
-  } finally {
+  }).pipe(
     // Debris on every path. A delete that fails leaves one small object under
     // the probe prefix, which nothing reads.
-    await Promise.resolve(storage.delete(path)).catch(() => undefined);
-  }
-}
+    Effect.ensuring(integration(() => storage.delete(path)).pipe(Effect.orElseSucceed(() => undefined))),
+  );
+});
 
 /** Unsupported semantics or a completed probe that disproved the guarantees. */
 export class ZelavisStorageGuaranteeError extends Error {
@@ -187,29 +196,34 @@ export function invalidateFileStorageGuarantees(storage: ZelavisFileStorage): vo
  * proved by a sequential probe. Outages reject and are never cached as success.
  * Configuration changes must use a new adapter or capability descriptor.
  */
-export async function requireFileStorageGuarantees(
+export function requireFileStorageGuarantees(
   storage: ZelavisFileStorage,
   scope: ZelavisFileStorageScope = "distributed",
 ): Promise<void> {
-  const ranks = { process: 1, host: 2, distributed: 3 };
-  const capabilities = storage.capabilities;
-  if (!capabilities || !capabilities.conditionalCreate || !capabilities.conditionalReplace ||
-      !(ranks[capabilities.conditionalCreate] >= ranks[scope]) ||
-      !(ranks[capabilities.conditionalReplace] >= ranks[scope])) {
-    throw new ZelavisStorageGuaranteeError(`Storage does not support conditional authority at ${scope} scope.`);
-  }
-  const cached = checks.get(storage);
-  if (cached && cached.capabilities === capabilities && cached.get === storage.get &&
-      cached.put === storage.put && cached.delete === storage.delete) return cached.ready;
-  const check = {
-    capabilities, get: storage.get, put: storage.put, delete: storage.delete,
-    ready: probeFileStorageGuarantees(storage).then((result) => {
-      if (!result.conformant) throw new ZelavisStorageGuaranteeError(result.violation);
-    }),
-  };
-  checks.set(storage, check);
-  try { await check.ready; } catch (error) {
-    if (checks.get(storage) === check) checks.delete(storage);
-    throw error;
-  }
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    const ranks = { process: 1, host: 2, distributed: 3 };
+    const capabilities = storage.capabilities;
+    if (!capabilities || !capabilities.conditionalCreate || !capabilities.conditionalReplace ||
+        !(ranks[capabilities.conditionalCreate] >= ranks[scope]) ||
+        !(ranks[capabilities.conditionalReplace] >= ranks[scope])) {
+      throw new ZelavisStorageGuaranteeError(`Storage does not support conditional authority at ${scope} scope.`);
+    }
+    const cached = checks.get(storage);
+    if (cached && cached.capabilities === capabilities && cached.get === storage.get &&
+        cached.put === storage.put && cached.delete === storage.delete) {
+      return yield* integrationValue(cached.ready);
+    }
+    const check = {
+      capabilities, get: storage.get, put: storage.put, delete: storage.delete,
+      ready: present(probeFileStorageGuaranteesProgram(storage, {}).pipe(
+        Effect.flatMap((result) => result.conformant
+          ? Effect.void
+          : Effect.fail(new IntegrationFailure(new ZelavisStorageGuaranteeError(result.violation)))),
+      )),
+    };
+    checks.set(storage, check);
+    yield* integrationValue(check.ready).pipe(
+      Effect.tapError(() => Effect.sync(() => { if (checks.get(storage) === check) checks.delete(storage); })),
+    );
+  }));
 }

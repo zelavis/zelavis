@@ -131,6 +131,36 @@ test("Gateway authority never carries a wildcard downstream", async () => {
   );
 });
 
+test("Gateway account access proofs are signed, audience-bound and retained across handover", async () => {
+  const { Effect } = await import("effect");
+  const { createNodeRuntimeGateway } = await import("../dist/adapters/_node-runtime-gateway.js");
+  const secret = createGatewayAuthoritySecret();
+  const workerSecret = createGatewayAuthoritySecret();
+  const accountAccessDigest = "a".repeat(64);
+  const token = await signGatewayAuthority(secret, claims({ permissions: ["project.users.manage"], accountAccessDigest }));
+  const verified = await verifyGatewayAuthority(secret, token, { audienceProjectId: "alpha" });
+  assert.equal(verified.accountAccessDigest, accountAccessDigest);
+  assert.deepEqual(verified.permissions, ["project.users.manage"]);
+  const [payload, signature] = token.split(".");
+  const tampered = Buffer.from(Buffer.from(payload, "base64url").toString("utf8").replace(accountAccessDigest, "b".repeat(64))).toString("base64url");
+  assert.equal(await verifyGatewayAuthority(secret, `${tampered}.${signature}`, { audienceProjectId: "alpha" }), undefined);
+  assert.equal(await verifyGatewayAuthority(secret, token, { audienceProjectId: "beta" }), undefined);
+  for (const malformed of ["", "*", "z".repeat(64), "a".repeat(65)]) {
+    const bad = await signGatewayAuthority(secret, claims({ accountAccessDigest: malformed }));
+    assert.equal(await verifyGatewayAuthority(secret, bad, { audienceProjectId: "alpha" }), undefined);
+  }
+  const gateway = createNodeRuntimeGateway({
+    projectId: "alpha", parentSecret: () => secret, workerSecret: () => workerSecret,
+  });
+  const queued = await Effect.runPromise(gateway({ "x-zelavis-authority": token }));
+  const forwarded = await Effect.runPromise(queued());
+  const next = await verifyGatewayAuthority(workerSecret, forwarded["x-zelavis-authority"], { audienceProjectId: "alpha" });
+  assert.equal(next.accountAccessDigest, accountAccessDigest);
+  assert.deepEqual(next.permissions, ["project.users.manage"]);
+  const replayed = await Effect.runPromise(gateway({ "x-zelavis-authority": token }));
+  assert.equal((await Effect.runPromise(replayed()))["x-zelavis-authority"], undefined);
+});
+
 test("Project runtimes reject forged authority and honour real caller authority", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-gateway-"));
   const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory }) });

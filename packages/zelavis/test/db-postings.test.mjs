@@ -1,77 +1,95 @@
+// Postings: sets of identifiers, one container per segment of 65536.
+//
+// Every operation is checked against plain Set semantics over many seeded
+// samples, chosen so that both container shapes occur, segments are shared and
+// unshared between the two sides, and identifiers sit past 32 bits.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Postings } from "../dist/db/index.js";
 
+const SPAN = 65536;
+
 const rnd = (seed) => () =>
   ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 0) / 0x80000000;
 
-const build = (ids) => {
+const build = (ids, { shuffled = false } = {}) => {
   const b = new Postings.PostingsBuilder();
-  for (const id of [...ids].sort((a, z) => a - z)) b.add(id);
+  const order = [...ids].sort((a, z) => a - z);
+  if (shuffled) order.reverse();
+  for (const id of order) b.add(id);
   return b.build();
 };
 
-const sample = (rand, universe, density) => {
+/** Ids in a few segments, some far apart, at a density per segment. */
+const sample = (rand, density) => {
   const out = new Set();
-  for (let i = 1; i < universe; i++) if (rand() < density) out.add(i);
+  const segments = [0, 1, 3, 2 ** 24 + 5].filter(() => rand() < 0.8);
+  for (const segment of segments) {
+    for (let offset = 0; offset < SPAN; offset += 1 + Math.floor(rand() / density)) out.add(segment * SPAN + offset);
+  }
   return out;
 };
 
-test("postings: representation is chosen by density", () => {
-  // 5 ids spread over 10,000 is far below the bitset break-even.
-  assert.equal(build([1, 500, 2000, 7000, 9999]).kind, "array");
-  // Half of a 1,000-wide universe is well above it.
-  const dense = [];
-  for (let i = 1; i < 1000; i += 2) dense.push(i);
-  assert.equal(build(dense).kind, "bitset");
-  assert.equal(Postings.size(build(dense)), dense.length);
+const kinds = (p) => p.containers.map((c) => c.kind).join(",");
+
+test("postings: each segment takes the cheaper shape for what it holds", () => {
+  // Five ids in one segment are far below the bitmap break-even.
+  const sparse = build([1, 500, 2000, 7000, 9999]);
+  assert.deepEqual(sparse.segments, [0]);
+  assert.equal(kinds(sparse), "list");
+  // Half of a segment is well above it, and a neighbouring sparse segment keeps its list.
+  const ids = [];
+  for (let i = 0; i < SPAN; i += 2) ids.push(i);
+  ids.push(SPAN + 3);
+  const mixed = build(ids);
+  assert.deepEqual(mixed.segments, [0, 1]);
+  assert.equal(kinds(mixed), "bitmap,list");
+  assert.equal(Postings.size(mixed), ids.length);
 });
 
-test("postings: and/or match Set semantics across every representation pair", () => {
-  const rand = rnd(20260907);
-  for (let trial = 0; trial < 60; trial++) {
-    const universe = 200 + Math.floor(rand() * 3000);
-    // Densities chosen to straddle the break-even so array×array,
-    // array×bitset and bitset×bitset all occur.
-    const a = sample(rand, universe, rand() < 0.5 ? 0.005 : 0.4);
-    const b = sample(rand, universe, rand() < 0.5 ? 0.005 : 0.4);
-
+test("postings: and, or and andNot match Set semantics across every shape pair", () => {
+  const rand = rnd(20261021);
+  for (let trial = 0; trial < 40; trial++) {
+    // Densities straddle the per-segment break-even, so list×list,
+    // list×bitmap and bitmap×bitmap all occur.
+    const a = sample(rand, rand() < 0.5 ? 0.002 : 0.2);
+    const b = sample(rand, rand() < 0.5 ? 0.002 : 0.2);
     const pa = build(a);
-    const pb = build(b);
+    const pb = build(b, { shuffled: trial % 2 === 0 });
 
-    const expectAnd = [...a].filter((x) => b.has(x)).sort((x, y) => x - y);
-    const expectOr = [...new Set([...a, ...b])].sort((x, y) => x - y);
+    const sorted = (set) => [...set].sort((x, y) => x - y);
+    const expectAnd = sorted([...a].filter((x) => b.has(x)));
+    const expectOr = sorted(new Set([...a, ...b]));
+    const expectAndNot = sorted([...a].filter((x) => !b.has(x)));
 
-    assert.deepEqual([...Postings.iterate(Postings.and(pa, pb))], expectAnd,
-      `and @ trial ${trial} (${pa.kind} × ${pb.kind})`);
-    assert.deepEqual([...Postings.iterate(Postings.or(pa, pb))], expectOr,
-      `or @ trial ${trial} (${pa.kind} × ${pb.kind})`);
-
-    // and is commutative regardless of which side is dense
-    assert.deepEqual(
-      [...Postings.iterate(Postings.and(pb, pa))], expectAnd, "and commutes");
-
+    assert.deepEqual(Postings.ids(Postings.and(pa, pb)), expectAnd, `and @ ${trial} (${kinds(pa)} × ${kinds(pb)})`);
+    assert.deepEqual(Postings.ids(Postings.and(pb, pa)), expectAnd, `and commutes @ ${trial}`);
+    assert.deepEqual(Postings.ids(Postings.or(pa, pb)), expectOr, `or @ ${trial}`);
+    assert.deepEqual(Postings.ids(Postings.andNot(pa, pb)), expectAndNot, `andNot @ ${trial}`);
     assert.equal(Postings.size(pa), a.size, "size");
-    assert.deepEqual([...Postings.iterate(Postings.toArray(pa))], [...a].sort((x, y) => x - y),
-      "toArray round-trips");
+    assert.deepEqual(Postings.ids(pb), sorted(b), "a set built in any order reads back ascending");
 
-    for (const probe of [1, Math.floor(universe / 2), universe - 1]) {
+    for (const probe of [...[...a].slice(0, 5), 1, SPAN, 2 ** 24 * SPAN + 6, 2 ** 40]) {
       assert.equal(Postings.has(pa, probe), a.has(probe), `has(${probe})`);
     }
   }
 });
 
-test("postings: word boundaries and empty sets", () => {
-  // Bits 31/32/63/64 are where off-by-one errors in word indexing surface.
-  const edges = build([31, 32, 63, 64, 95, 96]);
-  assert.deepEqual([...Postings.iterate(edges)], [31, 32, 63, 64, 95, 96]);
+test("postings: segment boundaries, wide identifiers and empty sets", () => {
+  const boundary = [SPAN - 1, SPAN, 2 * SPAN - 1, 2 * SPAN, 2 ** 32 - 1, 2 ** 32, 2 ** 48 - 1];
+  const edges = build(boundary);
+  assert.deepEqual(Postings.ids(edges), boundary);
+  assert.equal(new Set(edges.segments).size, edges.segments.length, "one container per segment");
 
-  assert.deepEqual([...Postings.iterate(Postings.empty)], []);
+  // A repeated id counts once, however it arrives.
+  assert.deepEqual(Postings.ids(build([5, 5, 3, 5, 3], { shuffled: true })), [3, 5]);
+
+  assert.deepEqual(Postings.ids(Postings.empty), []);
   assert.equal(Postings.size(Postings.empty), 0);
-  assert.deepEqual([...Postings.iterate(Postings.and(edges, Postings.empty))], []);
-  assert.deepEqual([...Postings.iterate(Postings.or(edges, Postings.empty))],
-    [31, 32, 63, 64, 95, 96]);
-  assert.deepEqual([...Postings.iterate(Postings.andAll([]))], []);
+  assert.deepEqual(Postings.ids(Postings.and(edges, Postings.empty)), []);
+  assert.deepEqual(Postings.ids(Postings.or(edges, Postings.empty)), boundary);
+  assert.deepEqual(Postings.ids(Postings.andNot(edges, edges)), []);
+  assert.deepEqual(Postings.ids(Postings.andAll([])), []);
 });
 
 test("postings: andAll intersects narrowest-first", () => {
@@ -82,5 +100,5 @@ test("postings: andAll intersects narrowest-first", () => {
   for (let i = 1; i <= 4000; i += 2) mid.push(i);
 
   const result = Postings.andAll([build(wide), build(narrow), build(mid)]);
-  assert.deepEqual([...Postings.iterate(result)], [7]);
+  assert.deepEqual(Postings.ids(result), [7]);
 });

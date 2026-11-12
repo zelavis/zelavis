@@ -3,7 +3,9 @@ import test from "node:test";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Effect } from "effect";
+import { Deferred, Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
+import { effectOperations } from "../dist/core/runtime/effect-boundary.js";
 import { createNodeProcessProjectRuntime } from "../dist/adapters/_node-project-runtime.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 import { createNodeRuntimeClient } from "../dist/adapters/_node-runtime-client.js";
@@ -16,6 +18,36 @@ import { createProjectManager } from "../dist/project.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 import { createLocalProjectRuntime } from "../dist/adapters/_local-project-runtime.js";
 import { createDeploymentBackendProjectRuntime } from "../dist/backends/registry.js";
+import { forwardProjectSiteRequest } from "../dist/platform/public-domain-forwarder.js";
+import { fetchNodeSite } from "../dist/adapters/_node-site-fetch.js";
+import { toResponse } from "../dist/core/runtime/request-dispatcher.js";
+
+for (const ready of [true, false]) test(`cold Project host ${ready ? 'can become ready after the old 15-second limit' : 'still stops at its bounded startup deadline'}`, { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zv-cold-project-")), started = Deferred.makeUnsafe();
+  let events, stops = 0;
+  const child = { running: true, stop: async () => { stops++; child.running = false; } };
+  const agent = { start: async (_command, options) => { events = options; Effect.runSync(Deferred.succeed(started, undefined)); return child; } };
+  const driver = createNodeProcessProjectRuntime({ directory, agent });
+  try {
+    const manifest = JSON.parse(await readFile(new URL("../services/zelavis-app/package.json", import.meta.url), "utf8"));
+    const recipe = { name: manifest.name, version: manifest.version, specifier: manifest.name, runtimeKinds: ["native"] };
+    const project = { id: "one", name: "One", kind: "zelavis", runtimeKind: "native", recipe };
+    await driver.prepare(project, recipe);
+    await Effect.runPromise(Effect.gen(function* () {
+      const start = yield* Effect.forkChild(effectOperations(driver).start(project));
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(ready ? "20 seconds" : "89999 millis");
+      assert.equal(start.pollUnsafe(), undefined, "the outer start must allow the inner host's readiness stages");
+      if (ready) events.onOutput({ stream: "stdout", line: JSON.stringify({ type: "ready", url: "http://127.0.0.1:12345/" }) });
+      else yield* TestClock.adjust("1 millis");
+      const result = yield* Fiber.await(start);
+      assert.equal(Exit.isSuccess(result), ready);
+      assert.equal(stops, ready ? 0 : 1);
+      if (ready) assert.equal(result.value.status, "running");
+    }).pipe(Effect.provide(TestClock.layer()), Effect.scoped));
+    if (!ready) assert.ok((await driver.logs('one')).some(entry => /did not become ready within 90000ms/.test(entry.message)), 'startup failures remain readable in Project logs');
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test("the ordinary App runner keeps its listener and Gateway replay protection through a real engine handover", { timeout: 30_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-project-host-"));
@@ -44,6 +76,22 @@ test("the ordinary App runner keeps its listener and Gateway replay protection t
     const captured = await headers();
     const initial = await fetch(path, { headers: captured });
     assert.equal(initial.status, 200); await initial.text();
+    const settings = await fetch(`${started.url}/zelavis/api/v1/auth/registration/settings`, {
+      method: "PUT", headers: { "content-type": "application/json", [ZELAVIS_GATEWAY_AUTHORITY_HEADER]:
+        await driver.signGatewayAuthority("one", { ...claims, permissions: ["project.settings.manage"] }) },
+      body: JSON.stringify({ enabled: true, expectedRevision: 0 }),
+    });
+    assert.equal(settings.status, 200, await settings.text());
+    const site = async (path, init) => toResponse(await forwardProjectSiteRequest({
+      project: { ...project, runtime: started }, projects: { listOwned: async () => [] }, fetchSite: fetchNodeSite,
+    }, new Request(`https://site.example${path}`, init)));
+    const signup = await site("/zelavis/api/v1/auth/sign-up/password", {
+      method: "POST", headers: { origin: "https://site.example", "content-type": "application/json" },
+      body: JSON.stringify({ identifier: "after-handover", password: "my long unique App password" }),
+    });
+    assert.equal(signup.status, 201);
+    const accountId = (await signup.json()).account.id;
+    const cookie = signup.headers.get("set-cookie").split(";", 1)[0];
     const root = join(directory, "one"), file = join(root, "project.json");
     const descriptor = JSON.parse(await readFile(file, "utf8"));
     const packageFile = join(root, ".zelavis", "recipe", "package", "package.json");
@@ -60,6 +108,9 @@ test("the ordinary App runner keeps its listener and Gateway replay protection t
         assert.equal(response.status, 200, JSON.stringify(output)); await response.text();
       })]);
     assert.equal((await driver.status("one")).url, started.url);
+    assert.equal((await (await site("/zelavis/api/v1/auth/registration")).json()).enabled, true);
+    assert.equal((await (await site("/zelavis/api/v1/auth/session", { headers: { cookie } })).json()).principal.id, accountId);
+    assert.equal((await site("/zelavis/api/v1/auth/accounts", { headers: { cookie } })).status, 404);
     const replay = await fetch(path, { headers: captured });
     assert.equal(replay.status, 401); await replay.text();
     const config = await (await fetch(`${started.url}/zelavis/api/v1/runtime/config`, { headers: await headers() })).json();

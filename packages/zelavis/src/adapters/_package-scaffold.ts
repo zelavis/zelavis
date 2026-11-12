@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Scaffolding a frontend from a `create-*` package.
  *
@@ -214,9 +216,10 @@ export interface CreatePackageRunResult {
  * a shebang would resolve `node` through `PATH`, and the flags that make this
  * isolated have to be on the process that runs the package, not wished for.
  */
-export async function runCreatePackage(
+export function runCreatePackage(
   options: RunCreatePackageOptions,
 ): Promise<CreatePackageRunResult> {
+  return present(Effect.gen(function* (): Effect.fn.Return<CreatePackageRunResult, IntegrationFailure> {
   // Real paths, because the permission model matches on the resolved path: a
   // service directory under a symlinked root — `/var` on macOS, or an operator
   // who symlinked their data directory — would otherwise deny the child read
@@ -226,7 +229,7 @@ export async function runCreatePackage(
   const outputDirectory = realpathSync(options.outputDirectory);
 
   const preloadPath = join(runDirectory, "no-network.mjs");
-  await writeFile(preloadPath, SCAFFOLD_NETWORK_PRELOAD, "utf8");
+  yield* integrationValue(writeFile(preloadPath, SCAFFOLD_NETWORK_PRELOAD, "utf8"));
 
   const binPath = join(packageDirectory, options.binPath);
 
@@ -267,26 +270,23 @@ export async function runCreatePackage(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
 
-  try {
-    const code = await new Promise<number | null>((resolveExit, rejectExit) => {
-      child.once("error", rejectExit);
-      child.once("close", resolveExit);
-    });
+  const code = yield* Effect.callback<number | null, IntegrationFailure>((resume) => {
+    child.once("error", (cause) => resume(Effect.fail(new IntegrationFailure(cause))));
+    child.once("close", (exitCode) => resume(Effect.succeed(exitCode)));
+  }).pipe(Effect.ensuring(Effect.sync(() => clearTimeout(timer))));
 
-    const output = chunks.join("").trim();
+  const output = chunks.join("").trim();
 
-    if (code !== 0) {
-      throw new Error(
-        `The create package exited with code ${code ?? "null"}.${
-          output ? `\n${output}` : ""
-        }`,
-      );
-    }
-
-    return { output };
-  } finally {
-    clearTimeout(timer);
+  if (code !== 0) {
+    throw new Error(
+      `The create package exited with code ${code ?? "null"}.${
+        output ? `\n${output}` : ""
+      }`,
+    );
   }
+
+  return { output };
+  }));
 }
 
 function pathToImportSpecifier(path: string): string {
@@ -301,21 +301,23 @@ function pathToImportSpecifier(path: string): string {
  * Bounded on both count and total bytes: the output is a project skeleton, and
  * a run that produced something far larger did not do what was asked.
  */
-export async function readScaffoldOutput(
+export function readScaffoldOutput(
   outputDirectory: string,
 ): Promise<PackageEntry[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<PackageEntry[], IntegrationFailure> {
   const root = resolve(outputDirectory);
   const entries: PackageEntry[] = [];
   let bytes = 0;
 
-  async function walk(directory: string): Promise<void> {
-    const listing = await readdir(directory, { withFileTypes: true });
+  function walk(directory: string): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    const listing = (yield* integrationValue(readdir(directory, { withFileTypes: true })));
 
     for (const item of listing.sort((a, b) => a.name.localeCompare(b.name))) {
       const path = join(directory, item.name);
 
       if (item.isDirectory()) {
-        await walk(path);
+        (yield* integrationValue(walk(path)));
         continue;
       }
 
@@ -329,7 +331,7 @@ export async function readScaffoldOutput(
         );
       }
 
-      const body = await readFile(path);
+      const body = (yield* integrationValue(readFile(path)));
       bytes += body.byteLength;
       if (bytes > MAX_OUTPUT_BYTES) {
         throw new Error(
@@ -342,13 +344,15 @@ export async function readScaffoldOutput(
         body: new Uint8Array(body),
       });
     }
+  }));
   }
 
-  await walk(root);
+  (yield* integrationValue(walk(root)));
 
   if (entries.length === 0) {
     throw new Error("The create package wrote nothing.");
   }
 
   return entries;
-}
+}));
+  }

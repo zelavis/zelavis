@@ -1,4 +1,4 @@
-import { parseJson, objectFields, isString, optional } from "../json-validation.js";
+import { parseJson, objectFields, isString, isBoolean, isPositiveInteger, optional } from "../json-validation.js";
 import { Cause, Effect } from "effect";
 import { integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { installationInstanceScope } from "./installation-instance.js";
@@ -161,9 +161,17 @@ export const inspectZelavisInstallationProgram = Effect.fn("Installation.inspect
       return { status: armed ? "ok" : "warning", detail: armed ? `Dashboard updates are armed: ${scope.updatePath} is watching for requests.` : `Dashboard updates are off (${scope.updatePath} is missing or not running). Run the installer again to enable them.` };
     })));
     (yield* check("agent", () => Effect.gen(function* () {
-      const [support, unit] = (yield* Effect.all([integration(() => host.agentSupport(scope.units[1])), integration(() => host.unitState(scope.units[1], paths))], { concurrency: 2 }));
-      const qualified = support.cgroupV2 && support.cgroupKill && !!unit.delegates;
-      return { status: qualified ? "ok" : "warning", detail: `Agent: cgroup v2 ${support.cgroupV2}, cgroup.kill ${support.cgroupKill}, Delegate ${!!unit.delegates}. ${qualified ? "Required host features present; operation conformance still requires execution." : "Agent containment is not qualified on this host."}` };
+      const [unit, source] = yield* Effect.all([integration(() => host.unitState(scope.units[1], paths)),
+        integration(() => host.read(`${paths.dataDirectory}/agent/agent.json`))], { concurrency: 2 });
+      if (!unit.active) return { status: "error", detail: "Project Agent is not running." };
+      if (!source) return { status: "warning", detail: "Project Agent predates survivable handover; its next update requires one conversion restart." };
+      if (source.length > 4096) return { status: "error", detail: "Project Agent descriptor exceeds its bound." };
+      const descriptor = parseJson(source, objectFields<{ release: string; protocol: string; pid: number; survivable: boolean }>({
+        release: isString, protocol: isString, pid: isPositiveInteger, survivable: isBoolean,
+      }));
+      const matches = descriptor.protocol === "zelavis-agent/1" && descriptor.release === receipt?.version &&
+        (!unit.pid || unit.pid === descriptor.pid) && descriptor.survivable;
+      return { status: matches ? "ok" : "warning", detail: `Project Agent ${descriptor.release}, PID ${descriptor.pid}; Platform ${receipt?.version}, survivable ${descriptor.survivable}. ${matches ? "Selected release is running." : "Agent differs from the selected installation or needs conversion."}` };
     })));
     (yield* check("host-agent", () => Effect.gen(function* () {
       const name = scope.units[scope.units.length - 1];

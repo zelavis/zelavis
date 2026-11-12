@@ -1,7 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
 import { Deferred, Effect, Fiber, Semaphore } from "effect";
-import { evaluate, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { describeFailure, evaluate, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 
 /** Bounded control messages over the Agent-owned stdin pipe. This creates no
@@ -37,7 +37,7 @@ export const serveNodeRuntimeCommands = Effect.fn("RuntimeCommands.serve")(funct
     if (pending.size >= 32) { fail("Runtime command queue is full."); return; }
     const fiber = fork(mutex.withPermit(options.command(input)).pipe(
       Effect.match({ onSuccess: value => options.emit({ protocol: NODE_RUNTIME_PROTOCOL, id: input.id, ...value }),
-        onFailure: error => options.emit({ protocol: NODE_RUNTIME_PROTOCOL, id: input.id, type: "failed", error: error.message }) }),
+        onFailure: error => options.emit({ protocol: NODE_RUNTIME_PROTOCOL, id: input.id, type: "failed", error: describeFailure(error) }) }),
     ));
     pending.add(fiber);
     fiber.addObserver(() => { pending.delete(fiber); });

@@ -39,7 +39,10 @@ and public version descriptor before traffic resumes. System installations also
 refresh the selected release's authored systemd templates and reload the unit
 catalogue at that acknowledgement; they do not restart the host or Project Agent.
 Rollback restores the previous release's templates. The host and its public
-listeners keep running throughout.
+listeners keep running throughout. The root operation Agent also restarts after
+selection: it reads its operation manifests when it starts,
+so a release's new or changed host operations exist only for an Agent started after the
+selection, and it holds no Project and no traffic.
 
 A failed preparation or drain leaves the previous engine serving. A failed
 activation or inventory commit fences the candidate before restoring the old
@@ -114,8 +117,8 @@ failed update but cannot erase its intent without ownership proof.
 
 The App host keeps Gateway replay history across engine replacement. It accepts
 parent authority before queuing and creates fresh private worker authority after
-admission. Re-keying a surviving App host uses the authenticated Agent process
-pipe, not a public control endpoint.
+admission. Re-keying a surviving App host uses the authenticated private Agent-to-host control
+channel, not a public control endpoint.
 
 ## Updating a managed app recipe
 
@@ -177,6 +180,110 @@ Native Zelavis Apps update the complete engine through the same handover used
 by the Platform. Their shared composition has scoped Project authority; the
 outer Platform's Fabric remains the privileged hosting control plane.
 
+## Data layout changes
+
+An engine opens exactly the data layout it writes and refuses any other. Each engine release declares its layout in its
+runtime artifact (`metadata.dataFormat`; a release that declares none wrote layout 2, as every release up to alpha.42 did).
+A Platform update therefore never moves a Project across a layout change: native Apps keep their locked engine, and a
+managed app's bound App stays on the engine that wrote its data, at a live restart and at a cold start alike. The
+Project then reports `dataLayout: { "state": "upgradeRequired", "from": 2, "to": 4 }` and its card offers the upgrade even when its
+recipe is current.
+
+The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/projects/:id/upgrade`,
+`zelavis projects upgrade <id>`, the card's **Update recipe**) is the migration. It is never a live handover:
+
+1. The Project (a managed app's bound App) is stopped. A managed app's own processes keep serving.
+2. The engine that wrote the data exports the Tenant and App-wide partitions under its own Node. Layout 4 supplies each
+   partition's full log when available and the definitions of its cross-Tenant indexes.
+3. The current engine recreates collections, then replays each Tenant's document history in order through the documents
+   API (every put and deletion at its original time, with the document's version and times), checks the final state
+   against the collections' constraints, and checks that the counts and every document match. Schemas are recreated last.
+   Nothing is written to the original data.
+4. The new database is swapped in. The original is kept beside it as `data.format-<n>-<time>` until you remove it, and a
+   journal lets a crash be settled from the files alone.
+5. The Project starts on the new engine. If it cannot start, or the upgrade cannot be recorded, the original data and its engine
+   return and the migrated data is set aside as `data.discarded-<time>`.
+
+The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated,
+`eventsCarried` (document events of the earlier history recreated in order, each at its original time),
+`tenantsWithoutHistory` (Tenants whose earlier log had been compacted, so only their final documents were recreated),
+`documentsWithHistoryDropped` (documents of those Tenants past their first version), and the directory that keeps the
+original.
+
+The migration keeps collection definitions, including declared columns. Documents keep their IDs, data, versions,
+creation and update times, and expiry. A stale `expectedVersion` stays stale. For a collection that still exists, the
+migration replays document puts and deletions from an uncompacted log in their original order, with the original times,
+revisions, and data. A time series registered again from that history can rebuild the same points.
+
+The replay applies changes the earlier engine already accepted. A cascade or cleared reference is replayed as the
+document events that the earlier engine recorded. The current engine checks the final document state against the
+collection constraints and verifies its contents. Saved schema versions and the active version are recreated.
+
+For layout 4, the migration also carries pending outbox messages, durable entity messages and state for jobs, schedules
+and webhooks, workflow executions and their recorded steps, idempotency receipts, and any saved schema activation
+intents. It keeps aggregate definitions and their last published results and refresh times. A later refresh produces a
+checkpoint in the new log. App-wide collections keep their placement declarations. Cross-Tenant index definitions are
+recreated and their entries rebuilt from the migrated Tenants before the database is swapped in.
+
+The following state starts fresh or is omitted:
+
+- A layout-2 or layout-4 event cursor is refused as `ForeignCursor` by layout 5. A layout-5 cursor from another Tenant
+  life is refused as `CursorFromAnotherLife` (HTTP 409). Read from the beginning of the new log. Log positions, event
+  IDs, and the recorded writer of a replayed event belong to the new database.
+- Collections are created once in their final definition. Earlier collection-definition events and document events
+  from dropped or earlier incarnations of collections are omitted. Schema history is also omitted. Activating a
+  saved schema that adds a lens can rewrite the collection's documents and add events at migration time.
+- A compacted partition is restored from its final state. The earlier events and the time-series points that depend
+  on them cannot be recreated. Projection checkpoints, materialized time-series state, aggregate checkpoint cursors,
+  and cross-Tenant index entries and cursors are omitted. The app registers time-series definitions again at runtime.
+  Final-state imports preserve document references and graph links regardless of where their targets appear in the export.
+- Layout-2 idempotency receipts are omitted. Layout-4 receipts keep durable retries from applying a write again.
+
+The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44). The next engine writes layout 5, which binds
+event cursors to the Tenant life that issued them. Apps on either source layout cross it through an explicit Project
+upgrade. See [Events and cursors](/api/database/#events-and-cursors).
+
+The upgrade is refused if the source has divided Tenants, shards or replicas on other Nodes, or layout-4 Tenant
+branches or unfinished copies. Recreating a branch without its lineage would prevent it from merging back into its
+source. Unsupported layouts, unknown live record kinds, or index placements unavailable in the migrated database also
+cause a refusal. The Project keeps its old engine and data if any check fails.
+
+The earlier engine's export is checked before recreation. Releases up to alpha.42 stop after reading 1,000,000 log
+entries per shard for a backup export. The migration refuses an export at that limit or one that differs from the
+engine's own document reads. Compacting on the earlier engine allows a final-state migration when the compacted
+export fits. The migration also requires free space of about 3.5 times the size of the source.
+
+The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
+`GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
+`client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
+`zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
+`project.runtime.manage`. Removal cannot be undone. It is refused while a migration is unsettled or the Project has an unfinished update,
+and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
+its exact name is typed.
+
+### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
+
+2.0.0-alpha.43 is the first release whose engine writes layout 4; every earlier release wrote layout 2. On a server running
+alpha.42:
+
+1. **Update now** (or `zelavis update apply --wait`) offers and installs alpha.43. Running Projects keep serving.
+2. Native Apps created on alpha.42 stay on their alpha.42 engine and keep their layout 2 data. Nothing moves them on its own.
+3. To move a native App to alpha.43, stop, migrate and start it in one request:
+   `client.projects.upgrade(id, { engineVersion: "2.0.0-alpha.43", restart: true })`,
+   `zelavis projects upgrade <id> --engine-version 2.0.0-alpha.43 --restart`, or on its card **Manage version**, choose
+   2.0.0-alpha.43, then **Stop, migrate and switch** (the card's **Upgrade recipe** does the same with the newest engine).
+   The App is unavailable while this runs. The plain switch of a running App across the layout change
+   (`client.projects.switchVersion`, `POST /runtime/projects/:id/version`, `zelavis projects switch-version`) is refused with
+   409 on purpose.
+4. A managed WordPress Project's bound App migrates when its recipe is upgraded: **Update recipe** on its card, or
+   `client.projects.upgrade(id)`. WordPress itself keeps serving, and its own MariaDB data is not touched.
+5. After each migration, check the `dataMigration` report, then remove the retained `data.format-2-*` directory when you no
+   longer need it (see above).
+
+A Debian ARM server whose earlier package set lacks `mariadb-dump` needs `apt-get install mariadb-client` before the
+update: converting an earlier Agent restarts the WordPress processes, and the alpha.43 recipe will not start them without
+it. Recipes on x86_64 bring their own MariaDB.
+
 ## Project and visitor continuity
 
 System installations run the Project Agent in its own systemd unit. A Platform
@@ -185,6 +292,72 @@ releasing their placement custody. Local development keeps equivalent custody
 in the persistent host. Running native Apps and the qualified WordPress recipe
 can be adopted; a driver that cannot prove continuity refuses the handover
 before releasing the old engine.
+
+Linux system installations also replace the separately supervised Project Agent
+when Update now selects a new Platform release. The process-only Agent unit uses
+`KillMode=process`; privileged host operations remain in their separate root
+Agent and retain their cgroup controllers. The Project unit omits `PrivateTmp`
+so temporary storage is independent of the Agent's mount namespace.
+Project children use private append
+logs and flushed records containing UUIDs, kernel start ticks and boot identity.
+Kernel locks exclude concurrent owners before recovery or endpoint changes.
+The replacement Agent adopts live processes and rebuilds placement lease
+supervision before offering handles. An expired placement fences its processes.
+
+The Platform reconnects and rebinds existing handles without reporting a process
+exit. Native App and managed integration hosts accept authenticated commands over
+private Unix sockets, so losing the Agent does not close an App's control pipe.
+Command IDs deduplicate retries; ambiguous starts and host-operation submissions
+are never replayed. A native start whose reply was lost first looks for its
+surviving exact host. Fabric custody and each App's selected worker engine remain
+independent of the Agent release.
+
+An Agent from before this protocol needs one conversion during Update now:
+Project and preview admission pause, the old Agent and its children stop,
+and desired-running Projects restart under the new Agent, including managed Apps'
+private Zelavis runtimes. The request hold is prepared before root inventory is
+acknowledged; replacement/recovery then runs outside the older host's commit
+deadline. The dashboard, authentication, Project status, logs, diagnostics and
+repair controls remain available. Recovered public workloads resume before
+private Project runtimes finish warming. A failed or expired conversion releases
+its coordination hold and reports degradation; individual Project readiness and
+ownership checks still apply. Update status and history name that one restart.
+Conversion completes when its public workloads recover. Private Project runtimes
+that had already been used restore asynchronously, with bounded concurrency and
+a separate timeout per Project. Their startup failures do not fail the Agent
+update. A hosting-only
+Project keeps its backend unstarted until its Project APIs need it. Private
+integration startup failures appear in the Project's logs with a
+`[Zelavis integration]` label and in its diagnostics.
+Subsequent supported replacements preserve Project
+processes. Explicit stops without a valid, generation-bound handover marker stop
+workloads; uninstall also kills remaining processes in the owned unit cgroup.
+
+Agent replacement failure does not roll back an already committed Platform
+engine. Update status/history report the Agent as degraded, and doctor reports
+its release and PID separately. The selected unit retries startup under systemd;
+surviving processes retain their records. The client bounds recovery at 90 seconds
+and then reports Agent unreachability rather than claiming a proved workload exit.
+Log retention is bounded by polling (8 MiB per stream while supervised); output
+can grow while the Agent is absent, and lines around truncation may be lost.
+Adopted processes report unknown exit code/signal when their original parent is gone.
+Interactive stdin sessions are disposable and stop during handover.
+A rollback engine can adopt existing hosts through the additive Agent protocol.
+A pre-protocol Platform engine cannot start a new stdin-controlled persistent host
+on a survivable Agent; that launch is refused. Use the current Platform to start
+Apps on their exact older worker engine instead.
+
+Project hosts have a bounded 90-second outer startup window, allowing the
+persistent host's 30-second preparation and activation stages on a cold server.
+An exhausted startup still stops its acquired process and reports failure.
+
+This path targets Node on Linux with procfs and `execve`. User-mode and local
+embedded Agents receive their new code when the persistent host next starts;
+first conversion there requires that host restart. Remote worker Agent replacement,
+Bun Agent replacement and multi-host partition recovery are not qualified by this
+system-installation path. Local tests cover real App crash/rebind and repeated
+Agent handover; installed update and long-history qualification remain required
+before shipping a release.
 
 Project preview listeners belong to the persistent host and share its admission
 queue. Their ports, visitor Host headers, redirects and site cookies survive
@@ -208,6 +381,22 @@ An installed engine must match its exact version, complete file digest and
 contained dependency-link graph. Tags, ranges, redirected release directories,
 unqualified protocols and altered artifacts are refused. This is integrity
 within the existing HTTPS distribution trust model, not a release signature.
+
+What is checked, and when:
+
+- Before an engine runs, its whole file inventory and dependency links are compared with its manifest, and each
+  file's SHA-256 with the manifest's.
+- A Platform process reads each file's bytes once. Afterwards it re-reads a file only when the file's status has changed
+  since it was hashed: device, inode, size, modification and change times, mode, owner or link count. Any write,
+  rename, `chmod` or replacement changes at least one of these, and a program cannot set the change time back. A
+  restarted Platform hashes every file again. The hashing runs on a worker thread of the Platform process, which keeps
+  that memory, so a busy Platform's request handling neither slows it down nor is slowed by it.
+- One operation that names the same release twice (a start, or a data migration and the start after it) verifies it
+  once. A data migration verifies both engines before requests are held. That result is used only by the same
+  Project's next start, and only within five minutes.
+- Not caught until the Platform restarts: a change below the filesystem that leaves the file's status alone, such as
+  a raw write to the block device or media corruption. On system installations the releases are root-owned and the
+  Platform runs unprivileged, so it cannot change them itself.
 
 Each host holds a kernel journal lock and each writable engine holds an exclusive
 kernel ownership lock. Journals and inventory writes flush files and directories.

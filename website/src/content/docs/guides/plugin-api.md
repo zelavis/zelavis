@@ -840,6 +840,25 @@ context once that runtime is available. Register it once per package load.
 Endpoint groups do not replace the owning package's manifest or its SDK API
 declarations, and they never appear in the service inventory.
 
+### Asking the host to run a fixed operation
+
+A plugin that needs something only root can do (a container build, a package set) does not get root. The
+Platform's host-operation broker runs fixed, installed operations, each naming the permission it needs, and a plugin
+may ask for the ones its manifest names:
+
+```json
+{ "zelavis": { "kind": "plugin", "namespace": "phpBuilds", "hostOperations": ["zelavis.container-probe"] } }
+```
+
+At most eight distinct operation ids, plugins only, and only in the manifest: a module that exports
+`hostOperations` is refused at load. The setup context then carries `core.hostOperations`, with `allowed`,
+`submit(input, principal)` and `get(operationId, principal)`. Pass the principal of the request being served
+(`context.principal` in a route handler): the broker authorizes that caller's own permissions exactly as if they had
+asked directly, so the plugin never has authority of its own, and an operation the manifest does not name is
+refused as if it did not exist, for submitting and for reading a record alike. The handle exists only when the
+manifest names operations and the host has an operation Agent. Installing a plugin shows its operation list, so
+an operator sees what it can ask for before approving it.
+
 ## Reading the active context
 
 ```ts

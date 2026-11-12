@@ -5,14 +5,22 @@ import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_LOCAL_SHARDS, openNodeDatabase, shardFilePath } from "../dist/db/node-host.js";
 
+/**
+ * A directory removed only after everything the test opened in it is closed: hooks run in the order they are added, and
+ * removing a live database's files races the threads still using them (its checkpoint thread among them).
+ */
 const tempDir = (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-open-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  const closing = [];
+  t.after(async () => {
+    for (const close of closing.reverse()) await close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return { dir, closeLater: (close) => closing.push(close) };
 };
 
 test("opening a database gives a promise-facing api and closes its shards", async (t) => {
-  const dir = tempDir(t);
+  const { dir, closeLater } = tempDir(t);
   const opened = await openNodeDatabase({ directory: dir, nodeId: "node-a" });
 
   // Sharded from creation, on one node, exactly as the App topology requires.
@@ -34,7 +42,7 @@ test("opening a database gives a promise-facing api and closes its shards", asyn
 
   // Reopening sees the same data and the same placements.
   const again = await openNodeDatabase({ directory: dir });
-  t.after(() => again.close());
+  closeLater(() => again.close());
   assert.equal(again.partitionMap.version, opened.partitionMap.version);
   assert.equal(again.api.shardOf("acme"), opened.api.shardOf("acme"));
   const found = await again.api.forTenant("acme").documents.findById({
@@ -44,14 +52,14 @@ test("opening a database gives a promise-facing api and closes its shards", asyn
 });
 
 test("a caller cannot re-place ranges by opening with a different shard list", async (t) => {
-  const dir = tempDir(t);
+  const { dir, closeLater } = tempDir(t);
   const first = await openNodeDatabase({ directory: dir, shards: ["a", "b"] });
   const home = first.api.shardOf("acme");
   await first.api.forTenant("acme").documents.createCollection({ name: "posts" });
   await first.close();
 
   const second = await openNodeDatabase({ directory: dir, shards: ["x", "y", "z"] });
-  t.after(() => second.close());
+  closeLater(() => second.close());
   assert.equal(second.api.shardOf("acme"), home, "the stored map still places the tenant");
   assert.deepEqual(
     (await second.api.forTenant("acme").documents.listCollections()).map((c) => c.name),
@@ -60,7 +68,7 @@ test("a caller cannot re-place ranges by opening with a different shard list", a
 });
 
 test("closing releases the files so another process can open them", async (t) => {
-  const dir = tempDir(t);
+  const { dir, closeLater } = tempDir(t);
   const opened = await openNodeDatabase({ directory: dir, shards: ["only"] });
   await opened.api.forTenant("acme").documents.createCollection({ name: "posts" });
   await opened.close();
@@ -69,7 +77,7 @@ test("closing releases the files so another process can open them", async (t) =>
   await opened.close();
 
   const reopened = await openNodeDatabase({ directory: dir, shards: ["only"] });
-  t.after(() => reopened.close());
+  closeLater(() => reopened.close());
   assert.deepEqual(
     (await reopened.api.forTenant("acme").documents.listCollections()).map((c) => c.name),
     ["posts"],

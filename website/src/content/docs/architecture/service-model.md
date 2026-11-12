@@ -302,7 +302,7 @@ The runtime model should also stay explicit:
 - service **install state** lives in a registry store
 - service **activation order** is an explicit `order` number
 - service **setup** runs in registry order and can register additional services through the setup context
-- service **activation** is adapter-owned: local runtime adapters can recompose the service graph when supported, or require a process restart when live activation is unavailable
+- service **activation** is adapter-owned: an installed Platform hands traffic to a fresh engine of the same release, with requests waiting rather than failing, and a host without that ability recomposes in process or asks for a restart
 
 That means install state and activation are related, but not the same thing:
 
@@ -331,7 +331,7 @@ runtime can truly apply uploaded or marketplace services at runtime. Core does
 not assume a specific filesystem layout, process manager, or provider deploy
 API.
 
-For Node or Bun adapters, the likely production shape is a local service cache such as `.zelavis/services/<service>/<version>/index.js`, plus a registry entry that points to that ESM entry point. Zelavis can then dynamic-import the specifier and recompose the runtime graph without restarting the process.
+On Node, acquired packages live in content-addressed folders below the Platform's services folder, and a registry entry points at the ESM entry point. The Platform's engine composes its runtime once, so a plugin or frontend that is installed, updated or uninstalled is activated by the same handover that applies Platform updates: the persistent host starts a fresh engine of the same release, drains accepted requests, moves ownership and resumes. Requests made meanwhile wait rather than fail, and the new process holds none of the previous code. A Project recipe needs none of this: it is never mounted into the Platform, and the registry is read when a Project is created or upgraded.
 
 Provider deployment is a separate concern. A future deployment plugin may publish
 user websites or apps to an external provider, but that must not become a

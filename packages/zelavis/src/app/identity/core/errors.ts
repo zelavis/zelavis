@@ -6,6 +6,8 @@ export class IdentityDomainError extends Error {
 }
 
 export class IdentityValidationError extends IdentityDomainError {
+  readonly _tag = "IdentityValidationError";
+
   constructor(message: string) {
     super(message);
     this.name = "IdentityValidationError";
@@ -30,6 +32,8 @@ export class IdentityConflictError extends IdentityValidationError {
 }
 
 export class IdentityNotFoundError extends IdentityDomainError {
+  readonly _tag = "IdentityNotFoundError";
+
   constructor(message: string) {
     super(message);
     this.name = "IdentityNotFoundError";
@@ -37,6 +41,8 @@ export class IdentityNotFoundError extends IdentityDomainError {
 }
 
 export class AuthInvalidCredentialsError extends IdentityDomainError {
+  readonly _tag = "AuthInvalidCredentialsError";
+
   constructor() {
     super("Invalid credentials.");
     this.name = "AuthInvalidCredentialsError";
@@ -50,5 +56,30 @@ export class AuthRateLimitError extends IdentityDomainError {
     super("Too many authentication attempts. Try again later.");
     this.name = "AuthRateLimitError";
     this.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterSeconds));
+  }
+}
+
+export class RegistrationError extends IdentityDomainError {
+  constructor(
+    readonly _tag: "RegistrationClosed" | "RegistrationSettingsConflict" | "RegistrationConflict" |
+      "RegistrationBusy" | "RegistrationUnavailable" | "EnrollmentRequired",
+    message: string,
+  ) {
+    super(message);
+    this.name = _tag;
+  }
+}
+
+export class RegistrationRateLimitError extends AuthRateLimitError {}
+
+export class AccountAccessError extends IdentityDomainError {
+  constructor(
+    readonly _tag: "InvalidAccountAccess" | "AccountAccessForbidden" | "AccountNotFound" |
+      "AccountAccessConflict" | "AccountAccessBusy" | "AccountAccessAuditFailed",
+    message: string,
+    readonly accessRevision?: number,
+  ) {
+    super(message);
+    this.name = _tag;
   }
 }

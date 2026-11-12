@@ -1,16 +1,23 @@
+import { runAuthOperations } from "./auth-operations.js";
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
+  "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID --project-permission PERMISSION] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * Platform machine identities through the same typed client applications use.
- * A Project shortcut grants the narrow Project operator permissions needed by
- * deployment clients without turning the identity into a Platform owner.
+ * Platform permissions and Project-scoped grants are explicit; naming a
+ * Project never silently adds operator or data authority.
  */
-export async function runAuthCommand(args: readonly string[]): Promise<void> {
+export function runAuthCommand(args: readonly string[]): Promise<void> {
+  // Everything but service accounts is the table of operations beside them.
+  if (args[0] !== undefined && args[0] !== "service-accounts" && !args[0].startsWith("-")) return runAuthOperations(args);
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const permissions: string[] = [];
+  const projectPermissions: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
   let name: string | undefined;
@@ -29,7 +36,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--name", "--permission", "--project", "--tenant", "--expires-days"].includes(flag)) {
+    if (!["--url", "--token", "--name", "--permission", "--project", "--project-permission", "--tenant", "--expires-days"].includes(flag)) {
       throw new Error(`Unknown auth option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -38,6 +45,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     if (flag === "--token") token = value;
     if (flag === "--name") name = value;
     if (flag === "--permission") permissions.push(value);
+    if (flag === "--project-permission") projectPermissions.push(value);
     if (flag === "--project") projectId = value;
     if (flag === "--tenant") tenantId = value;
     if (flag === "--expires-days") {
@@ -67,44 +75,37 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
 
   switch (action) {
     case "list": {
-      const serviceAccounts = await client.auth.admin.serviceAccounts();
+      const serviceAccounts = (yield* integrationValue(client.auth.admin.serviceAccounts()));
       print({ serviceAccounts }, () => serviceAccounts.map(line).join("\n") || "No service accounts.");
       return;
     }
     case "set-tenant": {
       if (!accountId) throw new Error("auth service-accounts set-tenant requires an account id.");
       if (!tenantId?.trim()) throw new Error("auth service-accounts set-tenant requires --tenant.");
-      const serviceAccount = await client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim());
+      const serviceAccount = (yield* integrationValue(client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim())));
       print({ serviceAccount }, () =>
         `${serviceAccount.id} now acts in Tenant ${String(serviceAccount.metadata?.tenantId ?? tenantId)}.`);
       return;
     }
     case "create": {
       if (!name?.trim()) throw new Error("auth service-accounts create requires --name.");
-      const result = await client.auth.admin.createServiceAccount({
+      if (Boolean(projectId) !== (projectPermissions.length > 0)) {
+        throw new Error("Use --project with at least one explicit --project-permission; each requires the other.");
+      }
+      const result = (yield* integrationValue(client.auth.admin.createServiceAccount({
         name: name.trim(),
         permissions,
         ...(tenantId ? { tenantId } : {}),
         ...(projectId
           ? {
-              grants: [
-                "project.view",
-                "project.runtime.manage",
-                "project.settings.manage",
-                "project.users.manage",
-                // A Project operator that cannot read or write the Project's
-                // records is not one: data is its own authority, so holding
-                // the rest does not confer it.
-                "project.data.read",
-                "project.data.write",
-              ].map((permission) => ({
+              grants: [...new Set(projectPermissions)].map((permission) => ({
                 permission,
                 scope: { type: "project" as const, projectId },
               })),
             }
           : {}),
         ...(expiresInDays === undefined ? {} : { expiresInDays }),
-      });
+      })));
       print(result, () => [
         `Created ${line(result.serviceAccount)}`,
         "Token (shown once):",
@@ -114,17 +115,18 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     }
     case "rotate": {
       if (!accountId) throw new Error("auth service-accounts rotate requires an account id.");
-      const result = await client.auth.admin.rotateServiceAccountToken(accountId, expiresInDays);
+      const result = (yield* integrationValue(client.auth.admin.rotateServiceAccountToken(accountId, expiresInDays)));
       print(result, () => ["Rotated token (shown once):", result.token].join("\n"));
       return;
     }
     case "revoke": {
       if (!accountId) throw new Error("auth service-accounts revoke requires an account id.");
-      await client.auth.admin.revokeServiceAccount(accountId);
+      (yield* integrationValue(client.auth.admin.revokeServiceAccount(accountId)));
       print({ revoked: accountId }, () => `Revoked ${accountId}.`);
       return;
     }
     default:
       throw new Error(`Unknown auth service-accounts command "${action}". ${usage}`);
   }
-}
+}));
+  }
