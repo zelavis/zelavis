@@ -1,7 +1,7 @@
 /** Runs only in the disposable Linux/systemd provisioning harness. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, unlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -46,7 +46,23 @@ const before = await identities();
 assert.ok(before.some(value => value.startsWith(`${wp.id}:`)));
 assert.ok(before.some(value => value.startsWith(`${app.id}:`)));
 const urls = [`http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${started.preview.port}/`];
-const platformPid = execFileSync("systemctl", ["show", "zelavis.service", "-p", "MainPID", "--value"], { encoding: "utf8" }).trim();
+const mainPid = unit => execFileSync("systemctl", ["show", unit, "-p", "MainPID", "--value"], { encoding: "utf8" }).trim();
+const platformPid = mainPid("zelavis.service");
+const operationAgentPid = mainPid("zelavis-host-agent.service");
+const projectPid = before.find(value => value.startsWith(`${app.id}:`)).split(":").at(-1);
+const scoreFile = pid => `/proc/${pid}/oom_score_adj`;
+assert.equal((await readFile(scoreFile(platformPid), "utf8")).trim(), "-500");
+assert.equal((await readFile(scoreFile(projectPid), "utf8")).trim(), "200");
+assert.equal((await readFile(scoreFile(operationAgentPid), "utf8")).trim(), "-100");
+assert.equal(execFileSync("systemctl", ["show", "zelavis-agent.service", "-p", "OOMPolicy", "--value"], { encoding: "utf8" }).trim(), "continue");
+// Simulate processes that predate these settings. The root commit must refresh them in place,
+// including any administrator override that systemd loads during daemon-reload.
+const dropIn = "/etc/systemd/system/zelavis.service.d/oom-qualification.conf";
+await mkdir("/etc/systemd/system/zelavis.service.d", { recursive: true });
+await writeFile(dropIn, "[Service]\nOOMScoreAdjust=-450\n");
+await writeFile(scoreFile(platformPid), "0");
+await writeFile(scoreFile(projectPid), "0");
+await writeFile(scoreFile(operationAgentPid), "0");
 for (const version of [targetVersion, previousVersion]) {
   let complete = false;
   const traffic = Promise.all(urls.map(async url => {
@@ -76,8 +92,12 @@ for (const version of [targetVersion, previousVersion]) {
     assert.equal(descriptor.engine.runtime.version, targetVersion);
     console.log("PASS: the App upgrades its exact engine and recipe live at the same address.");
   }
-  assert.equal(execFileSync("systemctl", ["show", "zelavis.service", "-p", "MainPID", "--value"], { encoding: "utf8" }).trim(), platformPid);
+  assert.equal(mainPid("zelavis.service"), platformPid);
+  assert.equal(mainPid("zelavis-host-agent.service"), operationAgentPid);
   assert.deepEqual(await identities(), before);
+  assert.equal((await readFile(scoreFile(platformPid), "utf8")).trim(), "-450");
+  assert.equal((await readFile(scoreFile(projectPid), "utf8")).trim(), "200");
+  assert.equal((await readFile(scoreFile(operationAgentPid), "utf8")).trim(), "-100");
   assert.equal((await client.projects.get(wp.id)).preview.port, wp.preview.port);
   assert.equal((await client.projects.get(app.id)).runtime.url, started.runtime.url);
   assert.equal(JSON.parse(await readFile("/opt/zelavis/installation.json", "utf8")).version, version);
@@ -86,6 +106,9 @@ for (const version of [targetVersion, previousVersion]) {
   assert.ok(engineCommand.includes(`/releases/${version}/runtime/node/bin/node`), engineCommand);
   console.log(`PASS: qualified private engine ${version}, same Platform host, App/WordPress PIDs, preview ports and continuous HTTP traffic.`);
 }
+await unlink(dropIn);
+execFileSync("systemctl", ["daemon-reload"]);
+console.log("PASS: live root commit refreshed the running OOM scores and respected a systemd drop-in.");
 const descriptor = JSON.parse(await readFile(`/var/lib/zelavis/projects/${app.id}/project.json`, "utf8"));
 assert.equal(descriptor.engine.runtime.version, targetVersion, "parent rollback leaves the App engine pin untouched");
 const latestApp = await client.projects.create({ id: "latest-qualified", name: "Latest Qualified", start: false });

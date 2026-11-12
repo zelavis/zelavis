@@ -14,10 +14,10 @@ Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i
 # Keep Project workloads in this unit; no delegated operation controllers.
 ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis agent
 KillMode=process
-# Projects run in this unit and inherit this score, so under memory pressure the kernel picks a
-# Project before the Platform (-500) and the operation Agent (-100). The Agent itself is small and
-# so rarely chosen; if it is, its Projects survive (KillMode=process) and systemd restarts it.
+# Projects inherit this score, making them likelier victims than the Platform or operation Agent.
 OOMScoreAdjust=200
+# Keep supervising other Projects after a child is killed. If the Agent itself dies, restart it.
+OOMPolicy=continue
 TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3

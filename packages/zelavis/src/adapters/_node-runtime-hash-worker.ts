@@ -8,7 +8,9 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { parentPort } from "node:worker_threads";
-import { Cause, Effect, Exit } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { describeFailure, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { fileDigest, fingerprintOf } from "./_node-file-digest.js";
 

@@ -13,7 +13,7 @@ import { assertProductionEdgePortsProgram } from "../core/runtime/installation-h
 import { isExactVersion } from "../updates.js";
 import { prepareInstalledProjectAgentUpdate } from "./_agent-update.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
-import { applyUnitOomScores, unitOomScores } from "./_systemd-oom-score.js";
+import { applyUnitOomScores, unitsWithOomScores } from "./_systemd-oom-score.js";
 
 const flushDirectory = (path: string) => process.platform === "win32" ? Effect.void : Effect.acquireUseRelease(
   integration(() => open(path, "r")), handle => integration(() => handle.sync()), handle => integration(() => handle.close()).pipe(Effect.orDie));
@@ -126,8 +126,7 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
             yield* integration(() => host.execute({ kind: "command", command: "systemctl", args: ["daemon-reload"] }));
             // What already runs takes the refreshed OOM ranking too; a failure only delays it to the units' next start.
             const writes = assets.flatMap(step => step.action.kind === "write" ? [{ path: step.action.path, content: step.action.content }] : []);
-            yield* evaluate(() => unitOomScores(writes, options.instance)).pipe(Effect.flatMap(applyUnitOomScores),
-              Effect.catch(error => Effect.logError(`OOM scores not applied to running units; they apply when the units next start: ${error.message}`)));
+            yield* applyUnitOomScores(unitsWithOomScores(writes, options.instance));
           }
           const temporary = `${scope.current}.${randomUUID()}`;
           yield* Effect.gen(function* () {

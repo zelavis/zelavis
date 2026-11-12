@@ -214,19 +214,18 @@ selected release's private Node. Systemd uses the release-shipped templates
 
 ### Memory pressure
 
-When a server runs out of memory, the kernel kills one process to free it. The
-units rank the candidates so a Project goes before the Platform that restarts it:
-`zelavis-agent.service`, whose processes are the Projects, sets
-`OOMScoreAdjust=200`; `zelavis-host-agent.service` sets `-100`, so a package
-operation outranks a Project; and `zelavis.service` sets `-500`. Nothing is made
-unkillable. The named-instance templates set the same values. A live update
-refreshes the templates and gives the processes already running in those units
-the new scores, so no restart is needed. A user-mode install has no units: there
-each Project's host raises its own score to `200` on Linux (any process may raise
-its score; only a privileged one can lower it below what it was given), which
-ranks the Project's Zelavis processes ahead of the Platform's `0`. A managed
-app's own servers (database, PHP, web server) are started by the Agent, not by
-that host, so in user mode they keep the Agent's score.
+Under memory pressure, the Linux kernel uses each process's memory usage and
+`OOMScoreAdjust` to choose a victim. The Project Agent and its workloads have an
+adjustment of `200`, the operation Agent has `-100`, and the Platform has
+`-500`. These values make Project processes likelier victims. With
+`OOMPolicy=continue`, systemd keeps the Project Agent running when the kernel
+kills one of its children. The named-instance templates use the same settings.
+A live update refreshes the templates and applies the scores to running
+processes in the units' cgroups without restarting the services.
+
+In a Linux user-mode install, each Project host raises its adjustment to at
+least `200` and its engine inherits it. The Platform and a managed app's own
+database, PHP and web server retain their inherited adjustments.
 
 Only `default` may own host Edge. The installer serializes its persistent
 `/opt/zelavis/edge-owner.json` claim with the prefix installer lock. The default

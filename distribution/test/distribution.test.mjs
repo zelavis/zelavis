@@ -129,7 +129,7 @@ test("Project supervision stays process-only and root operations retain delegate
   assert.doesNotMatch(deb, /systemctl enable zelavis-agent/);
 });
 
-test("under memory pressure a Project dies before the operation Agent, and both before the Platform", async () => {
+test("OOM settings favor killing Projects and keep the Agent running after a child is killed", async () => {
   const score = async (unit) => {
     const text = await readFile(new URL(`runtime/${unit}`, distribution), "utf8");
     const values = [...text.matchAll(/^OOMScoreAdjust=(-?\d+)$/gm)].map(match => Number(match[1]));
@@ -140,6 +140,9 @@ test("under memory pressure a Project dies before the operation Agent, and both 
     const platform = await score(`zelavis${suffix}`), projects = await score(`zelavis-agent${suffix}`), operations = await score(`zelavis-host-agent${suffix}`);
     assert.ok(projects > operations && operations > platform, `${suffix}: Projects ${projects}, operations ${operations}, Platform ${platform}`);
     assert.ok(platform > -1000 && projects < 1000, "nothing is made unkillable or a certain victim");
+    const agent = await readFile(new URL(`runtime/zelavis-agent${suffix}`, distribution), "utf8");
+    assert.match(agent, /^OOMPolicy=continue$/m);
+    assert.match(agent, /^Restart=on-failure$/m);
   }
 });
 

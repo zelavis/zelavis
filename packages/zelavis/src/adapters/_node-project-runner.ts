@@ -10,6 +10,7 @@ import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 import { evaluate, IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
 import { shutdownOnSignals } from "../runtimes/node.js";
 import { createNodeProjectHost } from "./_node-project-host.js";
+import { releaseIdleNodeRuntimeFileHasher } from "./_node-runtime-artifact.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { serveNodeProjectControl } from "./_node-project-control.js";
 import { projectProcessEnvironment } from "./_project-process-environment.js";
@@ -51,7 +52,7 @@ const run = Scope.use(Effect.gen(function* () {
         return engine.runtime;
       });
       return yield* catalog.resolve(selected, "project", configuration, environment);
-    }) } : {}),
+    }, Effect.ensuring(releaseIdleNodeRuntimeFileHasher())) } : {}),
     output: (stream, line) => { (stream === "stderr" ? process.stderr : process.stdout).write(`${line}\n`); },
   });
   const port = yield* host.listen({ port: options.port, host: "127.0.0.1" });

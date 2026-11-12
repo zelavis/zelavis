@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Effect } from "effect";
 import { createNodeRuntimeCatalog } from "../dist/adapters/_node-runtime-catalog.js";
-import { sealNodeRuntimeArtifact, verifyNodeRuntimeArtifact } from "../dist/adapters/_node-runtime-artifact.js";
+import { releaseIdleNodeRuntimeFileHasher, sealNodeRuntimeArtifact, verifyNodeRuntimeArtifact } from "../dist/adapters/_node-runtime-artifact.js";
 
 // Integrity/selection fixture, not a executable release qualification. Real
 // process handovers and staged installed distributions have separate tests.
@@ -60,6 +60,25 @@ test("dependency-link changes and byte changes invalidate an engine lock", async
     await writeFile(join(value.root, "platform/dist/adapters/_node-project-engine.js"), "modified engine");
     await assert.rejects(Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected)), /file digest mismatch/);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a Project can release its verifier and still verify the next engine selection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-hasher-"));
+  await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
+  const workerCount = () => process.report.getReport().workers.length;
+  const initialWorkers = workerCount();
+  try {
+    const value = await release(directory, "1.0.0");
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
+    assert.equal(workerCount(), initialWorkers + 1);
+    await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
+    assert.equal(workerCount(), initialWorkers);
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
+    assert.equal(workerCount(), initialWorkers + 1);
+  } finally {
+    await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("unqualified protocols, redirected release directories and escaping dependency links are refused", async () => {

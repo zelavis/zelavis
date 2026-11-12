@@ -53,6 +53,8 @@ before editing.
   The ordinary Node entrypoints share engine factories. Apps run through a
   persistent host and qualified running recipe upgrades use a durable Project
   update intent plus a host/Platform lock acknowledgement before traffic resumes.
+  Keep the Project host's imports limited to supervision and handover. Release
+  the artifact verification thread after each installed Project engine selection.
   Prepare an immutable candidate without replacing canonical files. Recover an
   unfinished intent from proved host selection; deletion takes precedence. Stop
   may fence failed ownership, but never erase the intent without proof. Re-key
