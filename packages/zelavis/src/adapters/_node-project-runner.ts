@@ -1,4 +1,7 @@
-import { parseJson } from "../core/json-validation.js";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { isString, objectFields, parseJson } from "../core/json-validation.js";
 import { runtimeReleaseRecord } from "../core/runtime/handover.js";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -7,17 +10,23 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
-import { evaluate, IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
 import { shutdownOnSignals } from "../runtimes/node.js";
 import { createNodeProjectHost } from "./_node-project-host.js";
-import { releaseIdleNodeRuntimeFileHasher } from "./_node-runtime-artifact.js";
-import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { serveNodeProjectControl } from "./_node-project-control.js";
 import { projectProcessEnvironment } from "./_project-process-environment.js";
 import { inheritedAppShardEnvironment } from "./_app-shard-environment.js";
 import { inheritedProjectLeaseEnvironment } from "./_project-lease-environment.js";
 import { raiseProjectOomScore } from "./_project-oom-score.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
+import type { NodeRuntimeExecution } from "./_node-runtime-supervisor.js";
+
+const exec = promisify(execFile);
+const verifier = fileURLToPath(new URL("./_node-project-engine-verifier.js", import.meta.url));
+const executionPaths = objectFields<Pick<NodeRuntimeExecution, "executable" | "worker" | "module" | "cwd">>({
+  executable: isString, worker: isString, module: isString, cwd: isString,
+});
+const VERIFIER_TIMEOUT_MS = 300_000;
 
 // The Agent runs a persistent host; Platform and App workers use the same
 // admission/ownership protocol. The App's host never gains parent authority.
@@ -43,16 +52,21 @@ const run = Scope.use(Effect.gen(function* () {
   const catalogOptions = catalogDirectory ? { directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" } : undefined;
   const host = yield* createNodeProjectHost({ ...options, environment: { ...projectProcessEnvironment(), ...inheritedProjectLeaseEnvironment(), ...inheritedAppShardEnvironment() },
     ...(catalogOptions ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
-      // One resolution hashes the release once, however many steps name it; the next resolution (a replaced worker) hashes afresh.
-      const catalog = createNodeRuntimeCatalog(catalogOptions, new Map());
-      if (options.integrationOnly) return yield* catalog.resolve(yield* catalog.select(version), "project", configuration, environment);
-      const selected = yield* evaluate(() => {
+      const digest = yield* evaluate(() => {
+        if (options.integrationOnly) return undefined;
         const engine = record.engine as { runtime?: RuntimeRelease } | undefined;
-        if (!engine?.runtime || engine.runtime.version !== version) throw new Error("Installed Project requires its exact runtime engine lock.");
-        return engine.runtime;
+        if (engine?.runtime?.version !== version || !/^sha256:[a-f0-9]{64}$/.test(engine.runtime.digest))
+          throw new Error("Installed Project requires its exact runtime engine lock.");
+        return engine.runtime.digest;
       });
-      return yield* catalog.resolve(selected, "project", configuration, environment);
-    }, Effect.ensuring(releaseIdleNodeRuntimeFileHasher())) } : {}),
+      // The inventory walk and hashing allocate substantially more than the resident host needs.
+      // Wait for the verifier to exit before launching the engine so its allocations are released.
+      const { stdout } = yield* integration(signal => exec(process.execPath,
+        [verifier, catalogOptions.directory, String(catalogOptions.rootOwned), version, ...(digest ? [digest] : [])],
+        { signal, env: projectProcessEnvironment(), timeout: VERIFIER_TIMEOUT_MS, maxBuffer: 64 * 1024 }), { interruptible: true });
+      const paths = yield* evaluate(() => parseJson(stdout, executionPaths));
+      return { ...paths, configuration, environment };
+    }) } : {}),
     output: (stream, line) => { (stream === "stderr" ? process.stderr : process.stdout).write(`${line}\n`); },
   });
   const port = yield* host.listen({ port: options.port, host: "127.0.0.1" });

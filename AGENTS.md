@@ -1009,8 +1009,8 @@ algorithms and must preserve reproducible seeds and traces.
   supervision and handover: files it loads import `effect/<Module>` (never the `effect` barrel, which
   costs every host tens of MB), and reach the Project driver, service loading, identity or the database
   only through a lazy `import()`. `test/project-host-footprint.test.mjs` enforces it. An installed
-  Project host releases its artifact verification thread after selecting an engine. It verifies the
-  next selection again before starting it.
+  Project host verifies each selected engine in a short-lived process and waits for it to exit
+  before starting the engine, so the verification allocations leave with that process.
 - Use **Effect v4** instead of Effect v3. The `effect` dependency is pinned to an
   exact release (stable `4.0.0` since 2026-10-01); every `@effect/*` package that
   is used moves with it.

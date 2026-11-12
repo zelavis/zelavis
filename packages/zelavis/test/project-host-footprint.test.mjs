@@ -25,7 +25,8 @@ test("a Project's persistent host loads only what supervising its engine needs",
   const loaded = JSON.parse(line.slice("LOADED ".length));
   const own = loaded.filter(url => url.includes("/dist/") && !url.includes("/node_modules/")).map(url => url.slice(url.lastIndexOf("/dist/") + 6));
   const forbidden = own.filter(path => /^(app|db|platform\/(shared|settings)|cli)\//.test(path) && path !== "db/format.js"
-    || ["service.js", "project.js", "core/index.js", "adapters/_local-runtime.js", "adapters/_node-project-runtime.js", "adapters/_package-acquisition.js"].includes(path));
+    || ["service.js", "project.js", "core/index.js", "adapters/_local-runtime.js", "adapters/_node-project-runtime.js", "adapters/_package-acquisition.js",
+      "adapters/_node-runtime-artifact.js", "adapters/_node-runtime-catalog.js"].includes(path));
   assert.deepEqual(forbidden, [], "the host must not load the Project driver, service loading, identity or the database");
   assert.ok(!loaded.some(url => /\/node_modules\/effect\/dist\/index\.js$/.test(url)), "host files import effect/<Module>, never the effect barrel");
   assert.ok(!loaded.some(url => /\/node_modules\/(effect\/dist\/(Schema|Stream)\.js|jose\/)/.test(url)), "the host needs neither Schema, Stream nor jose");

@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import test from "node:test";
 import { chmod, mkdtemp, mkdir, readFile, writeFile, symlink, unlink, rm, realpath, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { Effect } from "effect";
 import { createNodeRuntimeCatalog } from "../dist/adapters/_node-runtime-catalog.js";
-import { releaseIdleNodeRuntimeFileHasher, sealNodeRuntimeArtifact, verifyNodeRuntimeArtifact } from "../dist/adapters/_node-runtime-artifact.js";
+import { sealNodeRuntimeArtifact, verifyNodeRuntimeArtifact } from "../dist/adapters/_node-runtime-artifact.js";
 
 // Integrity/selection fixture, not a executable release qualification. Real
 // process handovers and staged installed distributions have separate tests.
@@ -62,21 +65,22 @@ test("dependency-link changes and byte changes invalidate an engine lock", async
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("a Project can release its verifier and still verify the next engine selection", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-hasher-"));
-  await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
-  const workerCount = () => process.report.getReport().workers.length;
-  const initialWorkers = workerCount();
+test("the Project verifier exits with only execution paths and checks the next selection again", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-verifier-"));
+  const verifier = fileURLToPath(new URL("../dist/adapters/_node-project-engine-verifier.js", import.meta.url));
+  const exec = promisify(execFile);
+  const verify = (...args) => exec(process.execPath, [verifier, directory, "false", ...args], { timeout: 30_000 });
   try {
-    const value = await release(directory, "1.0.0");
-    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
-    assert.equal(workerCount(), initialWorkers + 1);
-    await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
-    assert.equal(workerCount(), initialWorkers);
-    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
-    assert.equal(workerCount(), initialWorkers + 1);
+    const { root, selected } = await release(directory, "1.0.0");
+    const expected = { executable: join(root, "runtime/node/bin/node"),
+      worker: join(root, "platform/dist/adapters/_node-runtime-worker.js"),
+      module: join(root, "platform/dist/adapters/_node-project-engine.js"), cwd: root };
+    assert.deepEqual(JSON.parse((await verify(selected.version)).stdout), expected);
+    assert.deepEqual(JSON.parse((await verify(selected.version, selected.digest)).stdout), expected);
+    await assert.rejects(verify(selected.version, `sha256:${"0".repeat(64)}`), /differs from its exact engine lock/);
+    await writeFile(expected.module, "modified engine");
+    await assert.rejects(verify(selected.version, selected.digest), /file digest mismatch/);
   } finally {
-    await Effect.runPromise(releaseIdleNodeRuntimeFileHasher());
     await rm(directory, { recursive: true, force: true });
   }
 });

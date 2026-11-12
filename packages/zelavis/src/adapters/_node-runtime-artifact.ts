@@ -54,15 +54,6 @@ const hasherWorker = () => {
   return made;
 };
 
-/** Project hosts verify an engine only when selecting it. Release the idle verifier before starting that engine. */
-export const releaseIdleNodeRuntimeFileHasher = Effect.fn("RuntimeArtifact.releaseIdleFileHasher")(function* () {
-  const idle = hasher;
-  if (!idle || idle.pending.size !== 0) return;
-  hasher = undefined;
-  yield* integration(() => idle.worker.terminate()).pipe(Effect.catch(error =>
-    Effect.logWarning(`Could not release the idle runtime file hasher: ${error.message}`)));
-});
-
 /** Every file of a release against its manifest digest, hashed off this process's event loop. */
 const hashReleaseFiles = Effect.fn("RuntimeArtifact.hashFiles")(function* (root: string, files: ReadonlyArray<readonly [string, string]>) {
   const reply = yield* Effect.callback<HashReply>(resume => {
