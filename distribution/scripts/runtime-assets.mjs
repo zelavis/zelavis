@@ -14,12 +14,33 @@ export async function verifyFileChecksum(path, expected) {
   if (hash.digest("hex") !== expected.toLowerCase()) throw new Error(`Checksum mismatch for ${path}.`);
 }
 
-async function download(url, destination) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Download failed (${response.status}): ${url}`);
+const DOWNLOAD_ATTEMPTS = 5;
+const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+// A release host that drops a connection or answers 5xx/429 for a moment is asked again, 2, 4, 8 and 16 seconds
+// later; any other answer is final. Every attempt has its own time limit, so a stalled connection cannot hang an install.
+async function downloadOnce(url, destination) {
+  let response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    if (response.ok) {
+      await writeFile(destination, new Uint8Array(await response.arrayBuffer()));
+      return undefined;
+    }
+  } catch (cause) {
+    return { transient: true, error: new Error(`Download failed (${cause?.cause?.code ?? cause?.name ?? "network error"}): ${url}`, { cause }) };
   }
-  await writeFile(destination, new Uint8Array(await response.arrayBuffer()));
+  return { transient: response.status >= 500 || response.status === 429, error: new Error(`Download failed (${response.status}): ${url}`) };
+}
+
+async function download(url, destination) {
+  for (let attempt = 1; ; attempt += 1) {
+    const failed = await downloadOnce(url, destination);
+    if (failed === undefined) return;
+    if (!failed.transient) throw failed.error;
+    if (attempt === DOWNLOAD_ATTEMPTS) throw new Error(`${failed.error.message} (after ${DOWNLOAD_ATTEMPTS} attempts)`, { cause: failed.error });
+    await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+  }
 }
 
 export async function installNodeRuntime(output, nodeVersion, releaseTarget, cacheRoot) {

@@ -41,7 +41,7 @@ if [ "$USER_MODE" = 0 ] && [ "$(id -u)" != 0 ]; then
   exit 1
 fi
 if [ -z "$VERSION" ]; then
-  TAGS=$(curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --max-time 30 \
+  TAGS=$(curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --max-time 30 --retry 4 --retry-connrefused \
     --max-filesize 4096 https://registry.npmjs.org/-/package/zelavis/dist-tags)
   VERSION=$(printf '%s' "$TAGS" | sed -n "s/.*\"$CHANNEL\"[[:space:]]*:[[:space:]]*\"\([0-9][0-9A-Za-z.+-]*\)\".*/\1/p")
 fi
@@ -60,7 +60,7 @@ chmod 0700 "$TEMPORARY"
 trap 'rm -rf "$TEMPORARY"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-fetch() { curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --max-time 600 --max-filesize "$3" "$1" -o "$2"; }
+fetch() { curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --max-time 600 --retry 4 --retry-connrefused --max-filesize "$3" "$1" -o "$2"; }
 
 # The bootstrap Node only acquires npm bytes. The package chooses the Node that
 # executes its installer, so changing a release pin never requires a manual rerun.

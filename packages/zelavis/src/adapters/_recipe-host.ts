@@ -65,7 +65,7 @@ export interface RecipeHostOptions {
   readonly progress?: (input: { readonly phase: string; readonly message: string }) => void;
   /** For tests; defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;
-  /** The wait between attempts of a download that stumbled; three seconds unless a test shortens it. */
+  /** The first wait between attempts of a download that stumbled, doubling after each; two seconds unless a test shortens it. */
   readonly retryDelay?: import("effect").Duration.Input;
   /**
    * Accept relative symbolic links that stay inside the unpacked tree. Only for a pinned, digest-verified
@@ -376,7 +376,9 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
       }),
     },
 
-    download: (input) => downloadOnce(input).pipe(Effect.retry({ times: 2, schedule: Schedule.spaced(options.retryDelay ?? "3 seconds"), while: transient })),
+    // Five attempts over about half a minute (2, 4, 8 and 16 seconds apart): an upstream host that drops connections
+    // for a few seconds is outlasted, and one that is down for longer still fails the create in well under a minute.
+    download: (input) => downloadOnce(input).pipe(Effect.retry({ times: 4, schedule: Schedule.exponential(options.retryDelay ?? "2 seconds"), while: transient })),
 
     extract: (archive, destination, extractOptions) => Effect.gen(function* () {
       const source = yield* locate("extract", archive);
