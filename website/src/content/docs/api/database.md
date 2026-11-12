@@ -61,7 +61,7 @@ What a commit that returned survives is chosen when the database opens, and
 | `durability` | A returned commit survives | Cost |
 |---|---|---|
 | `crash` (default) | the process being killed; a power cut can lose a suffix of the latest commits, never leave holes | none beyond the write |
-| `power` | a power cut too | a device flush per group of commits |
+| `power` | a power cut too | a device flush per commit |
 
 ```ts
 const zv = new Zelavis({ adapter: nodeAdapter({ database: { durability: 'power' } }) });
@@ -72,13 +72,11 @@ opening it with `power` is refused rather than given the weaker promise. On
 macOS a plain `fsync` leaves data in the drive's cache, so SQLite's `power`
 uses `F_FULLFSYNC` there, which is what makes a flush cost what it does.
 
-Both engines commit writes that are ready at the same moment together: Tenants
-writing to one shard at once share one transaction and one flush, while each
-write keeps its own conditions and fails or succeeds alone, and none is answered
-before the flush that makes it durable. LMDB does this in its binding; SQLite in
-`zelavis/db` (at most 64 writes or 16 MiB a group). One Tenant's own writes are
-still committed one at a time, so grouping raises the throughput of many Tenants
-on a shard, not of one. `pnpm --filter zelavis bench:commits` measures both.
+LMDB's binding commits writes that are ready at the same moment together, so
+Tenants writing to one shard at once share a flush. SQLite commits each write
+in its own transaction, so under `power` every write pays a flush of its own.
+`pnpm --filter zelavis bench:commits` measures commits a second and how long the
+event loop is held, by durability and by how many Tenants write at once.
 
 Under Node, SQLite's write-ahead log is folded back into each shard's file by
 one checkpoint thread per process, every 100 ms, with passive checkpoints that
@@ -92,6 +90,11 @@ it reached (at most about the backstop) until the shard closes, because growing
 a file again is where a commit waits on the filesystem.
 Bun has no `node:sqlite` for that thread, so under Bun SQLite checkpoints inside
 commits as before.
+
+A SQLite shard keeps at most 64 read snapshots open at once, each a read-only
+connection of its own. Past that a read waits for one to close, for at most
+30 seconds, and is then refused with a `StoreError` that says so rather than
+waiting behind reads that are not ending.
 A Project chooses its own: the choice is recorded beside its shards and used from its next start, and until then
 health and the storage operation report it as `pending`. `GET|PUT …/database/maintenance/storage` (`{ durability }`;
 reading needs `database.inspect`, choosing `database.define`), `client.projects.databaseStorage(projectId)` /

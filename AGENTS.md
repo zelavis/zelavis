@@ -1147,12 +1147,11 @@ Key rules:
   `crash` (default) or `power` (a device flush before a commit returns; on
   macOS SQLite needs `fullfsync` for that), reported by
   health. An engine that cannot keep `power` refuses it at open (RocksDB's
-  binding) rather than giving the weaker promise. Batches ready together
-  share one engine commit (group commit: LMDB's binding, `sqlite-kv.ts` for
-  SQLite), but each stays its own atomic unit: its conditions are checked after
-  the batches ahead of it, a refused or failed batch leaves the others intact,
-  no batch is answered before the commit returns, and a queued batch is always
-  answered. Under Node, SQLite checkpoints run on one process-wide thread
+  binding) rather than giving the weaker promise. SQLite commits one batch per
+  transaction. A SQLite group commit was tried and removed: a read right after
+  an answered write could miss it (the dashboard's divided-Tenant delete in
+  `test-route-parity.mjs` caught it). Bring it back only with a test that
+  reproduces that and passes. Under Node, SQLite checkpoints run on one process-wide thread
   (`sqlite-checkpointer.ts`), never inside a commit; SQLite's own checkpoint stays
   on as a raised backstop, never off, so the log is bounded without that thread.
   A test that needs commits still in the log opens its shard with
