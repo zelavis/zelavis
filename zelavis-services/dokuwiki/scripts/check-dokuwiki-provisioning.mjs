@@ -19,12 +19,24 @@ const directory = `/var/lib/zelavis/projects/${id}`;
 const { createZelavisClient } = await import(pathToFileURL(`${platform}/dist/sdk/fetch.js`).href);
 const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
 const client = createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl } });
+/** The site's preview address once the Platform serves it there (Caddy's own loopback port is no visitor's path). */
+const previewOf = async (project) => {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const preview = (await client.projects.get(project)).preview;
+    if (preview?.status === "ready" && preview.port) return `http://127.0.0.1:${preview.port}`;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`The preview of ${project} is not ready.`);
+};
+
 // A failed call says which one it was.
 for (const [method, call] of Object.entries(client.projects)) {
   client.projects[method] = async (...args) => {
     try { return await call(...args); } catch (error) { if (error instanceof Error) {
         const raw = error.response && !error.response.bodyUsed ? await error.response.clone().text().catch(() => "") : "";
-        error.message = `projects.${method}: ${error.message} ${JSON.stringify(error.body ?? {})} [${error.response?.status} ${error.response?.headers?.get?.("content-type")}] ${raw.slice(0, 300)}`;
+        // A new error rather than an edited one: some client errors expose `message` as a getter only.
+        const cause = error.cause instanceof Error ? ` (cause: ${error.cause.code ?? error.cause.message})` : "";
+        throw new Error(`projects.${method}: ${error.message}${cause} ${JSON.stringify(error.body ?? {})} [${error.response?.status} ${error.response?.headers?.get?.("content-type")}] ${raw.slice(0, 300)}`, { cause: error });
       }
       throw error; }
   };
@@ -101,15 +113,17 @@ if (phase === "create") {
   project = await client.projects.start(id);
   assert.equal(project.recipe.version, "0.0.0-qualification");
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
+  // Through the Platform's ingress, the way visitors reach the site: it holds requests while the web server reloads.
+  const preview = await previewOf(id);
   const run = `${directory}/.zelavis/server/run`;
   const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
   const before = await pids();
-  assert.equal((await ask(`${project.runtime.url}/install.php`)).header, "historical");
+  assert.equal((await ask(`${preview}/install.php`)).header, "historical");
   let stop = false, failures = 0, served = 0; const headers = new Set(); const failed = [];
   const traffic = (async () => {
     while (!stop) {
       try {
-        const reply = await ask(`${project.runtime.url}/install.php`);
+        const reply = await ask(`${preview}/install.php`);
         if (reply.status >= 500) { failures += 1; failed.push(`${reply.status} ${reply.body.slice(0, 120)}`); } else served += 1;
         headers.add(reply.header);
       } catch (error) { failures += 1; failed.push(String(error?.code ?? error)); }
@@ -127,7 +141,7 @@ if (phase === "create") {
   assert.ok(served > 20, `served ${served}`);
   assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
   assert.deepEqual(await pids(), before, "Caddy and PHP-FPM are the same processes");
-  assert.equal((await ask(`${project.runtime.url}/install.php`)).header, null);
+  assert.equal((await ask(`${preview}/install.php`)).header, null);
   console.log(`PASS: running DokuWiki upgraded its recipe live: ${served} requests, none failed, same Caddy/PHP-FPM processes.`);
 } else {
   throw new Error(`Unknown phase "${phase}".`);

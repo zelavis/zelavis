@@ -11,10 +11,17 @@ export interface RecipeSecret { readonly secret: string }
  * What the Platform does with a running process when a newer plan still contains it but its
  * configuration changed. `reload` signals it and leaves it serving (nginx and PHP-FPM reload
  * gracefully); `restart` replaces it. The default is `restart`, which is always correct.
+ *
+ * Public requests wait at the Project's ingress for the length of a reload, as they do for a replacement:
+ * a graceful reload is not lossless for the requests arriving during it (a Go server such as Caddy drops a
+ * request its retiring server accepted but had not read yet). `reloaded` is text the process writes once
+ * the reload has finished and the old configuration has stopped serving (Caddy: "successfully reloaded
+ * config"); the requests are let through only then, and a reload that never says so has failed. Without
+ * it the reload counts as done once the process is still ready after the signal.
  */
 export type ProcessUpdate =
   | { readonly strategy: "restart" }
-  | { readonly strategy: "reload"; readonly signal: "SIGHUP" | "SIGUSR1" | "SIGUSR2" };
+  | { readonly strategy: "reload"; readonly signal: "SIGHUP" | "SIGUSR1" | "SIGUSR2"; readonly reloaded?: string };
 
 export interface ProcessPlan {
   readonly processes: readonly {
@@ -63,7 +70,10 @@ const ProcessPlanWire = Schema.Struct({
     config: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/))).check(Schema.isMaxLength(8))),
     update: Schema.optional(Schema.Union([
       Schema.Struct({ strategy: Schema.Literal("restart") }),
-      Schema.Struct({ strategy: Schema.Literal("reload"), signal: Schema.Literals(["SIGHUP", "SIGUSR1", "SIGUSR2"]) }),
+      Schema.Struct({
+        strategy: Schema.Literal("reload"), signal: Schema.Literals(["SIGHUP", "SIGUSR1", "SIGUSR2"]),
+        reloaded: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256), Schema.isPattern(/^[^\x00\n]*$/))),
+      }),
     ])),
   })).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
 });

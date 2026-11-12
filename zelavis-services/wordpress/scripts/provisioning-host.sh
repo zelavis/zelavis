@@ -7,8 +7,8 @@ node_version=$(sed -n 's/.*"nodeVersion": "\([^"]*\)".*/\1/p' /workspace/distrib
 case "$(uname -m)" in aarch64) architecture=arm64 ;; x86_64) architecture=x64 ;; *) exit 2 ;; esac
 archive="node-v$node_version-linux-$architecture.tar.gz"
 mkdir -p /opt/prepared/runtime /opt/npm-project
-curl -fsSL "https://nodejs.org/dist/v$node_version/$archive" -o "$archive"
-curl -fsSL "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o SHASUMS256.txt
+curl -fsSL --retry 4 --retry-connrefused "https://nodejs.org/dist/v$node_version/$archive" -o "$archive"
+curl -fsSL --retry 4 --retry-connrefused "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o SHASUMS256.txt
 sed -n "/ $archive\$/p" SHASUMS256.txt > node.sha256
 test -s node.sha256
 sha256sum -c node.sha256
@@ -84,7 +84,7 @@ phase=upgrade
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then phase=start-historical; fi
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" "$phase"
 if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
-  # A running WordPress Project upgrades its recipe without stopping: only Nginx's configuration differs.
+  # A running WordPress Project upgrades its recipe without stopping: only Caddy's configuration differs.
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" stop
   systemctl stop zelavis.service zelavis.socket
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" seed-live
@@ -95,8 +95,8 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   done
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" start-historical
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" live-upgrade
-  # The second managed recipe, a different shape (no database), through the same path. Three rounds,
-  # because one dropped request in four earlier runs was never explained.
+  # The second managed recipe, a different shape (no database), through the same path. Three rounds:
+  # a request dropped while Caddy reloads happened about once in four runs before reloads held the ingress.
   for round in 1 2 3; do
     if skipped dokuwiki; then break; fi
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" stop
@@ -109,6 +109,9 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" live-upgrade
   done
+  # Each recipe is stopped once it has qualified: the server is a small one (2 CPUs, 4 GiB) and every managed
+  # app also runs its Zelavis integration host, so seven at once starve the Platform (OOM, timed-out handover).
+  if ! skipped dokuwiki; then runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" stop; fi
   if ! skipped joomla; then
     # The third: a database-backed application whose own installer needs values the Platform generated.
     JOOMLA_CHECK=/workspace/zelavis-services/joomla/scripts/check-joomla-provisioning.mjs
@@ -121,6 +124,7 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
       sleep 1
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$JOOMLA_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$JOOMLA_CHECK" stop
   fi
   if ! skipped typo3; then
     # And a fourth, whose own setup command runs against the same generated values.
@@ -134,6 +138,7 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
       sleep 1
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$TYPO3_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$TYPO3_CHECK" stop
   fi
   if ! skipped prestashop; then
     # And a fifth, which needs the PHP 8.1 it pins (no PHP is on the host) and unpacks a zip holding a zip.
@@ -147,6 +152,7 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
       sleep 1
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$PRESTASHOP_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$PRESTASHOP_CHECK" stop
   fi
   if ! skipped drupal; then
     # And a sixth, whose installer is Drupal's own installation code run with the Project's values.
@@ -160,6 +166,7 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
       sleep 1
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DRUPAL_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DRUPAL_CHECK" stop
   fi
 fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then

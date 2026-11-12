@@ -80,7 +80,10 @@ test("start is two processes, PHP-FPM then Caddy, both reloadable, within the ma
   const plan = Effect.runSync(recipe.start(context()));
   const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm"], ports: ["web"], directories: ["/srv/p1/.zelavis/server", "/srv/p1/app", "/run/zv-abc"] });
   assert.deepEqual(checked.processes.map((process) => [process.name, [...process.dependsOn]]), [["php-fpm", []], ["caddy", ["php-fpm"]]]);
-  assert.deepEqual(checked.processes.map((process) => process.update), [{ strategy: "reload", signal: "SIGUSR2" }, { strategy: "reload", signal: "SIGUSR1" }]);
+  // Caddy says when a reload has finished, so public requests are held until its old configuration has stopped serving.
+  assert.deepEqual(checked.processes.map((process) => process.update), [
+    { strategy: "reload", signal: "SIGUSR2" }, { strategy: "reload", signal: "SIGUSR1", reloaded: "successfully reloaded config" },
+  ]);
 });
 
 test("install downloads the pinned release into the named site directory, holds no secret, and validates both configurations", async () => {

@@ -84,7 +84,7 @@ test("start returns the three processes, in dependency order, within the manifes
   assert.deepEqual(checked.processes[1].readiness, { path: "/run/zv-abc/php-fpm.sock", timeoutMs: 120000 });
   assert.deepEqual(checked.processes[2].readiness, { port: "web", timeoutMs: 120000 });
   assert.deepEqual([checked.processes[1].config, checked.processes[1].update], [["/srv/p1/.zelavis/server/php-fpm.conf"], { strategy: "reload", signal: "SIGUSR2" }], "PHP-FPM reloads gracefully");
-  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/.zelavis/server/Caddyfile"], { strategy: "reload", signal: "SIGUSR1" }], "Caddy reloads gracefully");
+  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/.zelavis/server/Caddyfile"], { strategy: "reload", signal: "SIGUSR1", reloaded: "successfully reloaded config" }], "Caddy reloads gracefully, and says when its old configuration has stopped serving");
   assert.equal(checked.processes[0].config, undefined, "the database reads nothing that a reload could change; a different launch restarts it");
 
   const root = Effect.runSync(recipe.start(context({ account: { user: "www-data", group: "www-data", switchUser: true } })));

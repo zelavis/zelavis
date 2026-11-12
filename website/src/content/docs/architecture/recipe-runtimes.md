@@ -232,7 +232,14 @@ process plan, and reconciles that plan against the running processes by fingerpr
 - a process whose launch (executable, arguments, directory, environment) and configuration are
   unchanged is **kept** and never touched;
 - a process whose plan lists `config` files and an `update` signal (for example Caddy `SIGUSR1`,
-  PHP-FPM `SIGUSR2`) and whose only change is those files is **reloaded** in place;
+  PHP-FPM `SIGUSR2`) and whose only change is those files is **reloaded** in place. A graceful
+  reload is not lossless on its own: a Go server such as Caddy drops a request its retiring
+  configuration accepted but had not read yet. So public requests wait at the Project's ingress
+  for the length of a reload, as they do for a replacement, and a process that says when its
+  reload has finished declares that text as `update.reloaded` (Caddy: `successfully reloaded
+  config`). The requests go on only once it appears, and a reload that never says so has failed
+  and is rolled back. Traffic sent to the process's own loopback port bypasses the ingress and
+  is not covered;
 - a process whose launch changed, or that had exited, is **replaced**, and new ones are added,
   in dependency order, each waiting for readiness before its dependents are touched.
 

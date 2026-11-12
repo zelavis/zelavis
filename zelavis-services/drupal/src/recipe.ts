@@ -210,8 +210,9 @@ export default defineRecipe({
         {
           name: "caddy", command: "caddy", env: {}, dependsOn: ["php-fpm"],
           args: ["run", "--config", `${root}/Caddyfile`, "--adapter", "caddyfile", "--pidfile", `${root}/run/caddy.pid`], readiness: { port: "web", timeoutMs: 120_000 },
-          // SIGUSR1 makes Caddy load the new configuration and let in-flight requests finish on the old one.
-          config: [`${root}/Caddyfile`], update: { strategy: "reload", signal: "SIGUSR1" },
+          // SIGUSR1 makes Caddy load the new configuration and let in-flight requests finish on the old one; it logs
+          // the line below once the old one has stopped, and public requests wait at the ingress until then.
+          config: [`${root}/Caddyfile`], update: { strategy: "reload", signal: "SIGUSR1", reloaded: "successfully reloaded config" },
         },
       ],
     };

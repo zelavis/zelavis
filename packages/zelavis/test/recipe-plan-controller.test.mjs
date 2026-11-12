@@ -29,7 +29,7 @@ const config = () => { try { return fs.readFileSync(configFile, "utf8"); } catch
 let current = config();
 const note = (what) => fs.appendFileSync(record, what + " " + name + " " + process.pid + " " + Date.now() + "\\n");
 note("start");
-const reload = () => { current = config(); note("reload"); };
+const reload = () => { current = config(); note("reload"); if (!current.includes("refuse")) console.log("configuration reloaded: " + current); };
 process.on("SIGHUP", reload);
 process.on("SIGUSR2", reload);
 process.on("SIGTERM", () => { note("stop"); process.exit(0); });
@@ -61,11 +61,11 @@ async function setup(t, secrets = {}) {
     return sleep(30);
   };
   const config = (name) => join(directory, `${name}.conf`);
-  const proc = (name, port, { delay = 0, exitAfter = 0, dependsOn = [], timeoutMs = 5000, args = [], env = {}, reload, withConfig = true } = {}) => ({
+  const proc = (name, port, { delay = 0, exitAfter = 0, dependsOn = [], timeoutMs = 5000, args = [], env = {}, reload, reloaded, withConfig = true } = {}) => ({
     name, command: "node", dependsOn, env, readiness: { port, timeoutMs },
     args: ["-e", SERVICE, name, String(ports[port]), record, config(name), String(delay), String(exitAfter), ...args],
     ...(withConfig ? { config: [config(name)] } : {}),
-    ...(reload ? { update: { strategy: "reload", signal: reload } } : {}),
+    ...(reload ? { update: { strategy: "reload", signal: reload, ...(reloaded ? { reloaded } : {}) } } : {}),
   });
   const lines = () => readFileSync(record, "utf8").trim().split("\n").filter(Boolean).map((line) => line.split(" "));
   const pidOf = (name) => Number(lines().filter(([kind, who]) => kind === "start" && who === name).at(-1)?.[2]);
@@ -141,6 +141,56 @@ test("a configuration change reloads a process that can, in place, with no faile
   assert.equal(lines().filter(([kind]) => kind === "start").length, 1);
   assert.ok(events.some((event) => event._tag === "Reloaded" && event.signal === "SIGHUP"));
   void ports;
+  await run(controller.stop);
+});
+
+test("a reload holds the ingress until the process confirms it, and one it never confirms fails", { timeout: 60_000 }, async (t) => {
+  const { controllerFor, makeHost, proc, config, ask } = await setup(t);
+  // The host's ingress gate: closed and opened around the work, with what the process said in between.
+  const gate = [];
+  let confirmedBeforeOpen = false;
+  const host = makeHost({
+    // Like the runtime's gate, it opens however the work ends.
+    disruption: (work) => Effect.sync(() => gate.push("closed")).pipe(
+      Effect.andThen(work),
+      Effect.tap(() => Effect.map(controller.logs, (logs) => { confirmedBeforeOpen = logs.some((entry) => entry.line.startsWith("configuration reloaded: version two")); })),
+      Effect.ensuring(Effect.sync(() => gate.push("opened"))),
+    ),
+  });
+  let controller;
+  controller = await controllerFor(host);
+  writeFileSync(config("web"), "version one");
+  const plan = { processes: [proc("web", "web", { reload: "SIGHUP", reloaded: "configuration reloaded", timeoutMs: 1500 })] };
+  await run(controller.reconcile(plan));
+  assert.deepEqual(gate, [], "a start from nothing holds nothing");
+
+  writeFileSync(config("web"), "version two");
+  const report = await run(controller.reconcile(plan));
+  assert.deepEqual(report.reloaded, ["web"]);
+  assert.deepEqual(gate, ["closed", "opened"], "the reload ran with public requests held");
+  assert.ok(confirmedBeforeOpen, "the gate opened only after the process confirmed its reload");
+  assert.equal((await ask("web")).config, "version two");
+
+  // A configuration the process refuses: it keeps serving the old one and never says it reloaded.
+  writeFileSync(config("web"), "version three, refuse");
+  const started = Date.now();
+  const error = await failureOf(controller.reconcile(plan));
+  assert.match(String(error?.message ?? error), /did not confirm its reload/);
+  assert.ok(Date.now() - started >= 1400, "it waited its deadline");
+  assert.deepEqual(gate, ["closed", "opened", "closed", "opened"], "the gate opens however the reload ends");
+  await run(controller.stop);
+});
+
+test("a reload without a confirmation still holds the ingress for its length", { timeout: 60_000 }, async (t) => {
+  const { controllerFor, makeHost, proc, config } = await setup(t);
+  let held = 0;
+  const controller = await controllerFor(makeHost({ disruption: (work) => Effect.suspend(() => { held += 1; return work; }) }));
+  writeFileSync(config("web"), "version one");
+  const plan = { processes: [proc("web", "web", { reload: "SIGHUP" })] };
+  await run(controller.reconcile(plan));
+  writeFileSync(config("web"), "version two");
+  assert.deepEqual((await run(controller.reconcile(plan))).reloaded, ["web"]);
+  assert.equal(held, 1);
   await run(controller.stop);
 });
 

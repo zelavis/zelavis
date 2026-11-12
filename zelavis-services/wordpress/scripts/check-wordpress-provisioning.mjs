@@ -124,16 +124,24 @@ export function register() {
       const ask = (url) => new Promise((resolve, reject) => {
         httpGet(url, { agent: oneConnection }, (reply) => { reply.resume(); reply.on("end", () => resolve({ status: reply.statusCode, header: reply.headers["x-recipe"] ?? null })); reply.on("error", reject); }).on("error", reject);
       });
+      // Through the Platform's ingress, the way visitors reach the site: it holds requests while Caddy reloads.
+      let preview;
+      for (let attempt = 0; attempt < 60 && preview === undefined; attempt += 1) {
+        const status = (await client.projects.get(project.id)).preview;
+        if (status?.status === "ready" && status.port) preview = `http://127.0.0.1:${status.port}/`;
+        else await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      assert.ok(preview, "the WordPress preview is ready");
       const before = await pids();
-      assert.equal((await ask(project.runtime.url)).header, "historical");
-      let stop = false, failures = 0, served = 0; const headers = new Set();
+      assert.equal((await ask(preview)).header, "historical");
+      let stop = false, failures = 0, served = 0; const headers = new Set(); const failed = [];
       const traffic = (async () => {
         while (!stop) {
           try {
-            const reply = await ask(project.runtime.url);
-            if (reply.status >= 500) failures += 1; else served += 1;
+            const reply = await ask(preview);
+            if (reply.status >= 500) { failures += 1; failed.push(String(reply.status)); } else served += 1;
             headers.add(reply.header);
-          } catch { failures += 1; }
+          } catch (error) { failures += 1; failed.push(String(error?.code ?? error)); }
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
       })();
@@ -143,11 +151,11 @@ export function register() {
       stop = true; await traffic;
       assert.equal(project.runtime.status, "running", JSON.stringify(project));
       assert.equal(project.recipe.version, recipes.find((recipe) => recipe.name === "@zelavis/wordpress").version);
-      assert.equal(failures, 0, "no request failed during the live recipe upgrade");
+      assert.equal(failures, 0, `no request failed during the live recipe upgrade: ${JSON.stringify(failed.slice(0, 5))}`);
       assert.ok(served > 20, `served ${served}`);
       assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
       assert.deepEqual(await pids(), before, "Caddy, PHP-FPM and MariaDB are the same processes");
-      assert.equal((await ask(project.runtime.url)).header, null);
+      assert.equal((await ask(preview)).header, null);
       console.log(`PASS: running WordPress upgraded its recipe live: ${served} requests, none failed, same Caddy/PHP-FPM/MariaDB processes.`);
     }
     if (phase === "upgrade") {

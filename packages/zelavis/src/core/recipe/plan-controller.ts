@@ -50,9 +50,10 @@ export interface PlanHostApi {
   readonly pollInterval: Duration.Input;
   /**
    * Wraps the part of a reconciliation during which something the Project serves with is stopped and
-   * started again (a replaced process, or one removed while others remain). The host uses it to hold
-   * public requests at its ingress for exactly that long, so a replacement shows as a short wait and
-   * not as failed requests. Reloads and kept processes never need it.
+   * started again (a replaced process, or one removed while others remain) or reloads its configuration.
+   * The host uses it to hold public requests at its ingress for exactly that long, so a replacement or a
+   * reload shows as a short wait and not as failed requests: a graceful reload still drops a request that
+   * arrives while the old configuration retires (see `ProcessUpdate`). Kept processes never need it.
    */
   readonly disruption?: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly stopGrace: Duration.Input;
@@ -197,8 +198,11 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
 
   const reveal = (value: string | RecipeSecret) => typeof value === "string" ? Effect.succeed(value) : host.resolveSecret(value.secret);
 
+  /** Whoever waits for a process to write a line (a reload's confirmation), by process name. */
+  const listeners = new Map<string, Set<(line: string) => void>>();
   const record = (name: string) => (line: ZelavisAgentProcessOutput) => {
     host.onOutput?.(name, line);
+    for (const listener of listeners.get(name) ?? []) listener(line.line);
     output.push({ process: name, stream: line.stream, line: line.line });
     if (output.length > MAX_LOG_LINES) output.splice(0, output.length - MAX_LOG_LINES);
   };
@@ -316,7 +320,28 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
       }),
       Reload: ({ name, signal }) => Effect.gen(function* () {
         const current = (yield* Ref.get(table)).get(name)!;
-        yield* host.signal(current.process, signal);
+        const target = resolved.get(name)!.update;
+        const confirmation = target.strategy === "reload" ? target.reloaded : undefined;
+        if (confirmation === undefined) {
+          yield* host.signal(current.process, signal);
+        } else {
+          // Listening before the signal, so a confirmation written at once is not missed.
+          const confirmed = yield* Deferred.make<void>();
+          const listener = (line: string) => { if (line.includes(confirmation)) Deferred.doneUnsafe(confirmed, Effect.void); };
+          yield* Effect.acquireUseRelease(
+            Effect.sync(() => { const set = listeners.get(name) ?? new Set(); set.add(listener); listeners.set(name, set); }),
+            () => Effect.gen(function* () {
+              yield* host.signal(current.process, signal);
+              const died = Deferred.await(current.exited).pipe(Effect.flatMap((exit) =>
+                Effect.fail(fail(`"${name}" exited during its reload (${exit.signal ? `signal ${exit.signal}` : `code ${exit.code}`}).`))));
+              yield* Effect.raceFirst(Deferred.await(confirmed), died).pipe(Effect.timeoutOrElse({
+                duration: Duration.millis(current.readiness.timeoutMs),
+                orElse: () => Effect.fail(fail(`"${name}" did not confirm its reload within ${current.readiness.timeoutMs} ms; its new configuration may have been refused.`)),
+              }));
+            }),
+            () => Effect.sync(() => { listeners.get(name)?.delete(listener); if (listeners.get(name)?.size === 0) listeners.delete(name); }),
+          );
+        }
         yield* PubSub.publish(events, PlanEvent.Reloaded({ name, signal }));
         // Still serving, and still the same process: a reload that killed it is a failure, not a success.
         yield* awaitReady(current);
@@ -343,7 +368,7 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
           for (const [name, outcome] of outcomes) done[outcome].push(name);
         }
       });
-      const disruptive = groups.some((group) => group.some((step) => step._tag === "Replace" || (step._tag === "Remove" && wanted.length > 0)));
+      const disruptive = groups.some((group) => group.some((step) => step._tag === "Replace" || step._tag === "Reload" || (step._tag === "Remove" && wanted.length > 0)));
       yield* host.disruption && disruptive ? host.disruption(work) : work;
       return done as ReconcileReport;
     }));
