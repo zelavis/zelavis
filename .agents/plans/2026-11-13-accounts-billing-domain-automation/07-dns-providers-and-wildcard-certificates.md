@@ -1,10 +1,10 @@
 # DNS providers, automatic records and wildcard certificates
 
-Job: Let an operator connect a DNS provider (Cloudflare first) so Zelavis can manage records in operator zones: automatic customer subdomains under an operator-hosted zone, ACME DNS-01, and wildcard certificates.
+Job: Let an operator connect a DNS provider (Cloudflare first, built into core) so Zelavis can manage records in operator zones: automatic customer subdomains under an operator-hosted zone, ACME DNS-01, and wildcard certificates.
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 7 of 10. Read 00-overview.md first.
+Part: 7 of 14. Read 00-overview.md first.
 
 To start:    Execute part 7 in .agents/plans/2026-11-13-accounts-billing-domain-automation/07-dns-providers-and-wildcard-certificates.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/07-dns-providers-and-wildcard-certificates.md. Start with its section 8.
@@ -13,7 +13,7 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 - [ ] 1. Confirm part 1's resolver and the Edge baseline.
 - [ ] 2. Define the DNS provider capability contract.
-- [ ] 3. Add the Cloudflare DNS plugin.
+- [ ] 3. Add the built-in Cloudflare DNS driver.
 - [ ] 4. Add DNS connections and adopted zones.
 - [ ] 5. Add ACME DNS-01 and wildcard certificate orders.
 - [ ] 6. Add automatic hosted subdomains to Project domains.
@@ -25,24 +25,28 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## 0. Summary and finish line
 
-Every Project domain today needs the customer to create TXT and address records by hand, and Edge issues certificates only through HTTP-01 (`packages/zelavis/src/edge/certificates.ts:439-444` refuses an order without `http-01`), so wildcard certificates are impossible. This part adds an owner-qualified capability `zelavis/edge:dns` for DNS provider plugins, a first-party `@zelavis/dns-cloudflare` plugin, operator DNS connections (encrypted tokens) and adopted zones, DNS-01 for ACME (wildcards included), and an "automatic" Project domain mode for operator-hosted subdomains: a customer picks `shop` under the operator's `apps.example.com`, and Zelavis claims the hostname, writes its address records and serves it under the zone's wildcard certificate.
+Every Project domain today needs the customer to create TXT and address records by hand, and Edge issues certificates only through HTTP-01 (`packages/zelavis/src/edge/certificates.ts:439-444` refuses an order without `http-01`), so wildcard certificates are impossible. This part adds a DNS provider contract with first-party drivers built into the `zelavis` package (Cloudflare first, in `packages/zelavis/src/adapters/_dns-cloudflare.ts`, injected by the Node adapter), an owner-qualified capability `zelavis/edge:dns` through which a third-party plugin can add another provider, operator DNS connections (encrypted tokens) and adopted zones, DNS-01 for ACME (wildcards included), and an "automatic" Project domain mode for operator-hosted subdomains: a customer picks `shop` under the operator's `apps.example.com`, and Zelavis claims the hostname, writes its address records and serves it under the zone's wildcard certificate.
 
-- **In scope**: capability contract and discovery, Cloudflare plugin with a fake-API test, connections and zones in the System Store, DNS-01 with propagation checked at the authoritative servers (part 1), wildcard orders and renewals, automatic subdomains with record cleanup on removal and Project deletion, HTTP/SDK/CLI, dashboard, docs.
+- **In scope**: provider contract, built-in Cloudflare driver with a fake-API test, plugin discovery for third-party providers, connections and zones in the System Store, DNS-01 with propagation checked at the authoritative servers (part 1), wildcard orders and renewals, automatic subdomains with record cleanup on removal and Project deletion, HTTP/SDK/CLI, dashboard, docs.
 - **Out of scope**: customer-owned DNS connections, automatic records for customer zones, DNS zone hosting by Zelavis, registrar actions (part 9), the live qualification (part 8).
-- **Done means**: (a) with a fake DNS provider plugin and Pebble (or the existing ACME fixture) an operator orders `*.apps.example.test`-style wildcard certificates through DNS-01 and the TXT record is removed afterwards; (b) a customer with `project.domains.manage` on P adds `shop.apps.example.com` in automatic mode: the hostname is claimed, A/AAAA records exist at the provider, the domain becomes active with the wildcard certificate, and removing it or deleting P deletes exactly its records; (c) provider tokens are encrypted, never returned, and every provider call is audited in the Platform log without credentials; (d) a second customer cannot take an already claimed subdomain; (e) parity, browser, `verify`, `ci:ui`, `docs:check` pass.
+- **Done means**: (a) with a fake DNS provider plugin and Pebble (or the existing ACME fixture) an operator orders `*.apps.example.test`-style wildcard certificates through DNS-01 and the TXT record is removed afterwards; (b) a customer with `project.domains.manage` on P adds `shop.apps.example.com` in automatic mode: the hostname is claimed, A/AAAA records exist at the provider, the domain becomes active with the wildcard certificate, and removing it or deleting P deletes exactly its records; (c) provider tokens are encrypted, never returned, and every provider call is audited in the Platform log without credentials; (d) a second customer cannot take an already claimed subdomain; (e) the Cloudflare driver is reachable only through the adapter boundary: no module under `src/core` (which holds Fabric), `src/edge`, `src/platform`, `src/backends` or `src/sdk` imports it (part 10's boundary test covers it once part 10 lands; this part adds the same assertion for `_dns-cloudflare.js` to `test/provider-adapter-boundary.test.mjs`, NEW here if part 10 has not created it); (f) parity, browser, `verify`, `ci:ui`, `docs:check` pass.
 - **Supplement**: updated in this run (overview section 0).
-- **Sources read**: `AGENTS.md § Cloud Capacity And Alchemy`, `§ Platform And App Service Boundary` (Zelavis Edge), `§ Core Access-Control Rule`, `§ Marketplace Allow-List`; part 1; files below.
+- **Owner decision (2026-11-13, this conversation)**: core owns each provider capability and ships its first-party drivers behind the adapter boundary; a third-party plugin can add another driver through the same contract. Cloudflare is therefore not a separate `zelavis-services` package.
+- **Sources read**: `AGENTS.md § Cloud Capacity And Alchemy`, `§ Runtime Independence Rule`, `§ Platform And App Service Boundary` (Zelavis Edge), `§ Core Access-Control Rule`, `§ Marketplace Allow-List`; part 1; files below.
 
 ## 1. Context packet
 
 **Glossary.**
-- **DNS connection**: an operator's credentials for one DNS provider plugin, stored encrypted.
+- **DNS provider**: a `DnsProviderDefinition`, either built in (injected by the host adapter) or contributed by a plugin declaring `zelavis/edge:dns`.
+- **DNS connection**: an operator's credentials for one DNS provider, stored encrypted.
 - **Adopted zone**: a zone apex the operator chose from a connection's zone list, with settings (`hostedSubdomains`, address targets).
 - **Hosted subdomain**: a hostname exactly one label below an adopted zone with `hostedSubdomains: true` (`shop.apps.example.com` under `apps.example.com`).
 - **DNS-01**: ACME challenge proving control by a TXT record at `_acme-challenge.<name>` whose value is base64url(SHA-256(keyAuthorization)).
 
 **Governing rules.**
 > "Alchemy (pinned to an exact version) is the default engine for provisioning external resources … Do not write a general infrastructure-as-code engine in-house." `AGENTS.md § Cloud Capacity And Alchemy`
+>
+> "host/framework/provider-specific behavior must live only in `adapters/*` or equivalent adapter boundaries" `AGENTS.md § Runtime Independence Rule`
 >
 > "Provider tokens are stored encrypted, never returned or logged, and every use is audited. The wizard states plainly what a token can do and recommends a dedicated cloud project." `AGENTS.md § Cloud Capacity And Alchemy`
 >
@@ -57,11 +61,13 @@ Every Project domain today needs the customer to create TXT and address records 
 - Domain HTTP for customers: `packages/zelavis/src/platform/project-domain-routes.ts` (116 lines; `project.domains.view|manage`).
 - Plugin discovery by capability: `collectAuthMethodPlugins` `packages/zelavis/src/index.ts:1737-1753` with `declaresServiceCapability(capabilities, owner, name)`. OAuth definitions as data plus `defineOAuthProviders` `packages/zelavis/src/app/identity/providers/oauth-contract.ts:56-80`.
 - Part 1 handover: `createAuthoritativeDnsTxtResolver` (`packages/zelavis/src/adapters/_node-authoritative-dns.ts`) and `test/_dns-authority.mjs`.
-- First-party plugin package shape: `zelavis-services/auth-oidc/package.json` (`zelavis.kind`, `capabilities`, `namespace`, `peerDependencies.zelavis`, `files`, build scripts).
+- Host injection of Platform resources: `nodeAdapter` composes Edge pieces and returns `subsystems` (`packages/zelavis/src/adapters/node.ts:280-290`, `:651-655`); adapters are flat `_name.ts` files in `packages/zelavis/src/adapters/` (`_enrollment-listener.ts`, `_pinned-fetch.ts`).
 
 **Pattern to mirror.** OAuth provider definitions (plugin supplies behavior, operator supplies credentials stored by the Platform). Assistant provider keys for encrypted credential storage (`packages/zelavis/src/assistant-provider.ts:120-250`).
 
 **Traps.**
+- Putting the Cloudflare client under `src/edge/` because it "only uses fetch": it is provider-specific, so it lives in `src/adapters/_dns-cloudflare.ts`, and `src/edge/` knows only `DnsProviderDefinition`.
+- A plugin registering a provider named like a built-in one: refuse it at discovery (`dns_provider_conflict` logged, plugin's provider ignored), never let it shadow the built-in.
 - Routing Cloudflare through Alchemy for per-record lifecycle: Alchemy's state store is provisioning state for machines and external resources the cloud service provisions; this is a narrow record client behind a capability, not IaC. Keep it four REST calls.
 - Treating a TXT the Platform itself wrote as ownership proof: hosted subdomains are owned by the operator's zone; skip TXT proof for them instead of faking it.
 - Notifying ACME before the TXT is visible at every authoritative server: poll authoritative servers (part 1) until all answer with the value, bounded.
@@ -92,6 +98,8 @@ export interface DnsProviderDefinition {
   readonly tokenGuidance: string;        // what the token can do; shown in the wizard
   createClient(credentials: Readonly<Record<string, string>>, context: { readonly fetch: typeof fetch; readonly signal?: AbortSignal }): DnsProviderClient;
 }
+/** Built-in definitions come from the host adapter (`ZelavisOptions.edgeDnsProviders`, NEW); plugin ones from `collectDnsProviders`. Names are unique across both; a built-in wins. */
+export interface DnsProviderListing { readonly definition: DnsProviderDefinition; readonly source: "built-in" | "plugin"; readonly plugin?: string }
 export function defineDnsProviders(name: string, providers: readonly DnsProviderDefinition[]): {
   readonly name: string; readonly kind: "plugin"; readonly capabilities: readonly string[]; readonly service: { readonly dnsProviders: readonly DnsProviderDefinition[] };
 };
@@ -123,7 +131,7 @@ The Platform wraps every client call with a 10 s timeout, at most 4 calls in fli
 
 **Concurrency, bounds, interruption.** Per-connection semaphore of 4; DNS-01 propagation bounded to 120 s; provider calls 10 s; zone listing pages of 50, at most 20 pages per request. Crashes are recovered by checkpoints (ACME) and by the domain entry's persisted ids (automatic domains, resumed by the existing `POST verify` retry).
 
-**Decisions and rejected alternatives.** Narrow plugin client over Alchemy (see Traps). Hosted subdomains limited to one label so one wildcard covers them. Operator-only connections (customer connections out of scope).
+**Decisions and rejected alternatives.** Built-in driver over a `zelavis-services/dns-cloudflare` plugin (owner decision: connecting a provider needs no install; the capability stays open to third parties). Narrow client over Alchemy (see Traps). Hosted subdomains limited to one label so one wildcard covers them. Operator-only connections (customer connections out of scope).
 
 **Decisions taken for the user.** Cloudflare first; TTL 60 for challenges and 300 for address records; 50 adopted zones.
 
@@ -133,7 +141,7 @@ The Platform wraps every client call with a 10 s timeout, at most 4 calls in fli
 
 | HTTP (relative to the API base) | Access | SDK | CLI (`--json`) |
 | --- | --- | --- | --- |
-| `GET /runtime/edge/dns/providers` → `{ providers: [{ name, title, credentials, tokenGuidance, connected }] }` | `server.edge.view` | `client.edge.dns.providers()` | `zelavis edge dns-providers` |
+| `GET /runtime/edge/dns/providers` → `{ providers: [{ name, title, source: "built-in" \| "plugin", credentials, tokenGuidance, connected }] }` | `server.edge.view` | `client.edge.dns.providers()` | `zelavis edge dns-providers` |
 | `PUT /runtime/edge/dns/connections/:provider` `{ credentials, expectedRevision? }` → `{ provider, revision, connected: true }` | `server.edge.manage` | `client.edge.dns.connect(provider, input)` | `zelavis edge dns-connect PROVIDER --data JSON` |
 | `DELETE /runtime/edge/dns/connections/:provider` → 204 (refused 409 while a zone uses it) | `server.edge.manage` | `client.edge.dns.disconnect(provider)` | `zelavis edge dns-disconnect PROVIDER` |
 | `GET /runtime/edge/dns/connections/:provider/zones?cursor=` → provider zones page | `server.edge.manage` | `client.edge.dns.providerZones(provider, cursor?)` | `zelavis edge dns-provider-zones PROVIDER [--cursor C]` |
@@ -146,7 +154,7 @@ The Platform wraps every client call with a 10 s timeout, at most 4 calls in fli
 
 Check where the SDK keeps `edge` methods (`rg -n "edge:" packages/zelavis/src/sdk/fetch.ts`) and the CLI's `zelavis edge` table (`rg -n "\"edge\"" packages/zelavis/src/cli/commands.ts`) and add there.
 
-**Plugin package** `zelavis-services/dns-cloudflare` (NEW): `package.json` `{ "name": "@zelavis/dns-cloudflare", "version": "1.0.0-alpha.0", "type": "module", "zelavis": { "kind": "plugin", "capabilities": ["zelavis/edge:dns"], "namespace": "cloudflare", "marketplace": { "title": "Cloudflare DNS", "summary": "Let Zelavis manage DNS records in your Cloudflare zones.", "categories": ["dns", "domains", "official"] } }, "peerDependencies": { "zelavis": ">=<current Platform version>" } }`, build like `auth-oidc`. Credential `apiToken` (secret). API `https://api.cloudflare.com/client/v4`: `GET /zones?page=N&per_page=50`, `GET /zones/:id/dns_records?name=&type=`, `POST /zones/:id/dns_records`, `DELETE /zones/:id/dns_records/:rid` (404 is success); `Authorization: Bearer <token>`; Cloudflare's `{ success, errors, result, result_info }` envelope checked with Effect Schema.
+**Built-in driver** `packages/zelavis/src/adapters/_dns-cloudflare.ts` (NEW): `export const createCloudflareDnsProvider = (options: { readonly apiBase?: string } = {}): DnsProviderDefinition` (default `apiBase` `https://api.cloudflare.com/client/v4`; tests and the browser suite pass a fake's URL) and `export const cloudflareDnsProvider = createCloudflareDnsProvider();`, with `name: "cloudflare"`, `title: "Cloudflare"`, credential `apiToken` (secret), `tokenGuidance: "Create an API token with Zone → DNS → Edit for only the zones Zelavis should manage. It cannot change your account or other zones."`. API `https://api.cloudflare.com/client/v4`: `GET /zones?page=N&per_page=50`, `GET /zones/:id/dns_records?name=&type=`, `POST /zones/:id/dns_records`, `DELETE /zones/:id/dns_records/:rid` (404 is success); `Authorization: Bearer <token>`; Cloudflare's `{ success, errors, result, result_info }` envelope checked with Effect Schema. The Node adapter passes `edgeDnsProviders: [cloudflareDnsProvider]` into the composition (NEW option on `ZelavisOptions`, internal like `subsystems`).
 
 ## 4. Execution steps
 
@@ -158,17 +166,17 @@ Check where the SDK keeps `edge` methods (`rg -n "edge:" packages/zelavis/src/sd
 
 ### 2. Define the DNS provider capability contract
 
-- **Files**: NEW `packages/zelavis/src/edge/dns-provider.ts`; `packages/zelavis/package.json` exports: add `"./edge/dns-provider": { "types": "./dist/edge/dns-provider.d.ts", "import": "./dist/edge/dns-provider.js" }` beside `"./edge/routes"` (plugins import `zelavis/edge/dns-provider`, which stays free of Node imports), and add `export * from "./dns-provider.js";` to `packages/zelavis/src/edge/index.ts:1056-1063`; `packages/zelavis/src/core/service/definition.ts:75-77` (add `"zelavis/edge:dns"` to the documented union); `packages/zelavis/src/index.ts` (NEW `collectDnsProviders(registry)` beside `collectAuthMethodPlugins` `:1737`).
+- **Files**: NEW `packages/zelavis/src/edge/dns-provider.ts` (no `node:` import, no adapter import); `packages/zelavis/package.json` exports: add `"./edge/dns-provider": { "types": "./dist/edge/dns-provider.d.ts", "import": "./dist/edge/dns-provider.js" }` beside `"./edge/routes"` (plugins import `zelavis/edge/dns-provider`, which stays free of Node imports), and add `export * from "./dns-provider.js";` to `packages/zelavis/src/edge/index.ts:1056-1063`; `packages/zelavis/src/core/service/definition.ts:75-77` (add `"zelavis/edge:dns"` to the documented union); `packages/zelavis/src/index.ts` (NEW `collectDnsProviders(registry, builtIn)` beside `collectAuthMethodPlugins` `:1737`, returning `DnsProviderListing[]`; NEW internal option `edgeDnsProviders?: readonly DnsProviderDefinition[]` read only from the host adapter, never from the public constructor, like `subsystems` at `:485-495`).
 - **Depends on**: 1.
 - **Check**: build and `pnpm run typecheck; echo "exit $?"` print `exit 0`.
 
-### 3. Add the Cloudflare DNS plugin
+### 3. Add the built-in Cloudflare DNS driver
 
-- **Files**: NEW `zelavis-services/dns-cloudflare/{package.json,tsconfig.json,README.md,src/index.ts,src/cloudflare-dns.ts,test/cloudflare-dns.test.mjs}`.
-- **Context**: mirror `zelavis-services/auth-oidc` for package layout, `tsconfig.json` and scripts; add a `test` script running `node --test test/*.test.mjs` after build.
-- **Change**: `defineDnsProviders("@zelavis/dns-cloudflare", [cloudflareDns])` with the four calls; pagination via `result_info.total_pages`; tests use an injected `fetch` that serves fixtures and records requests (assert the bearer header and paths, and that 404 on delete succeeds).
+- **Files**: NEW `packages/zelavis/src/adapters/_dns-cloudflare.ts`; `packages/zelavis/src/adapters/node.ts` (pass `edgeDnsProviders: [cloudflareDnsProvider]` in the returned composition options beside `subsystems`, `:651-655`); NEW `packages/zelavis/test/dns-cloudflare.test.mjs`; NEW or extended `packages/zelavis/test/provider-adapter-boundary.test.mjs`.
+- **Context**: section 3 "Built-in driver". The driver takes `context.fetch`, never the global, so tests inject a fake.
+- **Change**: the four calls; pagination via `result_info.total_pages`. Imports in the driver: `import { Schema } from "effect";` and `import type { DnsProviderDefinition } from "../edge/dns-provider.js";`. The boundary test (if part 10 has not created it): spawn Node with the same `registerHooks` load recorder `test/project-host-footprint.test.mjs:9-16` uses, import `dist/edge/index.js`, `dist/core/index.js` and `dist/sdk/fetch.js`, and assert no loaded URL ends in `/dist/adapters/_dns-cloudflare.js`.
 - **Depends on**: 2.
-- **Check**: `pnpm install; pnpm --filter @zelavis/dns-cloudflare run build; pnpm --filter @zelavis/dns-cloudflare test; echo "exit $?"` prints `exit 0`.
+- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/dns-cloudflare.test.mjs test/provider-adapter-boundary.test.mjs; echo "exit $?"` prints `exit 0`.
 
 ### 4. Add DNS connections and adopted zones
 
@@ -206,14 +214,14 @@ Check where the SDK keeps `edge` methods (`rg -n "edge:" packages/zelavis/src/sd
 ### 9. Add the dashboard pages
 
 - **Files**: `packages/zelavis/services/zelavis-ui/app/host-pages.ts` (Server → Domains, `/server/domains`: DNS connections wizard showing `tokenGuidance` and recommending a dedicated token, adopted zones, wildcard status); `app/project-domains-page.ts` (mode choice "Use <apex>" vs "My own domain"); `scripts/test-route-parity.mjs`.
-- **Change**: native Fuzor DOM, `context.run`, URL state for the selected zone (`?zone=`).
+- **Change**: native Fuzor DOM, `context.run`, URL state for the selected zone (`?zone=`). The provider list shows built-in providers first and plugin providers marked "From <plugin>".
 - **Depends on**: 8.
-- **Check**: `pnpm --filter @zelavis/ui typecheck; echo "exit $?"`, `pnpm --filter @zelavis/ui test; echo "exit $?"`, `pnpm run ci:ui; echo "exit $?"`; all `exit 0`. The browser run uses a fake DNS provider plugin installed into the throwaway Platform (find how the route-parity script installs test services; read the script top).
+- **Check**: `pnpm --filter @zelavis/ui typecheck; echo "exit $?"`, `pnpm --filter @zelavis/ui test; echo "exit $?"`, `pnpm run ci:ui; echo "exit $?"`; all `exit 0`. The browser run points the built-in Cloudflare driver at a fake API (the throwaway Platform is composed with `edgeDnsProviders: [createCloudflareDnsProvider({ apiBase: <fake URL> })]`; read the script top to see how it composes its Platform).
 
 ### 10. Document DNS automation
 
-- **Files**: `website/src/content/docs/architecture/edge.md`; NEW `website/src/content/docs/guides/dns-automation.md`; `zelavis-services/dns-cloudflare/README.md`.
-- **Change**: token scope (`Zone.DNS:Edit` on chosen zones only), hosted subdomains, wildcard key locality, DNS-01 timing, cleanup guarantees, the capability contract for other providers. Note the marketplace allow-list gains the plugin at the next release (`pnpm allowlist update`, `AGENTS.md § Marketplace Allow-List`); do not edit `website/public/allowlist.json` by hand.
+- **Files**: `website/src/content/docs/architecture/edge.md`; NEW `website/src/content/docs/guides/dns-automation.md`; `AGENTS.md` (Zelavis Edge passage in `§ Platform And App Service Boundary`, after "Traefik, Caddy, Nginx and external/cloud load balancers are replaceable execution adapters.": add "DNS providers and registrars follow the same rule: core owns the contract, first-party drivers (Cloudflare, Namecheap) live behind the adapter boundary in `packages/zelavis/src/adapters` and are injected by the host adapter, and a plugin adds another through `zelavis/edge:dns` or `zelavis/edge:registrar`."; owner decision 2026-11-13).
+- **Change**: token scope (`Zone.DNS:Edit` on chosen zones only), hosted subdomains, wildcard key locality, DNS-01 timing, cleanup guarantees, built-in versus plugin providers, and the `zelavis/edge:dns` contract for a third-party driver.
 - **Depends on**: 9.
 - **Check**: `pnpm run docs:check; echo "exit $?"` prints `exit 0`.
 
@@ -223,9 +231,10 @@ Check where the SDK keeps `edge` methods (`rg -n "edge:" packages/zelavis/src/sd
 
 ## 5. Tests
 
-`zelavis-services/dns-cloudflare/test/cloudflare-dns.test.mjs`: zone pagination over 3 pages; record create sends `{ type, name, content, ttl }`; delete 404 resolves; an error envelope rejects with Cloudflare's message but never the token.
+`packages/zelavis/test/dns-cloudflare.test.mjs`: zone pagination over 3 pages; record create sends `{ type, name, content, ttl }`; delete 404 resolves; an error envelope rejects with Cloudflare's message but never the token.
 
 `packages/zelavis/test/edge-dns.test.mjs` (Platform from `./_runtime.mjs` with a test DNS plugin and the part 1 DNS fixture):
+- A plugin provider is listed with `source: "plugin"`; a plugin provider named `cloudflare` is ignored and the built-in is listed.
 - Connect stores an `EncryptedSecret`; GET never returns credentials; anonymous 401; customer 403.
 - Adopt zone, list zones, release refused while an automatic domain uses it.
 - Provider timeout → 502 `dns_provider_failed` within 11 s, no credentials in the message or log.
@@ -238,7 +247,7 @@ Browser (`scripts/test-route-parity.mjs`, both sizes): connect the fake provider
 
 ## 6. Docs and project notes
 
-`website/src/content/docs/architecture/edge.md`, NEW `guides/dns-automation.md`, plugin README. No `pnotes/TODO.md` additions.
+`website/src/content/docs/architecture/edge.md`, NEW `guides/dns-automation.md`. No `pnotes/TODO.md` additions.
 
 ## 7. Verification
 
@@ -266,7 +275,7 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 >
 > **When the plan and the code disagree, check the current source.** Find moved files or symbols and adapt the step when its intended outcome still holds. Follow project rules and record any conflict with the plan. Investigate unexpected results before treating checks as evidence. Fix the cause using the repo's normal mechanisms. Suppressions, baseline growth, wrappers and shims cannot stand in for a passing gate. Use the blocker rule only when a concrete dependency remains.
 >
-> Forbidden in this project: compatibility aliases, legacy fallbacks or shims; silent catch handlers, `Effect.ignore`/`Effect.ignoreCause`; literal unlimited Effect concurrency; unchecked `JSON.parse` casts; new `async` functions, `new Promise` or Promise coordination in Platform code, and any growth of `scripts/effect-migration-baseline.json`; `node:` imports outside `src/adapters` (and the CLI); the `effect` barrel in files the Project persistent host loads; React for a dashboard page; edits to `dist/`, `website/dist/`, `website/.astro/` or `repos/effect/`; anything written in `.claude/`; additions to `pnotes/TODO.md`; provider tokens in logs, responses or error messages; contacting a real DNS provider or CA from tests. Never edit generated output. Do not commit, push or publish unless told to.
+> Forbidden in this project: compatibility aliases, legacy fallbacks or shims; silent catch handlers, `Effect.ignore`/`Effect.ignoreCause`; literal unlimited Effect concurrency; unchecked `JSON.parse` casts; new `async` functions, `new Promise` or Promise coordination in Platform code, and any growth of `scripts/effect-migration-baseline.json`; `node:` imports outside `src/adapters` (and the CLI); the `effect` barrel in files the Project persistent host loads; React for a dashboard page; edits to `dist/`, `website/dist/`, `website/.astro/` or `repos/effect/`; anything written in `.claude/`; additions to `pnotes/TODO.md`; provider tokens in logs, responses or error messages; contacting a real DNS provider or CA from tests; importing `adapters/_dns-cloudflare.js` from anywhere but `adapters/node.ts` and its test. Never edit generated output. Do not commit, push or publish unless told to.
 >
 > **Self-audit before you report done** (the plan's last step). Check your own work once more:
 > - re-read your whole diff (`git diff`, plus new files) against sections 1–5: every change supports the requested outcome or its required checks, and other people's changes are preserved;

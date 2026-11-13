@@ -1,36 +1,37 @@
 # Registrar purchase, transfer and renewal
 
-Job: Let the Platform owner check, register, transfer in and renew domains through a registrar plugin (Namecheap first), with durable orders that never buy twice.
+Job: Let the Platform owner check, register, transfer in and renew domains with their own registrar account (Namecheap first, built into core), with durable orders that never buy twice.
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 9 of 10. Read 00-overview.md first.
+Part: 9 of 14. Read 00-overview.md first.
 
 To start:    Execute part 9 in .agents/plans/2026-11-13-accounts-billing-domain-automation/09-registrar-purchase-and-transfer.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/09-registrar-purchase-and-transfer.md. Start with its section 8.
 
 ## Progress
 
-- [ ] 1. Confirm part 7's plugin pattern and the baseline.
+- [ ] 1. Confirm part 7's provider pattern and the baseline.
 - [ ] 2. Define the registrar capability contract.
-- [ ] 3. Add the Namecheap registrar plugin with a fake API.
+- [ ] 3. Add the built-in Namecheap registrar driver with a fake API.
 - [ ] 4. Add the registrar connection and contact profile.
 - [ ] 5. Add durable orders and reconciliation.
 - [ ] 6. Expose the operations over HTTP.
 - [ ] 7. Add SDK and CLI parity.
 - [ ] 8. Add the Server → Domains registrar section.
-- [!] 9. Qualify against the Namecheap sandbox. (blocked by: a Namecheap sandbox API user, API key and whitelisted client IP from the user; check: `pnpm --filter @zelavis/registrar-namecheap run qualify:sandbox` prints `PASS check`, `PASS register`, `PASS renew`, `PASS list` and exits 0)
+- [!] 9. Qualify against the Namecheap sandbox. (blocked by: a Namecheap sandbox API user, API key and whitelisted client IP from the user; check: `pnpm release:qualify:registrar` prints `PASS check`, `PASS register`, `PASS renew`, `PASS list` and exits 0)
 - [ ] 10. Document registrar operations.
 - [ ] 11. Self-audit.
 
 ## 0. Summary and finish line
 
-Zelavis has no way to acquire a domain; operators buy elsewhere and then connect it. This part adds an owner-qualified capability `zelavis/edge:registrar`, a first-party `@zelavis/registrar-namecheap` plugin, an encrypted registrar connection and registrant contact profile, and durable orders for register, transfer-in and renew, each with an idempotency key and a price confirmation, reconciled against the registrar after any ambiguous outcome. Purchases are owner-level (`server.domains.purchase`).
+Zelavis has no way to acquire a domain; operators buy elsewhere and then connect it. This part adds a registrar provider contract with a first-party Namecheap driver built into the `zelavis` package (`packages/zelavis/src/adapters/_registrar-namecheap.ts`, injected by the Node adapter, as part 7 does for DNS), an owner-qualified capability `zelavis/edge:registrar` through which a third-party plugin can add another registrar, an encrypted registrar connection and registrant contact profile, and durable orders for register, transfer-in and renew, each with an idempotency key and a price confirmation, reconciled against the registrar after any ambiguous outcome. Purchases are owner-level (`server.domains.purchase`) and spend the operator's own registrar account: this is domain management, the same for Zelavis Cloud, a self-hoster and a hosting company. Selling a domain to a customer at the operator's price is later work for Hosting (part 14 records why it is out of scope: refunds and zone creation), and will place its orders through the operation this part adds.
 
-- **In scope**: capability, Namecheap plugin (check, pricing, create, renew, transfer create/status, list, info, set custom nameservers), connection, contacts, orders state machine, reconciliation loop, HTTP/SDK/CLI, dashboard, docs, fake-API tests, sandbox qualification.
-- **Out of scope**: customer self-service purchases (needs pricing and refunds; overview section 0), WHOIS privacy settings beyond the registrar default, auto-renew scheduling (renew is explicit), DNSSEC, transfers out, registrar account funding.
+- **In scope**: provider contract and plugin discovery, built-in Namecheap driver (check, pricing, create, renew, transfer create/status, list, info, set custom nameservers), connection, contacts, orders state machine, reconciliation loop, HTTP/SDK/CLI, dashboard, docs, fake-API tests, sandbox qualification.
+- **Out of scope**: customer purchases and resale pricing (a later Hosting plan builds them on this part's orders; see part 14 section 0), WHOIS privacy settings beyond the registrar default, auto-renew scheduling (renew is explicit), DNSSEC, transfers out, registrar account funding.
 - **Done means**: (a) availability and price for `example-<run>.com` come back from the fake API and from the sandbox; (b) a register request with `idempotencyKey` K and `confirm: { price, currency, years }` creates exactly one order; repeating K returns the same order; a changed price → 409 `price_changed` and nothing is bought; (c) killing the Platform while an order is `submitting` leaves it `unknown`, and reconciliation settles it `completed` or `failed` from the registrar's own records without resubmitting; (d) transfer-in with an auth code reaches `pending_transfer` and later `completed` by status polling; (e) only holders of `server.domains.purchase` can purchase; credentials and contact data never appear in logs; (f) the sandbox run passed (step 9); (g) parity, browser, `verify`, `ci:ui`, `docs:check` pass.
 - **Supplement**: updated in this run (overview section 0).
+- **Owner decision (2026-11-13, this conversation)**: core owns the registrar capability and ships the Namecheap driver behind the adapter boundary; third-party registrars are plugins. No `zelavis-services/registrar-namecheap` package.
 - **Sources read**: `AGENTS.md § Core Access-Control Rule`, `§ Cloud Capacity And Alchemy` (token handling), `§ TigerStyle Adaptation`; part 7; files below.
 
 ## 1. Context packet
@@ -47,7 +48,7 @@ Zelavis has no way to acquire a domain; operators buy elsewhere and then connect
 > "Define authority, invariants, resource limits, and interruption/recovery behavior before implementing state transitions." `AGENTS.md § TigerStyle Adaptation`
 
 **System today.**
-- Part 7 handover: capability pattern in `packages/zelavis/src/edge/dns-provider.ts` (`defineDnsProviders`, definition with `credentials`, `tokenGuidance`, `createClient(credentials, { fetch, signal })`); discovery `collectDnsProviders` in `packages/zelavis/src/index.ts`; encrypted connection store `packages/zelavis/src/edge/dns-connections.ts`; plugin package `zelavis-services/dns-cloudflare`.
+- Part 7 handover: provider contract in `packages/zelavis/src/edge/dns-provider.ts` (`defineDnsProviders`, `DnsProviderListing` with `source: "built-in" | "plugin"`, definition with `credentials`, `tokenGuidance`, `createClient(credentials, { fetch, signal })`); discovery `collectDnsProviders(registry, builtIn)` and the internal `edgeDnsProviders` option in `packages/zelavis/src/index.ts`; built-in driver `packages/zelavis/src/adapters/_dns-cloudflare.ts` (`createCloudflareDnsProvider({ apiBase })`) injected by `packages/zelavis/src/adapters/node.ts`; encrypted connection store `packages/zelavis/src/edge/dns-connections.ts`; boundary test `packages/zelavis/test/provider-adapter-boundary.test.mjs`.
 - Edge HTTP route region `packages/zelavis/src/index.ts:4829-5170`; Server Domains page `packages/zelavis/services/zelavis-ui/app/host-pages.ts` (`/server/domains`).
 - Permission vocabulary shown at `/server/access/permissions` (`host-pages.ts:240`).
 - Master secret and encryption as in part 2 (`packages/zelavis/src/platform/master-secret.ts:19`, `packages/zelavis/src/edge/acme-crypto.ts:79`, `:104`).
@@ -59,7 +60,8 @@ Zelavis has no way to acquire a domain; operators buy elsewhere and then connect
 - Trusting a client-sent price: the server re-reads the price and compares to `confirm`.
 - An XML parser with entity expansion: parse only elements, attributes and the five predefined entities; refuse `<!DOCTYPE`.
 - Contact data in logs or security events: never.
-- Declaring `dependencies` in the plugin manifest: the Platform refuses packages it would have to install (`AGENTS.md § Service Loading Rules`); keep the plugin dependency-free.
+- Adding an XML library dependency to `zelavis`: the package ships no native code and stays small; the minimal parser in the driver is the whole need.
+- Importing the driver outside `adapters/node.ts` and its test: `src/edge/` knows only `RegistrarDefinition`.
 
 ## 2. Design
 
@@ -88,6 +90,7 @@ export interface RegistrarDefinition {
   readonly tokenGuidance: string;
   createClient(credentials: Readonly<Record<string, string>>, context: { readonly fetch: typeof fetch; readonly signal?: AbortSignal; readonly sandbox: boolean }): RegistrarClient;
 }
+/** Built-in registrars come from the host adapter (`edgeRegistrars`, NEW internal option); plugins add more. Names are unique; a built-in wins. */
 export function defineRegistrars(name: string, registrars: readonly RegistrarDefinition[]): { name: string; kind: "plugin"; capabilities: readonly string[]; service: { registrars: readonly RegistrarDefinition[] } };
 ```
 
@@ -110,7 +113,7 @@ export function defineRegistrars(name: string, registrars: readonly RegistrarDef
 
 **Concurrency, bounds, interruption.** One purchase in flight per Platform (semaphore 1); registrar call timeout 60 s (a timeout is ambiguous → `unknown`); reads 15 s; order listing paged 50; at most 200 non-terminal orders.
 
-**Decisions and rejected alternatives.** Namecheap first for its sandbox. Price confirmation over a silent current price. Reconciliation over retry. One connection per Platform (multi-registrar later if needed).
+**Decisions and rejected alternatives.** Built-in driver over a plugin package (owner decision; the capability stays open to third parties). Namecheap first for its sandbox. Price confirmation over a silent current price. Reconciliation over retry. One connection per Platform (multi-registrar later if needed).
 
 **Decisions taken for the user.** Purchases are owner-only by default (`server.domains.purchase` is not in any built-in role). Sandbox mode is a connection flag shown prominently in the UI.
 
@@ -133,7 +136,7 @@ export interface RegistrarOrder {
 | `GET\|PUT\|DELETE /runtime/registrar/connection` (`{ provider, sandbox, credentials, expectedRevision? }`; GET shows `{ provider, sandbox, connected }`) | `server.domains.purchase` | `client.registrar.connection()`, `.connect(input)`, `.disconnect()` | `zelavis registrar connection`, `connect --data JSON`, `disconnect` |
 | `GET\|PUT /runtime/registrar/contact` | `server.domains.purchase` | `client.registrar.contact()`, `.setContact(input)` | `zelavis registrar contact`, `set-contact --data JSON` |
 | `POST /runtime/registrar/availability` `{ domains: string[] /* ≤ 20 */ }` | `server.domains.purchase` | `client.registrar.check(domains)` | `zelavis registrar check DOMAIN...` |
-| `POST /runtime/registrar/orders` `{ kind, domain, years /* 1-10 */, authCode? /* transfer */, confirm, idempotencyKey /* UUID */ }` → 201/200 `RegistrarOrder` | `server.domains.purchase` | `client.registrar.order(input)` | `zelavis registrar order --data JSON` |
+| `POST /runtime/registrar/orders` `{ kind, domain, years /* 1-10 */, authCode? /* transfer */, confirm, idempotencyKey /* ^[A-Za-z0-9._:-]{8,128}$; the dashboard sends a UUID; other callers may send a namespaced key such as hosting:<order id> */ }` → 201/200 `RegistrarOrder` | `server.domains.purchase` | `client.registrar.order(input)` | `zelavis registrar order --data JSON` |
 | `GET /runtime/registrar/orders?limit&after`, `GET /runtime/registrar/orders/:id` | `server.domains.view` | `client.registrar.orders(page?)`, `.getOrder(id)` | `zelavis registrar orders`, `order-status ID` |
 | `GET /runtime/registrar/domains?cursor=` | `server.domains.view` | `client.registrar.domains(cursor?)` | `zelavis registrar domains` |
 | `PUT /runtime/registrar/domains/:domain/nameservers` `{ nameservers: string[] /* 2-12 */ }` | `server.domains.purchase` | `client.registrar.setNameservers(domain, ns)` | `zelavis registrar set-nameservers DOMAIN NS...` |
@@ -142,25 +145,25 @@ The auth code is used once in the registrar call and never stored.
 
 ## 4. Execution steps
 
-### 1. Confirm part 7's plugin pattern and the baseline
+### 1. Confirm part 7's provider pattern and the baseline
 
 - **Files**: none.
 - **Depends on**: part 7.
-- **Check**: `ls packages/zelavis/src/edge/dns-provider.ts zelavis-services/dns-cloudflare/src`; build; `pnpm --filter zelavis exec node --test test/edge-dns.test.mjs; echo "exit $?"` prints `exit 0`.
+- **Check**: `ls packages/zelavis/src/edge/dns-provider.ts packages/zelavis/src/adapters/_dns-cloudflare.ts`; build; `pnpm --filter zelavis exec node --test test/edge-dns.test.mjs; echo "exit $?"` prints `exit 0`.
 
 ### 2. Define the registrar capability contract
 
-- **Files**: NEW `packages/zelavis/src/edge/registrar-provider.ts`; `packages/zelavis/package.json` exports (`"./edge/registrar-provider"`); `packages/zelavis/src/edge/index.ts` (re-export); `packages/zelavis/src/core/service/definition.ts:75-77`; `packages/zelavis/src/index.ts` (`collectRegistrars` beside `collectDnsProviders`).
+- **Files**: NEW `packages/zelavis/src/edge/registrar-provider.ts`; `packages/zelavis/package.json` exports (`"./edge/registrar-provider"`); `packages/zelavis/src/edge/index.ts` (re-export); `packages/zelavis/src/core/service/definition.ts:75-77`; `packages/zelavis/src/index.ts` (`collectRegistrars(registry, builtIn)` beside `collectDnsProviders`; internal option `edgeRegistrars?: readonly RegistrarDefinition[]`).
 - **Depends on**: 1.
 - **Check**: build and `pnpm run typecheck; echo "exit $?"` print `exit 0`.
 
-### 3. Add the Namecheap registrar plugin with a fake API
+### 3. Add the built-in Namecheap registrar driver with a fake API
 
-- **Files**: NEW `zelavis-services/registrar-namecheap/{package.json,tsconfig.json,README.md,src/index.ts,src/namecheap-registrar.ts,src/xml.ts,test/namecheap.test.mjs,scripts/qualify-sandbox.mjs}`.
-- **Context**: package shape as `zelavis-services/dns-cloudflare` (part 7): `"zelavis": { "kind": "plugin", "capabilities": ["zelavis/edge:registrar"], "namespace": "namecheap" }`, no `dependencies`. Credentials `apiUser`, `apiKey` (secret), `userName`, `clientIp`.
-- **Change**: client per section 1 commands; `xml.ts` minimal parser (elements, attributes, text, five entities; refuse DOCTYPE; 1 MiB cap); `qualify:sandbox` script reads `NAMECHEAP_SANDBOX_API_USER`, `NAMECHEAP_SANDBOX_API_KEY`, `NAMECHEAP_SANDBOX_CLIENT_IP` from the environment and runs check, price, register of a random `.com`, renew, list.
+- **Files**: NEW `packages/zelavis/src/adapters/_registrar-namecheap.ts`; NEW `packages/zelavis/src/adapters/_xml-response.ts`; `packages/zelavis/src/adapters/node.ts` (pass `edgeRegistrars: [namecheapRegistrar]` beside `edgeDnsProviders`); NEW `packages/zelavis/test/registrar-namecheap.test.mjs`; `packages/zelavis/test/provider-adapter-boundary.test.mjs` (add `_registrar-namecheap.js` to the forbidden list); NEW `distribution/scripts/qualify-registrar.mjs`; root `package.json` (`"release:qualify:registrar": "node distribution/scripts/qualify-registrar.mjs"`).
+- **Context**: credentials `apiUser`, `apiKey` (secret), `userName`, `clientIp`. Export `createNamecheapRegistrar(options: { readonly endpoint?: string } = {}): RegistrarDefinition` (production endpoint by default, sandbox when the connection's `sandbox` is true, a fake's URL in tests) and `namecheapRegistrar = createNamecheapRegistrar()`.
+- **Change**: client per section 1 commands; `_xml-response.ts` minimal parser (elements, attributes, text, five entities; refuse `<!DOCTYPE`; 1 MiB cap); `qualify-registrar.mjs` imports `packages/zelavis/dist/adapters/_registrar-namecheap.js`, reads `NAMECHEAP_SANDBOX_API_USER`, `NAMECHEAP_SANDBOX_API_KEY`, `NAMECHEAP_SANDBOX_CLIENT_IP` from the environment and runs check, price, register of a random `.com`, renew, list against the sandbox, printing `PASS <step>`.
 - **Depends on**: 2.
-- **Check**: `pnpm install; pnpm --filter @zelavis/registrar-namecheap run build; pnpm --filter @zelavis/registrar-namecheap test; echo "exit $?"` prints `exit 0`.
+- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/registrar-namecheap.test.mjs test/provider-adapter-boundary.test.mjs; echo "exit $?"` prints `exit 0`.
 
 ### 4. Add the registrar connection and contact profile
 
@@ -191,17 +194,17 @@ The auth code is used once in the registrar call and never stored.
 - **Files**: `packages/zelavis/services/zelavis-ui/app/host-pages.ts` (`/server/domains`); NEW `app/registrar-panel.ts`; `scripts/test-route-parity.mjs`.
 - **Change**: connect (sandbox toggle, token guidance), contact form, search with availability and price, a purchase dialog that shows domain, years, price and total and requires typing the domain to confirm, orders table with states, domains list, nameserver form. The client generates the idempotency key once per dialog (`crypto.randomUUID()`) and keeps it in the URL (`?order=<key>`) so a reload does not create a second order.
 - **Depends on**: 7.
-- **Check**: `pnpm --filter @zelavis/ui typecheck; echo "exit $?"`, `pnpm --filter @zelavis/ui test; echo "exit $?"`, `pnpm run ci:ui; echo "exit $?"`; all `exit 0` (browser run uses the fake registrar plugin).
+- **Check**: `pnpm --filter @zelavis/ui typecheck; echo "exit $?"`, `pnpm --filter @zelavis/ui test; echo "exit $?"`, `pnpm run ci:ui; echo "exit $?"`; all `exit 0` (the browser run composes its Platform with `edgeRegistrars: [createNamecheapRegistrar({ endpoint: <fake URL> })]`).
 
 ### 9. Qualify against the Namecheap sandbox
 
 - **Depends on**: 3 and the user's sandbox credentials.
-- **Check**: `NAMECHEAP_SANDBOX_API_USER=… NAMECHEAP_SANDBOX_API_KEY=… NAMECHEAP_SANDBOX_CLIENT_IP=… pnpm --filter @zelavis/registrar-namecheap run qualify:sandbox; echo "exit $?"` prints `PASS check`, `PASS register`, `PASS renew`, `PASS list` and `exit 0`. Record the run (no credentials) in the execution report.
+- **Check**: `NAMECHEAP_SANDBOX_API_USER=… NAMECHEAP_SANDBOX_API_KEY=… NAMECHEAP_SANDBOX_CLIENT_IP=… pnpm release:qualify:registrar; echo "exit $?"` prints `PASS check`, `PASS register`, `PASS renew`, `PASS list` and `exit 0`. Record the run (no credentials) in the execution report.
 
 ### 10. Document registrar operations
 
-- **Files**: NEW `website/src/content/docs/guides/domain-registration.md`; `website/src/content/docs/api/platform-operations.md`; plugin README.
-- **Change**: permissions, sandbox, price confirmation, idempotency, `unknown` orders and what reconciliation does, auth codes not stored, contact data handling, customer purchase not supported.
+- **Files**: NEW `website/src/content/docs/guides/domain-registration.md`; `website/src/content/docs/api/platform-operations.md`.
+- **Change**: permissions, sandbox, price confirmation, idempotency, `unknown` orders and what reconciliation does, auth codes not stored, contact data handling, built-in versus plugin registrars, and that selling domains to customers is not available yet.
 - **Depends on**: 8.
 - **Check**: `pnpm run docs:check; echo "exit $?"` prints `exit 0`.
 
@@ -211,7 +214,7 @@ The auth code is used once in the registrar call and never stored.
 
 ## 5. Tests
 
-`zelavis-services/registrar-namecheap/test/namecheap.test.mjs` (injected `fetch` serving recorded-shape XML): parameters include `ApiUser`, `UserName`, `ClientIp`, `Command`; `Status="ERROR"` maps to a rejection carrying the registrar's error number and text but no key; DOCTYPE input is refused; premium names report `premium: true` with price.
+`packages/zelavis/test/registrar-namecheap.test.mjs` (fake endpoint serving recorded-shape XML): parameters include `ApiUser`, `UserName`, `ClientIp`, `Command`; `Status="ERROR"` maps to a rejection carrying the registrar's error number and text but no key; DOCTYPE input is refused; premium names report `premium: true` with price.
 
 `packages/zelavis/test/registrar.test.mjs` (Platform via `./_runtime.mjs`, fake registrar plugin with controllable outcomes):
 - Connection stored encrypted; GET hides credentials; customer 403; operator without `server.domains.purchase` 403.
@@ -229,7 +232,7 @@ Browser (`scripts/test-route-parity.mjs`, both sizes): connect the fake registra
 
 ## 6. Docs and project notes
 
-`website/src/content/docs/guides/domain-registration.md`, `api/platform-operations.md`, plugin README; marketplace allow-list picks up the plugin at the next release (`pnpm allowlist update`). No `pnotes/TODO.md` additions.
+`website/src/content/docs/guides/domain-registration.md`, `api/platform-operations.md`. No `pnotes/TODO.md` additions.
 
 ## 7. Verification
 

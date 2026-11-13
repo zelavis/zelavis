@@ -4,7 +4,7 @@ Job: Qualify Project domain ownership (TXT proof), routing and certificates agai
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 8 of 10. Read 00-overview.md first.
+Part: 8 of 14. Read 00-overview.md first.
 
 To start:    Execute part 8 in .agents/plans/2026-11-13-accounts-billing-domain-automation/08-public-dns-and-ca-qualification.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/08-public-dns-and-ca-qualification.md. Start with its section 8.
@@ -20,7 +20,7 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## 0. Summary and finish line
 
-The earlier VPS run proved HTTP-01 issuance and renewal through Let's Encrypt staging with a disposable `sslip.io` hostname, but the Project's TXT ownership proof went through an injected test resolver, because `sslip.io` cannot hold arbitrary TXT records. This part commits `distribution/scripts/qualify-domains.mjs` (`pnpm release:qualify:domains`), which uses a real zone the owner controls: it creates and deletes the records through the part 7 Cloudflare client, runs a packed candidate on a disposable environment on the existing VPS, and proves (1) TXT proof read from the authoritative servers, including the verify-before-record case, (2) HTTP-01 issuance for a customer domain, (3) an automatic hosted subdomain, and (4) a DNS-01 wildcard certificate, then removes everything.
+The earlier VPS run proved HTTP-01 issuance and renewal through Let's Encrypt staging with a disposable `sslip.io` hostname, but the Project's TXT ownership proof went through an injected test resolver, because `sslip.io` cannot hold arbitrary TXT records. This part commits `distribution/scripts/qualify-domains.mjs` (`pnpm release:qualify:domains`), which uses a real zone the owner controls: it creates and deletes the records through the part 7 built-in Cloudflare driver, runs a packed candidate on a disposable environment on the existing VPS, and proves (1) TXT proof read from the authoritative servers, including the verify-before-record case, (2) HTTP-01 issuance for a customer domain, (3) an automatic hosted subdomain, and (4) a DNS-01 wildcard certificate, then removes everything.
 
 - **In scope**: the script, a self-test against local fixtures, one live run, evidence, docs.
 - **Out of scope**: adding the script to `release:check` (it needs secrets and a public address, like `ZELAVIS_QUALIFY_SHARDS_AGENT_SSH`, which is not a release gate), production certificates.
@@ -44,7 +44,7 @@ The earlier VPS run proved HTTP-01 issuance and renewal through Let's Encrypt st
 - Remote-qualification pattern `distribution/scripts/qualify-shards.mjs:14-19` (env `ZELAVIS_QUALIFY_SHARDS_AGENT_SSH`, `..._SSH_KEY`), `:46-80` (pack with `pnpm --filter zelavis pack`, `scp`, unpack under `/var/tmp`, `npm install --omit=dev --ignore-scripts`, `systemd-run --unit … --uid=nobody`, SSH tunnel for the API, teardown `systemctl stop` + `rm -rf`).
 - Pinned Traefik download: `installTraefikRuntime` in `distribution/scripts/runtime-assets.mjs` (used by `build-stage.mjs:158`).
 - Part 1: `createAuthoritativeDnsTxtResolver` is what Project domains use in Node (`packages/zelavis/src/adapters/node.ts`); `test/_dns-authority.mjs` fixture.
-- Part 7: `@zelavis/dns-cloudflare` (`zelavis-services/dns-cloudflare/src/cloudflare-dns.ts`), DNS connections, adopted zones, `POST /runtime/edge/dns/zones/:apex/wildcard-certificate`, `dns: "automatic"` Project domains.
+- Part 7: the built-in Cloudflare driver (`createCloudflareDnsProvider` in `packages/zelavis/src/adapters/_dns-cloudflare.ts`), DNS connections, adopted zones, `POST /runtime/edge/dns/zones/:apex/wildcard-certificate`, `dns: "automatic"` Project domains.
 - Project domain API: `GET|POST /runtime/projects/:projectId/domains`, `POST …/:hostname/verify`, `DELETE …/:hostname?revision=N` (`packages/zelavis/src/platform/project-domain-routes.ts`).
 - Earlier run (removed plan, Part 5 report, 2026-11-12): packed candidate and Traefik 3.7.13 under an unprivileged transient unit; a temporary IPv6 address with destination-scoped redirects to ports 80/443; Let's Encrypt staging validated HTTP-01; named and bulk renewal served new leaves; off-host clients verified the staging chain; a native App accepted signup with an HttpOnly cookie and denied its admin Auth route; withdrawal removed the route and certificate; existing processes kept their PIDs.
 
@@ -89,14 +89,14 @@ Root `package.json` script: `"release:qualify:domains": "node distribution/scrip
 ### 1. Confirm parts 1 and 7 and the remote-qualification pattern
 
 - **Files**: none.
-- **Change**: `rg -n "createAuthoritativeDnsTxtResolver" packages/zelavis/src/adapters/node.ts`; `ls zelavis-services/dns-cloudflare/src`; read `distribution/scripts/qualify-shards.mjs` in full.
+- **Change**: `rg -n "createAuthoritativeDnsTxtResolver" packages/zelavis/src/adapters/node.ts`; `rg -n "createCloudflareDnsProvider" packages/zelavis/src/adapters`; read `distribution/scripts/qualify-shards.mjs` in full.
 - **Depends on**: parts 1, 7.
 - **Check**: `pnpm --filter zelavis run build; echo "exit $?"` prints `exit 0`.
 
 ### 2. Write the qualification script and its local self-test
 
 - **Files**: NEW `distribution/scripts/qualify-domains.mjs`; NEW `distribution/scripts/domains/fake-cloudflare.mjs`; root `package.json` (script).
-- **Change**: section 2, sharing one leg implementation between live and self-test modes (the environment object differs). Imports from the built package (`packages/zelavis/dist/...`) for the DNS codec and from `zelavis-services/dns-cloudflare/dist` for the client.
+- **Change**: section 2, sharing one leg implementation between live and self-test modes (the environment object differs). Imports from the built package (`packages/zelavis/dist/...`) for the DNS codec and from `packages/zelavis/dist/adapters/_dns-cloudflare.js` for the client (`createCloudflareDnsProvider({ apiBase })` points it at the fake in self-test mode).
 - **Depends on**: 1.
 - **Check**: `pnpm run build; node distribution/scripts/qualify-domains.mjs --self-test; echo "exit $?"` prints the five `PASS` lines and `exit 0`.
 

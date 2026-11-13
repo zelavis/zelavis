@@ -4,7 +4,7 @@ Job: Give the Platform and each native App its own email delivery (SMTP settings
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 2 of 10. Read 00-overview.md first.
+Part: 2 of 14. Read 00-overview.md first.
 
 To start:    Execute part 2 in .agents/plans/2026-11-13-accounts-billing-domain-automation/02-email-delivery.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/02-email-delivery.md. Start with its section 8.

@@ -4,7 +4,7 @@ Job: Make the Project domain TXT ownership check read the zone's authoritative n
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 1 of 10. Read 00-overview.md first.
+Part: 1 of 14. Read 00-overview.md first.
 
 To start:    Execute part 1 in .agents/plans/2026-11-13-accounts-billing-domain-automation/01-authoritative-dns-challenge-lookup.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/01-authoritative-dns-challenge-lookup.md. Start with its section 8.

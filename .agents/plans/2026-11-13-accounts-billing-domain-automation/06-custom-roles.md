@@ -4,7 +4,7 @@ Job: Let operators define named roles (bundles of permissions and grants, option
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 6 of 10. Read 00-overview.md first.
+Part: 6 of 14. Read 00-overview.md first.
 
 To start:    Execute part 6 in .agents/plans/2026-11-13-accounts-billing-domain-automation/06-custom-roles.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/06-custom-roles.md. Start with its section 8.

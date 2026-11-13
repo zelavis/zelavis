@@ -4,7 +4,7 @@ Job: Add multi-factor sign-in (TOTP with single-use recovery codes) to the Platf
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 5 of 10. Read 00-overview.md first.
+Part: 5 of 14. Read 00-overview.md first.
 
 To start:    Execute part 5 in .agents/plans/2026-11-13-accounts-billing-domain-automation/05-totp-mfa.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/05-totp-mfa.md. Start with its section 8.

@@ -4,7 +4,7 @@ Job: Prove email ownership for password accounts and deliver password recovery b
 Date: 2026-11-13
 Status: planned
 Verified-at: b04fa02d95
-Part: 3 of 10. Read 00-overview.md first.
+Part: 3 of 14. Read 00-overview.md first.
 
 To start:    Execute part 3 in .agents/plans/2026-11-13-accounts-billing-domain-automation/03-email-verification-and-password-recovery.md. Read 00-overview.md first, then start with the part's section 8.
 To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-domain-automation/03-email-verification-and-password-recovery.md. Start with its section 8.
