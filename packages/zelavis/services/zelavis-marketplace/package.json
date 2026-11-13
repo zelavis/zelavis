@@ -42,10 +42,10 @@
   "dependencies": {},
   "devDependencies": {
     "typescript": "^7.0.2",
-    "effect": "4.0.0"
+    "effect": "4.1.3"
   },
   "peerDependencies": {
     "zelavis": "workspace:*",
-    "effect": "4.0.0"
+    "effect": "4.1.3"
   }
 }
