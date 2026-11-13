@@ -1,6 +1,6 @@
 <!-- plan-writer supplement
-verified-at: f30953612f
-verified-on: 2026-11-10
+verified-at: b04fa02d95
+verified-on: 2026-11-13
 sources:
   - AGENTS.md
   - .agents/skills/plan-writer/SKILL.md
@@ -74,8 +74,10 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 
 ## 4. Rules every decision is held to
 
-- **No backward compatibility**: no aliases, shims, fallbacks, legacy branches, or migrations
-  from retired layouts (`AGENTS.md § Code Change Expectations`).
+- **No runtime compatibility shims**: no aliases, fallbacks or legacy branches. Data in a
+  published Project database layout migrates only through the explicit Project upgrade (a
+  `CURRENT_FORMAT` bump ships the packaged migrator); development Projects from unreleased layouts
+  are recreated (`AGENTS.md § Code Change Expectations`, `§ Database Architecture Rules`).
 - **No workarounds** around `check:tigerstyle`, `check:effect-usage`, repo rules or the parity
   test. Migrate touched legacy code and add its file to `migratedFiles` (`AGENTS.md § Effect Version`).
 - **Authority comes first**: principal, permission or grant, scope (system, Project, service,
@@ -114,6 +116,8 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 - Dashboard: a Fuzor screen or `fuzor-island` in `packages/zelavis/services/zelavis-ui/app`. No
   React except the Glide grid. State goes in the URL (`?sidebar=` and query keys), menus declare
   a `surface`, and pages call public endpoints (`AGENTS.md § UI Package Rules`).
+- Dashboard caller authority comes from authenticated `runtime/access`; public `runtime/config`
+  carries only runtime configuration (`AGENTS.md § UI Package Rules`).
 - Dashboard shell and views: `index.html` owns the frame and startup never replaces it.
   Locally rendered URL-backed views use Fuzor's `data-fuzor-view-query` / `data-fuzor-view-value`
   / `data-fuzor-view-values`, recognized by `router.isViewNavigation`, with no per-page query
@@ -135,7 +139,9 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 - Dashboard tests are `packages/zelavis/services/zelavis-ui/tests/*.test.mjs`. Browser tests use
   Playwright (`@playwright/test`'s `chromium`, driven by plain scripts rather than the Playwright
   test runner): `packages/zelavis/services/zelavis-ui/scripts/test-{service-ui,server-views,route-parity,embedded-server-views}.mjs`,
-  run by its `test:browser` script and from the root by `pnpm run ci:ui`. A new page adds its
+  run by its `test:browser` script (which also reruns the embedded suite with `--nested-auth`) and
+  from the root by `pnpm run ci:ui`. A browser step that changes data waits for the page's own
+  sign that the server answered before reading anything back. A new page adds its
   pattern to `app/dashboard-routes.ts` so the route parity suite visits it at desktop and
   mobile sizes; a new flow extends the suite that covers its area
   (`packages/zelavis/services/zelavis-ui/package.json`, `AGENTS.md § UI Package Rules`).
@@ -156,6 +162,10 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
   - build, typecheck and test (`package.json`).
 - `pnpm run ci:ui` when the dashboard changed.
 - `pnpm run docs:check` when docs changed.
+- How an executor works and reports is `AGENTS.md § Executing Changes` (validate at milestones,
+  stop only the piece a conflict touches, pre-existing failures only with evidence, the
+  Implemented / Validation / Issues / Deviations / Status report). Section 8 of a plan applies
+  it and does not copy it; a plan adds only its own steps, checks and stop conditions.
 
 ## 8. Docs and notes
 
@@ -172,7 +182,11 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 - A React route → a Fuzor screen.
 - Reading before the transaction → check inside it.
 - A per-Tenant loop → a change-driven design.
-- A shim to keep old data working → delete it and recreate development Projects.
+- A shim to keep old data working → delete it; recreate development Projects, and move published
+  Project layouts only through the explicit Project upgrade.
+- A static import of identity, the database or the `effect` barrel into a file the Project's
+  persistent host loads → `effect/<Module>` imports and a lazy `import()`
+  (`test/project-host-footprint.test.mjs`, `AGENTS.md § Effect Version`).
 - Writing anything in `.claude/` → never, not even a link: guidance, skills, references and plans
   live only in `AGENTS.md` and `.agents/`; `scripts/test/claude-folder.test.mjs` (in
   `pnpm test:repo-rules`) fails on anything there but `settings.local.json` and `worktrees/`

@@ -2360,6 +2360,50 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 - Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
   workspace package is invisible to every root command, whatever its scripts say.
 
+## Executing Changes
+
+These rules hold for every change an agent makes here, with or without a plan. A plan
+written with `plan-writer` (`.agents/plans/`) adds the task-specific part (its steps,
+checks, Done means and its implementer block, section 8), which applies these rules and
+wins where it is more specific. A small task needs no plan and nothing beyond these rules.
+
+- **Carry the work through.** Settle routine questions from the code, these rules and the
+  task, and make localized implementation choices yourself. Record a choice the owner might
+  have wanted to make, with its reason, in the final report. Ask only for what you cannot
+  supply (a credential, access, a payment, a physical action), and keep working on
+  everything that does not need it.
+- **Never decide a conflict away.** When the task, a plan or the code you find contradicts a
+  rule in this file, an owner decision recorded in `.agents/references/`, or an explicit
+  requirement of the task, or would need a redesign of an established architecture, do not
+  pick silently: stop that piece, carry on with the independent work, and report the
+  conflict with your recommendation. A local mismatch (a moved file, a renamed symbol, a
+  stale line number or excerpt) is corrected in place and noted.
+- **Stay in scope.** Change what the task and its checks need, in the repository's existing
+  patterns. Leave unrelated code alone, and keep other people's uncommitted changes intact:
+  `git status` before you start shows what was already there.
+- **Validate as you go.** After each meaningful milestone, run the focused check for what
+  changed (the touched test files, the package typecheck). Before calling the work done, run
+  the gates in Verification from the root: `pnpm run verify`, plus `pnpm run ci:ui` and
+  `pnpm run docs:check` when those areas changed. Fix a failure before moving on. A failure
+  is pre-existing only with evidence (it fails the same way on the unchanged commit), and
+  the report says so with that evidence. Never suppress, skip, baseline or weaken a check or
+  a test's expectation to get green.
+- **Review before you finish.** Re-read the request (and the plan's Done means), then your
+  whole diff: every requirement met, no bug, security hole or regression you can see,
+  nothing unintended, the architecture in this file respected. Fix what you find and rerun
+  the affected checks.
+- **Report only what you saw.** A check passed only if you ran it and saw it pass after
+  your last edit. End with a report proportional to the task:
+  - **Implemented**: what changed.
+  - **Validation**: the checks run and their results; checks not run, and why.
+  - **Issues**: remaining failures, limits and risks.
+  - **Deviations**: material departures from the request or plan, and decisions taken for
+    the owner.
+  - **Status**: complete (every requirement met and the required checks passed), partly
+    done (what is missing or unverified, and why), or blocked (on what).
+
+  For a one-line fix, a sentence or two covering the same ground is enough.
+
 ## Code Change Expectations
 
 - Make the smallest coherent change that moves the repo forward.
@@ -2424,6 +2468,9 @@ When acting as an agent in this repo:
   general [`plan-writer` skill](.agents/skills/plan-writer/SKILL.md) (`/plan-writer` in Claude
   Code; the owner's `~/.claude/skills/plan-writer` is a link to it): plan only, verify every referenced symbol, and carry enough
   quoted context that the implementer needs no knowledge of Zelavis beyond the plan.
+- When asked to execute or continue a plan in `.agents/plans/`, start with its section 8: it
+  applies [Executing Changes](#executing-changes) to that plan and keeps its `## Progress`
+  and `## Execution report` current.
 
 ## Runtime Independence Rule
 

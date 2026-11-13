@@ -25,6 +25,8 @@ only this. Write no plan, and change no file.
    (`/plan-writer refresh`).
 3. Under each row, give the line to copy:
    - `planned`: `Execute the plan in <path>. Start with its section 8.`
+   - `needs replanning`: `/plan-writer refresh`, with the decision named under its header,
+     since an implementer cannot carry out the steps that wait on it.
    - anything else not `done`: `Continue the plan in <path>. Start with its section 8.`
    - For a split plan, only the first part that is neither `done` nor `partly done` gets a line,
      since parts run in order and a part left with only `[!]` lines holds nothing back.
@@ -114,6 +116,13 @@ runs without interruption:
   publishing, deploying, sending anything to an outside service and spending money stay off
   unless the job itself asks for them. Omit optional actions. Record a missing authorization
   as a blocker only when it prevents a required outcome.
+- **Deciding is not overriding.** A written project rule, an explicit requirement of the job
+  and a recorded owner decision are never decided away. While planning, a job that
+  contradicts a project rule follows the job only where the job says so explicitly; the plan
+  then names the rule and updates it (section 6), since a rule change belongs in the
+  instruction files. Otherwise the plan follows the rule and section 0 says what of the job
+  that leaves out. While executing, such a conflict stops only the affected step (see the
+  implementer block); everything else goes on.
 
 ## Phase 1: Understand the project and the job
 
@@ -159,6 +168,9 @@ runs without interruption:
    A script, drill or suite the plan relies on as proof must also *run* today: run it once at
    `HEAD` if you can, or make "it starts and passes at `HEAD`" the first check of the step that
    uses it. A proof that has not run recently may be broken for reasons unrelated to the job.
+   When the steps lean on existing suites, the plan's first step is that baseline run, and the
+   implementer records any suite already failing there, so a later failure can be told apart
+   from one the change caused.
 
 ## Phase 2: Decide
 
@@ -190,6 +202,30 @@ the project's own rules first, then to these:
 - **Finish the job.** Plan the smallest coherent change that does the whole job, not a first
   slice of it. State the finish line before the steps. A large job is still planned whole; it
   is split into parts (see Required output), never cut short.
+- **Settle every open item before handing over.** Collect what is still open from your
+  research: a question, a "not decided yet" or "still open" note (in the code, the roadmap,
+  an earlier plan or its execution report), an "investigate whether", a requirement the job
+  leaves incomplete. Settle each the first way that applies:
+  1. the code, the rules or a run of an existing check answers it: find out, and write the
+     answer into the design;
+  2. it is a preference (product, policy, cost, naming): decide it, under Decisions taken for
+     the user;
+  3. only execution can answer it (a measurement, a drill's output, behavior that shows only
+     when run): write the step as a decision rule, the check that tells and what to do for
+     each outcome, so the implementer measures and does not design;
+  4. it needs something only the user can supply: Needs from the user, its steps `[!]`;
+  5. it needs a design larger than this job, or would override a rule (see
+     [Deciding is not overriding](#decide-dont-ask)): Out of scope with the reason, or a
+     `[!]` line naming the design, never a guess.
+
+  Nothing reaches the implementer as an open question or "decide during implementation".
+- **Say what may bend.** Sections 2 and 3 (decisions, invariants, contracts, and every name
+  other code or a later step relies on) and the governing rules are **fixed**: the
+  implementer follows them or stops the step. A step's Change is the **recommended**
+  procedure: followed as written, adapted to the current code only while the step's Goal,
+  its Done when and everything fixed still hold, with the deviation recorded. Private details
+  nothing else relies on (a local variable, the order of edits inside one step, splitting a
+  private helper) are **free**: spend no plan lines on them, and leave nothing else free.
 
 For each choice that isn't obvious, record the reason in one or two sentences, and give each
 alternative you rejected one line. A reason is what lets the implementer handle a case the plan
@@ -207,7 +243,10 @@ Apply all of it.
   real signatures, real schema fields, real error types. Write whole new types and schemas out in
   full.
 - **Self-contained steps.** Each step carries the context it needs (files, excerpts, names, the
-  reason) so it can be carried out even if the implementer has lost the earlier sections.
+  reason) so it can be carried out even if the implementer has lost the earlier sections. An
+  excerpt only one step uses goes in that step, in full. One several steps use lives once in
+  section 1 under a short label (`P1`, `R2`), and each step names the label and the line that
+  matters to it, since the implementer re-reads section 1 of the same file whenever unsure.
 - **Exact names only.** No "something like", "e.g.", "a suitable name" or "as appropriate".
   If you mean a name, give it.
 - **Glossary.** Define every project-specific term the plan uses, the way this job means it.
@@ -345,7 +384,13 @@ missing. Once it is satisfied, rewrite the step if needed and return it to `[ ]`
 If the step is already fulfilled, run its check and mark it `[x]` with the evidence. Leave
 completed steps and execution reports intact. Adapt stale steps in place when their intent and
 design are still clear. Use `Status: needs replanning` if the plan depends on a new design.
-Name the missing decision under the header. Set `Verified-at` to `HEAD` once a plan is checked.
+Name the missing decision under the header. A plan already marked `needs replanning` (by you
+or by an implementer) is yours to settle: decide the named decision as Phase 2 would, record it
+under Decisions taken for the user, rewrite the steps that depended on it, remove the note, and
+set `Status` back to what its Progress shows. Leave it marked only when the decision needs a
+design larger than the plan, and then say what that design is. Settle open items the plan or its
+execution reports raise the same way ([Settle every open item](#phase-2-decide)).
+Set `Verified-at` to `HEAD` once a plan is checked.
 Leave plans that needed no correction alone. Report each refreshed plan in section 0 of the new plan, and
 when the job is only to refresh, report there in the chat instead.
 
@@ -488,7 +533,13 @@ another agent is still working on it, so two agents never work one plan at once.
 ### Sections of a plan
 
 Use these sections in every single plan and every part, in order. Leave out a subsection only
-when it truly does not apply, and say so in one line.
+when it truly does not apply, and say so in one line. Size each section to the job: for a small
+fix, Design and Contracts may be a few lines and section 4 two or three steps; a plan is never
+padded to look thorough, and never thinned where the implementer would have to guess.
+
+Plans written before a field below existed (such as Done when, Keep unchanged or Stop if) are
+still valid: their implementer applies the general rules of section 8 where the field is
+missing, and a refresh adds the field only to steps it rewrites.
 
 ### 0. Summary and finish line
 - Two or three sentences on what changes and why.
@@ -500,7 +551,9 @@ when it truly does not apply, and say so in one line.
 - **Sources read**: the instruction files and references you read.
 
 ### 1. Context packet
-The implementer reads this first and returns to it whenever unsure.
+The implementer reads this first and returns to it whenever unsure. Give each rule, excerpt or
+pattern that several steps use a short label (`R1` for a rule, `P1` for a pattern) so steps can
+name it instead of repeating it.
 - **Glossary**: the terms this plan uses.
 - **Governing rules**: quoted passages from the project's rules, each attributed.
 - **System today**: the files, symbols, routes, schemas and tests this work builds on, each with
@@ -533,17 +586,31 @@ and method, SDK signature, CLI command and flags with machine-readable output, U
 state), each with its authorization requirement and handler location.
 
 ### 4. Execution steps
-Ordered, small, each independently verifiable. For each step:
+Ordered, small, each independently verifiable. Each step is a contract: what it needs, what it
+may touch, what it must leave alone, what it delivers and how that is proven. For each step:
 1. **Goal**: one sentence.
-2. **Files**: exact paths, existing or **NEW**.
-3. **Context**: the excerpts, rules and reason this step needs, repeated here and not merely
-   referenced.
+2. **Files**: exact paths, existing or **NEW**. This is the step's modification scope; the
+   implementer may extend it only as section 8 allows.
+3. **Context**: the excerpts, rules and reason this step needs: in full when only this step
+   uses them, by section 1 label otherwise (see Self-contained steps).
 4. **Change**: what to add, edit or delete, with exact symbols, before/after where it helps, and
    the code to mirror (`path:line`).
-5. **Depends on**: the step numbers it needs.
-6. **Check**: the command or test that proves it works, the directory it runs from, and the
+5. **Depends on**: the step numbers it needs, and the **NEW** files and symbols from them it
+   uses, so the implementer can check they exist before starting.
+6. **Keep unchanged** *(only when something is at risk)*: what this step must not alter though
+   an implementer might be tempted to (a public signature, an existing test's expected value, a
+   file another part owns).
+7. **Done when**: the observable result (behavior, output, test outcomes) the step delivers,
+   including the **NEW** symbols a later step relies on.
+8. **Check**: the command or test that proves it works, the directory it runs from, and the
    expected result (exit code or exact output). A step that writes tests runs them here, at once,
-   and sees them pass, and sees a new test fail first when it guards a fix.
+   and sees them pass, and sees a new test fail first when it guards a fix. "Covered by step
+   <n>" is not a check: a step whose tests come later still runs the build or typecheck that
+   compiles its files.
+9. **Stop if** *(only when the job has a specific risk)*: what would make this step not
+   adaptable but stopped as `[!]`, beyond section 8's general rule, such as an interface the step
+   needs being incompatible, a section 3 contract the current code cannot meet, or a security
+   choice the plan did not settle.
 
 The last step of every plan is always **Self-audit**: re-read the whole diff against the plan
 and its Done means, and rerun every test and gate the plan touched (see the implementer block).
@@ -593,6 +660,9 @@ End with this block, adapted to the project and the plan:
 >   rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff`
 >   on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]`
 >   lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
+> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry
+>   out only the steps that do not depend on it; if none are left, end the session with one line
+>   naming the decision and saying the plan needs `/plan-writer refresh`.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another
 >   agent may still be working on it. Check, do not ask: if this plan file, or any file a step's
 >   Files line names, changed in the last 15 minutes, end the session with one line saying the
@@ -609,7 +679,10 @@ End with this block, adapted to the project and the plan:
 > **Finish routine work as you find it.** Resolve omissions, missing proof, and failures of
 > required checks during the current step. Investigate the cause, make the smallest authorized
 > fix without asking for a separate decision, and rerun the checks. A required test that flakes
-> and leaks resources is work to fix now.
+> and leaks resources is work to fix now. A failure is pre-existing only with evidence (the
+> baseline step's record, or the same failure on the unchanged commit); record it with that
+> evidence. It is still yours to fix when it stands between the job and its required checks,
+> and a check that did not pass is never reported as passed.
 > The Files line tells you where to start. Extend it when the requested outcome or a required
 > check needs a small fix elsewhere in a named repository. Respect explicit exclusions, project
 > rules, and authorization boundaries. Record a meaningful deviation in the execution report.
@@ -640,6 +713,17 @@ End with this block, adapted to the project and the plan:
 > the cause using the repo's normal mechanisms. Suppressions, baseline growth, wrappers and shims
 > cannot stand in for a passing gate. Use the blocker rule only when a concrete dependency remains.
 >
+> **Adapt or stop.** Sections 2 and 3, the governing rules and the step's Done when are fixed;
+> the step's Change is the recommended way there. Adapt it yourself, and record how, when the
+> premise that proved wrong is local (a moved file, a renamed symbol, a different signature, a
+> helper that already exists) and everything fixed still holds. Stop the step instead, as `[!]`
+> naming the conflict and what settling it takes, when following the code would change a
+> section 2 decision or a section 3 contract, break a governing rule, drop part of Done means,
+> or needs a design the plan does not contain, or when the step's own **Stop if** applies. Carry
+> on with steps that do not depend on it. If later steps rest on the broken premise, set
+> `Status: needs replanning` and name the decision under the header. Never weaken a Done means
+> item, a contract or a test's expected value so that a check passes.
+>
 > *(List the patterns this project forbids, taken from its rules and gates.)* Never edit
 > generated output. Do not commit, push or publish unless told to.
 >
@@ -660,15 +744,21 @@ End with this block, adapted to the project and the plan:
 > - the final status, and the steps you carried out. Update the `Status` line too, and in a
 >   split plan the status table and `Status` line in `00-overview.md`;
 > - each step you worked on, one line: done, done differently, or skipped;
-> - the verification commands and their results;
+> - the verification commands and their results, and each required check not run, with why;
 > - every deviation from the plan, and why;
+> - remaining issues and risks, and failures shown to be pre-existing, with the evidence;
+> - **Notes for later**: what you discovered that a later step, part or session must know
+>   (a premise that proved wrong, a helper that already existed, a slow suite), or "none";
 > - **Decisions taken for the user**: each choice you made that the user might have wanted to
 >   make, with why, so they can overrule it ("none" if there were none);
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their
 >   text lives in `## Progress`.
 >
-> Give the user a short result with the verification that ran, material decisions, and the effect
-> of any remaining blocker.
+> Give the user a short result under these headings, sized to the work: **Implemented**;
+> **Validation** (checks run and their results, checks not run and why); **Issues** (remaining
+> failures, limits, risks, and the effect of any blocker); **Deviations** (from the plan, and
+> decisions taken for the user); **Status** (the plan's `Status` line: `done` only when every
+> line of Progress is `[x]` and the full verification passed after your last edit).
 
 ## Self-check before you hand over the plan
 
@@ -678,7 +768,11 @@ End with this block, adapted to the project and the plan:
 - [ ] Every named path, symbol, route, command and helper is cited as `path:line` or marked
       **NEW**, and you checked each one.
 - [ ] No "something like", "e.g.", "as appropriate" or open choice is left for the implementer.
-- [ ] Each step can be carried out on its own context alone and ends with a check.
+- [ ] Every open item found while planning was settled one of the five ways in Phase 2; any
+      execution-time unknown is a decision rule with an outcome for each result.
+- [ ] Each step can be carried out on its own context alone and ends with a check of its own
+      (never only "covered by step <n>"), and says in Done when what it delivers.
+- [ ] Steps with a specific risk say what to keep unchanged and when to stop.
 - [ ] Authority, persistence, failures, bounds and crash behavior are stated for every state
       change.
 - [ ] Every interface the project requires is covered.
