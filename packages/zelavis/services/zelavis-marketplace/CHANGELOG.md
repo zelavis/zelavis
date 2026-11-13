@@ -1,5 +1,22 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.45
+
+### Patch Changes
+
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [d4ff459]
+- Updated dependencies [7987555]
+- Updated dependencies [5744998]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [7fe8fb5]
+  - zelavis@2.0.0-alpha.45
+
 ## 1.1.0-alpha.44
 
 ### Patch Changes

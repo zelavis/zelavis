@@ -1,5 +1,23 @@
 # @zelavis/dokuwiki
 
+## 2026.7.14-alpha.3
+
+### Patch Changes
+
+- 9a5b41e: During a managed app recipe upgrade, Zelavis holds incoming requests until Caddy confirms that its reload finished. Provisioning and installation also retry transient download failures.
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [d4ff459]
+- Updated dependencies [7987555]
+- Updated dependencies [5744998]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [7fe8fb5]
+  - zelavis@2.0.0-alpha.45
+
 ## 2026.7.14-alpha.2
 
 ### Patch Changes

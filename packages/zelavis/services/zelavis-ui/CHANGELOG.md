@@ -1,5 +1,30 @@
 # @zelavis/ui
 
+## 1.1.0-alpha.45
+
+### Minor Changes
+
+- 7fe8fb5: Add live Platform and Project registration controls, public Platform signup, and conditional human account access drawers. Render customer Projects, menus and actions from authenticated scoped grants, with default-closed signup and session invalidation after access changes.
+- 7fe8fb5: Add password login and owner-enabled signup on native App site origins and Edge previews. Scope browser cookies and bearer routing to each Project and expose only the public Auth pages and self-session operations at site ingress.
+- 7fe8fb5: Connect exact Project hostnames using DNS TXT proof. Platform owners can grant customers Project-scoped domain access. The dashboard, SDK and CLI share the same verification, activation and withdrawal operations.
+
+### Patch Changes
+
+- 7987555: A data-layout migration now replays document puts and deletions for live collections with uncompacted logs. It keeps their order, revisions, and times so time series can rebuild the same points. A compacted partition carries its final document state. The export is checked against the earlier engine's own reads, so a shard whose log reached that engine's export limit is refused instead of migrated with missing writes. A change-feed cursor issued before the migration is still refused; its consumer reads the feed from the start. Activating a schema now writes a collection's documents back only when the schema changes what they index, so an activation that changes no lens adds no change events.
+- 5744998: A data-layout migration now keeps each document's version, creation and update times and expiry. Before, versions restarted at one, so a client holding a version read before the migration could later have a stale `expectedVersion` write accepted, once the document had been written that many times again, and overwrite newer data. Only the change history still restarts: a change-feed cursor issued before the migration is refused, and its consumer reads the feed again.
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [d4ff459]
+- Updated dependencies [7987555]
+- Updated dependencies [5744998]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [7fe8fb5]
+- Updated dependencies [9a5b41e]
+- Updated dependencies [7fe8fb5]
+  - zelavis@2.0.0-alpha.45
+
 ## 1.1.0-alpha.44
 
 ### Patch Changes

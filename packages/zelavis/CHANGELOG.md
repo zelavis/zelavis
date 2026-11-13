@@ -1,5 +1,35 @@
 # zelavis
 
+## 2.0.0-alpha.45
+
+### Minor Changes
+
+- 7fe8fb5: Add durable, default-closed registration settings for the Platform and each App. Password signup and first-time OAuth enrollment use the same policy. Existing users can sign in while signup is closed. Operators can read and change each policy through HTTP, SDK, and CLI.
+- 7fe8fb5: Add conditional human account access administration through HTTP, SDK and CLI for the Platform and each App. Enforce delegated authority, protect privileged identities and rotate sessions atomically when access changes. Filter signed-in Project inventory by exact view grants.
+- 7fe8fb5: Add password login and owner-enabled signup on native App site origins and Edge previews. Scope browser cookies and bearer routing to each Project and expose only the public Auth pages and self-session operations at site ingress.
+- 7fe8fb5: Connect exact Project hostnames using DNS TXT proof. Platform owners can grant customers Project-scoped domain access. The dashboard, SDK and CLI share the same verification, activation and withdrawal operations.
+
+### Patch Changes
+
+- 7fe8fb5: Data-layout migrations now preserve references and graph links in compacted partitions when the target appears in a later import batch. App-wide replicated collections are refreshed after their documents have been restored.
+- 9a5b41e: During a managed app recipe upgrade, Zelavis holds incoming requests until Caddy confirms that its reload finished. Provisioning and installation also retry transient download failures.
+- d4ff459: Event cursors now name the life of the Tenant that issued them. A cursor held across Tenant removal and recreation is
+  refused with `CursorFromAnotherLife` (HTTP 409, code `cursor-from-another-life`). The consumer can read again from the
+  beginning. A move, a follower, and a copy keep the Tenant life. A branch can continue its source's cursors and merge
+  back only within the source life it was branched from.
+
+  The Project upgrade to data layout 5 reads layouts 2 and 4. It carries document history when the source log is intact.
+  Layout 4 also keeps pending outbox messages, durable entity and workflow state, idempotency receipts, saved schema
+  activations, and materialized aggregate definitions and results. App-wide collections are carried and cross-Tenant
+  indexes rebuild from the migrated documents. Aggregate checkpoint cursors, derived time-series state, and old event
+  cursors do not carry over. A compacted partition carries its final state. The upgrade refuses layout-4 branches
+  because recreating them would sever their lineage. It also refuses divided Tenants and databases with shards or replicas
+  on other Nodes.
+- 7987555: A data-layout migration now replays document puts and deletions for live collections with uncompacted logs. It keeps their order, revisions, and times so time series can rebuild the same points. A compacted partition carries its final document state. The export is checked against the earlier engine's own reads, so a shard whose log reached that engine's export limit is refused instead of migrated with missing writes. A change-feed cursor issued before the migration is still refused; its consumer reads the feed from the start. Activating a schema now writes a collection's documents back only when the schema changes what they index, so an activation that changes no lens adds no change events.
+- 5744998: A data-layout migration now keeps each document's version, creation and update times and expiry. Before, versions restarted at one, so a client holding a version read before the migration could later have a stale `expectedVersion` write accepted, once the document had been written that many times again, and overwrite newer data. Change-feed consumers restart from the beginning with a new cursor after migration.
+- 9a5b41e: Installed Project hosts use less memory. They verify each selected engine in a short-lived process and keep supervising the engine after verification finishes. On systemd installations, the OOM scores favor reclaiming memory from Project processes first, and the Project Agent continues supervising other Projects after a child is killed. Live updates apply the refreshed scores to running services.
+- 7fe8fb5: Retrying a completed workflow that returns no value now reads its saved result. Workflow replay also reuses saved activity and durable deferred results when their encoded value is undefined.
+
 ## 2.0.0-alpha.44
 
 ### Patch Changes
