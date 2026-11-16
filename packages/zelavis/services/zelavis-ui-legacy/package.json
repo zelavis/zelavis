@@ -23,10 +23,10 @@
     "build:legacy": "node scripts/generate-service-page-styles.mjs && react-router build && node scripts/apply-runtime-base-path.mjs && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json"
   },
   "dependencies": {
-    "@assistant-ui/core": "0.3.22",
-    "@assistant-ui/react": "0.15.23",
-    "@assistant-ui/react-markdown": "^0.14.18",
-    "@assistant-ui/store": "0.3.16",
+    "@assistant-ui/core": "0.3.35",
+    "@assistant-ui/react": "0.15.36",
+    "@assistant-ui/react-markdown": "^0.14.26",
+    "@assistant-ui/store": "0.3.23",
     "@base-ui/react": "^1.8.0",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lint": "^6.9.7",
