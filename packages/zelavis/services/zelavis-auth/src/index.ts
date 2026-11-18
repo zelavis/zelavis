@@ -2,7 +2,8 @@
  * The auth settings page.
  *
  * Deliberately thin. Accounts, sessions, credentials, password verification
- * and the OAuth flow are Zelavis itself — an installation cannot function
+ * and the OAuth flow are Zelavis Auth (`zelavis/auth`), a Platform Subsystem
+ * of every runtime — an installation cannot function
  * without them, so they are not something a package provides. What a package
  * can usefully own is the face: a settings page, and a catalogue of the
  * plugins that extend auth.
@@ -14,15 +15,6 @@
  * reads the same public endpoints anyone else could.
  */
 import { zelavis } from "zelavis/sdk";
-
-/**
- * The capability owner auth extensions declare against.
- *
- * `zelavis/identity`, not this package. Extensions point at the core service
- * that discovers and runs them; this one only shows what is installed for it.
- * The core is identity, and this package is the page that configures it.
- */
-export const IDENTITY_EXTENSION_OWNER = "zelavis/identity";
 
 export function register() {
   zelavis.plugins.ui.menus.create({

@@ -193,6 +193,19 @@ command tree.
   `--after` with the returned next key, and `--json` for paginated records.
   Inspection is read-only, redacts secrets, and requires the system-scoped
   `server.database.inspect` permission. Supply `--token` for authentication.
+- `identity-database restore DIR --confirm restore [--data-dir DIR] [--json]`
+  replaces the Platform's identity database (Platform users' Auth data) with a
+  restored backup run's `identity` directory. It is host-local and refused while
+  the Platform runs; the database it replaces is kept beside it as
+  `identity-database/shards.replaced-<timestamp>`.
+- `services-database restore DIR --confirm restore [--data-dir DIR] [--json]`
+  moves a restored Platform backup run's `database` directory into the private services
+  database. It validates the image and refuses while the Platform runs. Previous shards
+  remain at `services-database/shards.replaced-<UTC timestamp>`; the source image is
+  consumed. A failed move rolls back. If a crash leaves no `shards`, startup refuses
+  until this command is rerun to finish the restore. This is host-local, with no HTTP
+  or SDK form. Services reach the database only through setup's `core.database`;
+  it has no Database page or database routes.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.
@@ -276,12 +289,12 @@ Platform running, use the guided setup from the same machine:
 zelavis setup
 ```
 
-The setup wizard checks the installation, guides the owner identity and
+The setup wizard checks the installation, guides the owner account and
 security choices, and never prints the resulting owner session. It is the
 recommended interactive flow. The equivalent scriptable command is:
 
 ```bash
-zelavis bootstrap --email owner@example.com --display-name "Owner"
+zelavis bootstrap --username owner --display-name "Owner"
 ```
 
 The command prompts for the password with the terminal echo turned off. There
@@ -291,7 +304,7 @@ acceptable place for the credential that owns the Platform. Passing it is
 refused rather than ignored. For unattended installs, pipe it instead:
 
 ```bash
-printf '%s' "$OWNER_PASSWORD" | zelavis bootstrap --email owner@example.com --password-stdin
+printf '%s' "$OWNER_PASSWORD" | zelavis bootstrap --username owner --password-stdin
 ```
 
 To check where an installation stands before doing anything:
@@ -300,18 +313,26 @@ To check where an installation stands before doing anything:
 zelavis bootstrap status
 ```
 
-That reports whether an owner exists, whether the bootstrap token is
-configured, and which credential providers are available. Password sign-in is
-part of Zelavis, so nothing has to be installed first. One provider covers both
-identifier kinds: an identifier containing `@` is treated as an email address,
-anything else as a username.
+That reports whether an owner exists and whether bootstrap is configured.
+The owner claims the installation with a username and password. `--email` is
+optional and is verified once email delivery is configured.
+
+`zelavis auth <group> <action>` mirrors the [Auth API operations](/api/platform-operations/#authentication).
+Pass `--data JSON` to commands that take a request body and `--json` for
+machine-readable output. Use `--token` for an access token or service-account
+token on authenticated requests. For human sign-in, give the sign-in command
+`--session-file PATH` and pass the same path and URL to later Auth commands.
+The CLI stores the tokens in an owner-only file and refreshes expired access
+tokens on demand. `zelavis auth session sign-out` with the file ends the
+session and clears its tokens. Without the file, `zelavis auth session refresh`
+takes a `refreshToken` in its JSON body and returns a replacement bundle.
 
 ## OAuth sign-in
 
-The Authorization Code flow is part of Zelavis: it holds the state, nonce, and
-PKCE verifier, which are the parts that are dangerous to get wrong and the same
-for every provider. What differs per provider — endpoints and claim mapping —
-is a definition, and Google, GitHub, and a generic OIDC builder ship in the box.
+The Authorization Code flow is part of Zelavis Auth: it holds the state, nonce,
+and PKCE verifier, which are the parts that are dangerous to get wrong and the
+same for every provider. Google, GitHub, Apple and generic OpenID Connect ship
+with Zelavis; another issuer needs only its URL.
 
 The credentials your installation was issued are yours to supply:
 
@@ -354,17 +375,10 @@ The document's own `issuer` must match the URL requested and every endpoint
 must be https — one of them supplies the keys that decide whether an ID token
 is genuine.
 
-A plugin is only needed for a provider that is not OIDC at all, where the
-profile endpoint and claim mapping are real code. Ship one declaring
-`"capabilities": ["zelavis/identity:oauth"]` whose service exports
-`oauthProviders`. A definition with an `issuer` must also give a `jwksUrl`: an
-ID token nobody can verify is attacker-supplied JSON, so one is refused at
-definition time.
-
 ## Extensions
 
 A plugin that extends another declares a capability owned by it —
-`zelavis/identity:oauth`, not the domain namespace `provider:auth`. It is an
+`zelavis/auth:authenticator`, not the domain namespace `provider:auth`. It is an
 ordinary plugin in every other way; the only difference is who it points at.
 
 That relationship is what lets an extension be listed beside the plugin it
@@ -372,13 +386,13 @@ extends rather than in a general catalogue:
 
 ```bash
 zelavis extensions
-zelavis extensions --for zelavis/identity
+zelavis extensions --for zelavis/auth
 ```
 
 The same over the API, which is what a plugin's own settings page asks for:
 
 ```
-GET /zelavis/api/v1/runtime/extensions?owner=zelavis/identity
+GET /zelavis/api/v1/runtime/extensions?owner=zelavis/auth
 ```
 
 Each entry in `runtime/services` carries `extends`, so a general listing can
@@ -438,7 +452,7 @@ the package that defines it:
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "zelavis/identity:credentials"
+      "zelavis/auth:authenticator"
     ],
     "namespace": "example"
   }

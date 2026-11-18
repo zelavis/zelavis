@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import { createRuntimeAdmission } from "../core/runtime/admission.js";
 import type { RuntimeAdmission } from "../core/runtime/admission.js";
 import { IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
-import { ZELAVIS_NODE_HTTP_TIMEOUTS } from "../core/runtime/node-http.js";
+import { nodeClientAddress, ZELAVIS_CLIENT_ADDRESS_HEADER, ZELAVIS_NODE_HTTP_TIMEOUTS } from "../core/runtime/node-http.js";
 import { NODE_RUNTIME_READY_PATH } from "./_node-runtime-protocol.js";
 
 const HOP_HEADERS = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -32,6 +32,8 @@ export function createNodeRuntimeIngress(options: {
   /** Platform preview listeners share the engine's one drain boundary. */
   readonly admission?: RuntimeAdmission;
   readonly target: () => string;
+  /** The installation's Edge proxy fronts this listener: its rightmost `x-forwarded-for` entry names the caller. */
+  readonly trustForwardedFor?: boolean;
   /** Serve TLS with this certificate instead of plain HTTP. */
   readonly tls?: { readonly keyPem: string; readonly certPem: string };
   /** When set, only these request paths are forwarded; every other path is a 404 that never reaches the engine. */
@@ -59,6 +61,12 @@ export function createNodeRuntimeIngress(options: {
     socket.once("close", gone);
     fiber.addObserver(() => { pending.delete(fiber); socket.off("close", gone); });
   }
+  /** The engine behind this listener learns the caller's address only from here: an inbound value of the header is never passed on. */
+  const withClientAddress = (incoming: Pick<IncomingMessage, "headers" | "socket">, headers: IncomingHttpHeaders): IncomingHttpHeaders => {
+    const { [ZELAVIS_CLIENT_ADDRESS_HEADER]: _claimed, ...rest } = headers;
+    const address = nodeClientAddress(incoming, { trustForwardedFor: options.trustForwardedFor === true, trustClientAddressHeader: false });
+    return address === undefined ? rest : { ...rest, [ZELAVIS_CLIENT_ADDRESS_HEADER]: address };
+  };
   function forward(incoming: IncomingMessage, outgoing: ServerResponse, release: () => void, headers: IncomingHttpHeaders) {
     const target = new URL(options.target());
     if (target.protocol !== "http:" || target.username || target.password || target.pathname !== "/" || target.search || target.hash) throw new Error("Ingress requires a private HTTP engine origin.");
@@ -67,7 +75,7 @@ export function createNodeRuntimeIngress(options: {
     const upstream = httpRequest({ hostname: target.hostname, port: target.port, method: incoming.method,
       // Keep the original origin, request path and credentials. Gateway authorization
       // remains entirely inside the selected engine's dispatcher.
-      path: incoming.url, headers: endToEndHeaders(headers),
+      path: incoming.url, headers: withClientAddress(incoming, endToEndHeaders(headers)),
     }, response => {
       outgoing.writeHead(response.statusCode ?? 502, endToEndHeaders(response.headers));
       response.once("error", error => { outgoing.destroy(error); });
@@ -129,9 +137,13 @@ export function createNodeRuntimeIngress(options: {
       upstream.once("connect", () => {
         upstream.write(`${incoming.method} ${incoming.url} HTTP/${incoming.httpVersion}\r\n`);
         if (!options.headers) {
-          for (let i = 0; i < incoming.rawHeaders.length; i += 2) upstream.write(`${incoming.rawHeaders[i]}: ${incoming.rawHeaders[i + 1]}\r\n`);
+          for (let i = 0; i < incoming.rawHeaders.length; i += 2) {
+            if (incoming.rawHeaders[i]!.toLowerCase() !== ZELAVIS_CLIENT_ADDRESS_HEADER) upstream.write(`${incoming.rawHeaders[i]}: ${incoming.rawHeaders[i + 1]}\r\n`);
+          }
+          const address = withClientAddress(incoming, {})[ZELAVIS_CLIENT_ADDRESS_HEADER];
+          if (typeof address === "string") upstream.write(`${ZELAVIS_CLIENT_ADDRESS_HEADER}: ${address}\r\n`);
         } else {
-          for (const [name, value] of Object.entries(headers)) for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) upstream.write(`${name}: ${item}\r\n`);
+          for (const [name, value] of Object.entries(withClientAddress(incoming, headers))) for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) upstream.write(`${name}: ${item}\r\n`);
         }
         upstream.write("\r\n");
         if (head.length) upstream.write(head);

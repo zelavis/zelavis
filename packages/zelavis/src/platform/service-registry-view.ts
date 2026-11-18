@@ -14,6 +14,7 @@ export interface PublicServiceRegistryIdentity {
   order?: number;
   /** An installed package the marketplace's allow-list lists at a newer version. */
   update?: { version: string };
+  principal?: { permissions: readonly string[]; approved: boolean; accountId?: string };
 }
 
 /** What `runtime/services/:name/update` did: the package moved from one listed version to the next. */

@@ -12,6 +12,7 @@ import { chromium } from "@playwright/test";
 import { packageRoot } from "./fuzor-source.mjs";
 import { dashboardRoutes } from "../app/dashboard-routes.ts";
 import { selectItems } from "../app/marketplace-pages.ts";
+import { startSmtpServer, testCertificate } from "../../../test/_smtp-server.mjs";
 
 const io = work => Effect.tryPromise({ try: work, catch: cause => cause instanceof Error ? cause : new Error(String(cause)) });
 const qualify = Effect.scoped(Effect.gen(function*() {
@@ -30,9 +31,16 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => writeFile(join(platformExtension, "dashboard", "app.js"), 'await Promise.all([customElements.whenDefined("zv-select"), customElements.whenDefined("zv-dialog")]); document.querySelector("#out").dataset.result = JSON.stringify({ opaque: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) });'));
   yield* io(() => writeFile(join(platformExtension, "private.txt"), "outside the Platform bundle"));
   const origin = `http://127.0.0.1:${port}`, api = `${origin}/zelavis/api/v1`, token = randomBytes(32).toString("base64url"), password = randomBytes(32).toString("base64url");
+  // Local SMTP servers for the Platform and one App. Both runtimes trust their certificate as an operator's CA would be trusted.
+  const smtpClosers = [];
+  yield* Effect.addFinalizer(() => io(() => Promise.all(smtpClosers.map(close => close()))).pipe(Effect.orDie));
+  const smtpScope = { after: close => smtpClosers.push(close) };
+  const [platformSmtp, appSmtp] = yield* io(() => Promise.all([startSmtpServer(smtpScope, { tls: "implicit" }), startSmtpServer(smtpScope, { tls: "implicit" })]));
+  const smtpCa = join(data, "smtp-ca.pem");
+  yield* io(async () => writeFile(smtpCa, (await testCertificate()).cert));
   let logs = "";
   const child = yield* Effect.acquireRelease(Effect.sync(() => {
-    const child = spawn(process.execPath, ["scripts/runtime.ts"], { cwd: packageRoot, env: { ...process.env, PORT: String(port), ZELAVIS_TEST_FRONTEND: "fuzor", ZELAVIS_DEV_SERVER: origin, ZELAVIS_UI_DEV_SERVER: "", ZELAVIS_DATA_DIR: data, ZELAVIS_BOOTSTRAP_TOKEN: token, ZELAVIS_GITHUB_MAINTENANCE: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, ["scripts/runtime.ts"], { cwd: packageRoot, env: { ...process.env, PORT: String(port), ZELAVIS_TEST_FRONTEND: "fuzor", ZELAVIS_DEV_SERVER: origin, ZELAVIS_UI_DEV_SERVER: "", ZELAVIS_DATA_DIR: data, ZELAVIS_BOOTSTRAP_TOKEN: token, ZELAVIS_GITHUB_MAINTENANCE: "0", NODE_EXTRA_CA_CERTS: smtpCa }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", chunk => { logs = (logs + chunk).slice(-16000); }); child.stderr.on("data", chunk => { logs = (logs + chunk).slice(-16000); }); return child;
   }), child => Effect.gen(function*() {
     if (child.exitCode !== null) return;
@@ -59,13 +67,13 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.waitForURL(/\/zelavis\/setup/));
   yield* io(() => page.getByRole("button", { name: "Get started", exact: true }).click());
   yield* io(() => page.waitForURL(/step=owner/));
-  yield* io(() => page.getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
+  yield* io(() => page.getByLabel("Username", { exact: true }).fill("parity-owner"));
   yield* io(() => page.getByLabel("Display name", { exact: false }).fill("Route qualification"));
   yield* io(() => page.getByRole("button", { name: "Continue", exact: true }).click());
   yield* io(() => page.waitForURL(/step=security/));
   yield* io(() => page.getByRole("button", { name: "Back", exact: true }).click());
   yield* io(() => page.waitForURL(/step=owner/));
-  assert.equal(yield* io(() => page.getByLabel("Email or username", { exact: true }).inputValue()), "parity@example.test", "Wizard identity survives step navigation");
+  assert.equal(yield* io(() => page.getByLabel("Username", { exact: true }).inputValue()), "parity-owner", "Wizard identity survives step navigation");
   yield* io(() => page.getByRole("button", { name: "Continue", exact: true }).click());
   yield* io(() => page.getByLabel("One-time bootstrap token", { exact: true }).fill(token));
   yield* io(() => page.getByLabel("Owner password", { exact: true }).fill(password));
@@ -145,6 +153,12 @@ const qualify = Effect.scoped(Effect.gen(function*() {
         yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty, .content .auth-card").first().waitFor());
         const text = yield* io(() => page.locator(".content").innerText());
         assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
+      }
+      if (entry.path === "/account" || entry.path.startsWith("/account/")) {
+        const nav = page.getByRole("navigation", { name: "Account", exact: true });
+        const active = nav.locator('[aria-current="page"]');
+        yield* io(() => active.waitFor());
+        assert.equal(yield* io(() => active.getAttribute("href")), "/zelavis" + entry.path);
       }
       yield* assertRetainedQueryTabs(`${viewport.width}: ${entry.example}`);
       yield* assertOneActive(`${viewport.width}: ${entry.example}`);
@@ -305,6 +319,40 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.deepEqual(frames, { select: false, dialog: false }, "a page without component tags does not load unused families");
   for (const frame of ["trusted", "sandboxed"]) for (const file of ["service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(runtimeLoads.includes(`200 ${file} ${frame}`), `the ${frame} frame loads ${file}: ${runtimeLoads.join(", ")}`);
   console.log(`Service page runtime requests: ${runtimeLoads.join(", ")}`);
+  // Configure and send on the Platform at both widths, then in an App on a phone.
+  const configureEmail = (path, server, address, recipient) => Effect.gen(function* () {
+    yield* visit(path);
+    const form = page.getByRole("form", { name: "Email settings", exact: true });
+    yield* io(() => form.locator('zv-select[data-dropdown="Delivery"] zv-select-trigger').click());
+    yield* io(() => page.locator("zv-select-item", { hasText: "SMTP" }).click());
+    yield* io(() => form.getByLabel("Sender address", { exact: true }).fill(address));
+    yield* io(() => form.getByLabel("Link base URL", { exact: true }).fill(`${origin}/zelavis`));
+    yield* io(() => form.getByLabel("SMTP host", { exact: true }).fill(server.host));
+    yield* io(() => form.getByLabel("Port", { exact: true }).fill(String(server.port)));
+    yield* io(() => form.locator('zv-select[data-dropdown="Security"] zv-select-trigger').click());
+    yield* io(() => page.locator("zv-select-item", { hasText: /^TLS$/ }).click());
+    yield* io(() => form.getByRole("button", { name: "Save", exact: true }).click());
+    yield* io(() => form.getByText("Email settings saved.", { exact: true }).waitFor());
+    const test = page.getByRole("form", { name: "Send a test email", exact: true });
+    yield* io(() => test.getByLabel("Send a test to", { exact: true }).fill(recipient));
+    yield* io(() => test.getByRole("button", { name: "Send test email", exact: true }).click());
+    yield* io(() => test.getByText("Test email queued.", { exact: true }).waitFor());
+    const delivery = page.getByRole("table", { name: "Email deliveries" }).getByRole("row").filter({
+      has: page.getByRole("cell", { name: recipient, exact: true }),
+    });
+    yield* io(() => delivery.getByRole("cell", { name: "Delivered", exact: true }).waitFor({ timeout: 30000 }));
+  });
+  yield* configureEmail("/settings/email", platformSmtp, "platform@example.test", "desktop@example.test");
+  assert.equal(platformSmtp.messages.length, 1, "the Platform's test message reached the Platform's server");
+  yield* io(() => page.setViewportSize({ width: 390, height: 844 }));
+  yield* configureEmail("/settings/email", platformSmtp, "platform@example.test", "mobile@example.test");
+  yield* configureEmail("/projects/parity-lab/auth", appSmtp, "app@example.test", "app-test@example.test");
+  yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
+  assert.deepEqual(platformSmtp.messages.map(({ to }) => to), ["desktop@example.test", "mobile@example.test"]);
+  assert.deepEqual(appSmtp.messages.map(({ to }) => to), ["app-test@example.test"]);
+  assert.equal((yield* request("/email/settings")).from.address, "platform@example.test", "the App's settings left the Platform's alone");
+  console.log("Action: email settings are saved and a test delivered on the Platform (desktop and mobile) and in an App (mobile), each to its own server.");
+
   yield* visit("/projects/parity-lab/database?databaseDialog=create-table");
   yield* io(() => page.getByRole("dialog").getByLabel("Table name").waitFor());
   const databaseLinks = yield* io(() => page.locator('nav a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
@@ -707,7 +755,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.waitForURL(/\/zelavis\/login/));
   yield* visit("/projects/parity-lab/workloads/functions/" + id);
   yield* io(() => page.waitForURL(/\/zelavis\/login/));
-  yield* io(() => page.getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
+  yield* io(() => page.locator("input[name=identifier]").fill("parity-owner"));
   yield* io(() => page.getByLabel("Password", { exact: true }).fill(password));
   yield* io(() => page.getByRole("button", { name: "Login", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/workloads/functions/" + id)));

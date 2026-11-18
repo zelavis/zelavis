@@ -1,7 +1,12 @@
+import { invitationsPanel } from "./invitations-page.ts";
+import { rolesScreen } from "./roles-page.ts";
+import { projectAuthSettingsCards } from "./project-auth-settings.ts";
+import { accountPageControls, accountSessionsCard, canManageAccounts, createAccountCard, readAuthAccounts } from "./auth-accounts.ts";
 import { Effect } from "effect";
 import { accountAccessEditor, canEditAccountAccess } from "./account-access-editor.ts";
 import { ApiError, array, label, object, request, type Config, type Project } from "./api.ts";
 import { button, empty, field, link, message, node } from "./dom.ts";
+import { emailSettingsCards } from "./email-settings.ts";
 import { badge, card, columns, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
 import { notRunning, projectContext } from "./project-context.ts";
 import { siteUrl } from "./projects-pages.ts";
@@ -74,6 +79,7 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   if (!scoped) return notRunning();
   context.projectNavigation(project, scoped);
   if (section === "users") return yield* usersScreen(context, scoped);
+  if (section === "roles") return yield* rolesScreen(context, project.id);
   if (section === "storage") return yield* storageScreen(context, scoped);
   if (section === "media") return yield* mediaScreen(context, scoped);
   const servicePage = yield* servicePageScreen(scoped, context.path, project.id);
@@ -99,7 +105,7 @@ const overviewScreen = Effect.fn("ui.projectOverview")(function*(context: Screen
   const capabilities = object(scoped.capabilities);
   const services = array(scoped.services).map(object);
   const health = object(yield* (object(capabilities.database).available === true ? request(`${api}/database/health`).pipe(Effect.catch(() => Effect.succeed(undefined))) : Effect.succeed(undefined)));
-  const providers = array(yield* (object(capabilities.identity).available === true ? request(`${api}/auth/providers`).pipe(Effect.catch(() => Effect.succeed([]))) : Effect.succeed([]))).map(String);
+  const providers = array(object(yield* (object(capabilities.auth).available === true ? request(`${api}/auth/methods`).pipe(Effect.catch(() => Effect.succeed({}))) : Effect.succeed({}))).methods).map(object).filter(method => method.signIn === true).map(method => label(method.name));
   const ready = health.status !== undefined;
   return page(
     columns(3,
@@ -113,13 +119,13 @@ const overviewScreen = Effect.fn("ui.projectOverview")(function*(context: Screen
       rowsCard("Activity",
         dataRow("Runtime config", api, "ready"),
         dataRow("Database health", ready ? `${label(health.status)} · ${label(health.nodeId)}` : "/database/health", ready ? "ready" : "offline"),
-        dataRow("Auth providers", providers.length ? providers.join(", ") : "/auth/providers", providers.length ? "ready" : "offline"))));
+        dataRow("Auth providers", providers.length ? providers.join(", ") : "/auth/methods", providers.length ? "ready" : "offline"))));
 });
 
 function backendScreen(context: ScreenContext, base: string, scoped: Config, hosted: boolean) {
   const sections = [
     ["Database", "database", "database", "Tables, document collections, queries, and schemas."],
-    ["Auth", "auth", "identity", "Authentication providers, sessions, and credentials."],
+    ["Auth", "auth", "auth", "Authentication providers, sessions, and credentials."],
     ["Storage", "storage", "storage", "Buckets, media assets, uploads, and file storage."],
     ["Workloads", "workloads", "workloads", "Functions, jobs, schedules, and webhooks."]
   ].map(([title, path, capability, detail]) => ({ title, path, detail, active: usable(scoped, capability, hosted) }))
@@ -189,7 +195,10 @@ const projectAuthScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenC
   if (!entered.scoped) {
     return registration ? page(registration, entered.runtimeError ? message(entered.runtimeError.message, true) : undefined) : notRunning();
   }
-  const providers = yield* Effect.result(authProviderCards(context, entered.scoped));
+  const [email, providers] = yield* Effect.all([
+    manage ? emailSettingsCards(context, projectId) : Effect.succeed([]),
+    Effect.result(authProviderCards(context, entered.scoped)),
+  ], { concurrency: 2 });
   if (providers._tag === "Failure" && !registration) return yield* Effect.fail(providers.failure);
   const publicAuth = usable(entered.scoped, "appPublicAuth", false);
   const domains = publicAuth && canAccess(context.config.access, projectDomainAccess(projectId))
@@ -204,7 +213,9 @@ const projectAuthScreen = Effect.fn("ui.projectAuth")(function*(context: ScreenC
       node("a", { href: new URL(`${authMount}/login`, site).href, target: "_blank", rel: "noreferrer" }, "Open App login"),
       ...(verifiedSite ? [node("a", { href: new URL(`${authMount}/sign-up`, verifiedSite).href, target: "_blank", rel: "noreferrer" }, "Open App signup")] : []))
     : undefined;
-  return page(registration, login, ...(providers._tag === "Success" ? providers.success : [message(providers.failure.message, true)]));
+  const settings = manage ? yield* Effect.result(projectAuthSettingsCards(context, projectId)) : undefined;
+  return page(registration, ...email, login, ...(providers._tag === "Success" ? providers.success : [message(providers.failure.message, true)]),
+    ...(settings === undefined ? [] : settings._tag === "Success" ? settings.success : [message(settings.failure.message, true)]));
 });
 
 const authProviderCards = Effect.fn("ui.projectAuthProviders")(function*(context: ScreenContext, scoped: Config) {
@@ -212,7 +223,7 @@ const authProviderCards = Effect.fn("ui.projectAuthProviders")(function*(context
   const canConfigure = canAccess(context.config.access, {
     permissions: ["project.settings.manage", "project.runtime.manage"], scope: { type: "project", projectId: context.projectId },
   });
-  const providers = array(yield* request(`${api}/auth/providers`)).map(String);
+  const providers = array(object(yield* request(`${api}/auth/methods`)).methods).map(object).filter(method => method.signIn === true).map(method => label(method.name));
   const connections = array(object(yield* request(`${api}/auth/oauth/connections`)).providers).map(object);
   const configured = connections.filter(entry => entry.configured === true).length;
   const save = (name: string, body: Record<string, unknown>, text: string) => context.run(request(`${api}/auth/oauth/connections/${encodeURIComponent(name)}`, "PUT", body), () => { setFlash(text); context.refresh(); });
@@ -239,11 +250,11 @@ const authProviderCards = Effect.fn("ui.projectAuthProviders")(function*(context
   return [
     flashNotice("Saved"),
     columns(3,
-      statCard("Password", providers.includes("password") ? "active" : "unavailable", "Email or username with the built-in password ceremony."),
+      statCard("Password", providers.some(name => name === "usernamePassword" || name === "emailPassword") ? "active" : "unavailable", "Email or username with the built-in password ceremony."),
       statCard("Active providers", String(providers.length), providers.join(", ") || "No credential providers registered"),
       statCard("OAuth connections", String(configured), "Project-owned, write-only provider credentials.")),
     rowsCard("Sign-in providers",
-      dataRow("Email / password", "Built into Zelavis Auth; passwords are hashed and sessions are Project-scoped.", badge(providers.includes("password") ? "active" : "unavailable")),
+      dataRow("Email / password", "Built into Zelavis Auth; passwords are hashed and sessions are Project-scoped.", badge(providers.some(name => name === "usernamePassword" || name === "emailPassword") ? "active" : "unavailable")),
       ...connections.map(connection => dataRow(label(connection.title ?? connection.provider), connection.configured === true ? `${label(connection.clientId)} · ${label(connection.redirectUri)}${connection.hasClientSecret === true ? " · secret set" : ""}` : "Not configured",
         connection.configured === true && canConfigure
           ? button(connection.enabled === true ? "Disable" : "Enable", () => save(label(connection.provider, ""), { ...(connection.issuer ? { issuer: label(connection.issuer) } : {}), clientId: label(connection.clientId, ""), redirectUri: label(connection.redirectUri, ""), enabled: connection.enabled !== true }, `${label(connection.provider)} ${connection.enabled === true ? "disabled" : "enabled"}.`))
@@ -253,29 +264,34 @@ const authProviderCards = Effect.fn("ui.projectAuthProviders")(function*(context
 });
 
 const usersScreen = Effect.fn("ui.projectUsers")(function*(context: ScreenContext, scoped: Config) {
-  const accounts = array(yield* request(`${scoped.api.basePath}/auth/accounts`)).map(object);
+  const api = `${scoped.api.basePath}/auth`;
+  const accountPage = yield* readAuthAccounts(context, api);
+  const { accounts } = accountPage;
+  const invitations = yield* invitationsPanel(context, context.projectId);
   const editor = yield* accountAccessEditor(context, accounts, context.projectId);
-  const filter = context.url.searchParams.get("filter") ?? "All";
   const query = (context.url.searchParams.get("q") ?? "").trim().toLowerCase();
   const nameOf = (account: Record<string, unknown>) => label(account.displayName ?? account.username ?? account.email ?? account.id);
-  const visible = accounts.filter(account => (filter === "All" || (filter === "Verified") === (account.verified === true)) && (!query || [account.displayName, account.email, account.username, account.id].some(value => typeof value === "string" && value.toLowerCase().includes(query))));
+  const visible = accounts.filter(account => account.kind === "human" && (!query || [account.displayName, account.email, account.username, account.id].some(value => typeof value === "string" && value.toLowerCase().includes(query))));
   const search = node("input", { type: "search", name: "q", value: context.url.searchParams.get("q") ?? "", placeholder: "Search users", "aria-label": "Search users" });
   const form = node("form", { role: "search" }, search);
   form.addEventListener("submit", event => { event.preventDefault(); context.setSearch({ q: search.value.trim() || undefined }); });
   const rows = visible.map(account => {
     const name = nameOf(account);
     const secondary = account.email && account.email !== name ? label(account.email) : account.username && account.username !== name ? `@${label(account.username)}` : label(account.id);
-    const created = new Date(label(account.createdAt, ""));
+    const created = new Date(typeof account.createdAt === "number" ? account.createdAt : label(account.createdAt, ""));
     return dataRow(name, `${secondary}${Number.isNaN(created.getTime()) ? "" : ` · ${created.toLocaleDateString()}`}`,
-      node("div", { class: "actions" }, badge(account.verified === true ? "verified" : "unverified"),
+      node("div", { class: "actions" }, badge(label(array(account.roles)[0], "user")),
+        canManageAccounts(context) ? button("Sessions", () => context.setSearch({ accountSessions: label(account.id, "") })) : undefined,
         canEditAccountAccess(context, account, context.projectId)
           ? button("Edit access", () => context.setSearch({ accountAccess: label(account.id, "") }), { "aria-label": `Edit access for ${name}` })
           : undefined));
   });
   return page(
     editor ?? flashNotice("Account access"),
-    node("div", { class: "toolbar" }, node("div", {}, node("h1", {}, "Users"), node("p", { class: "muted" }, `${visible.length} account${visible.length === 1 ? "" : "s"}`)),
-      node("div", { class: "actions" }, ...["All", "Verified", "Unverified"].map(name => button(name, () => context.setSearch({ filter: name === "All" ? undefined : name }), { class: filter === name ? "primary" : "", "aria-pressed": String(filter === name) })))),
+    yield* accountSessionsCard(context, api, accounts),
     form,
-    rowsCard("", ...(rows.length ? rows : [dataRow("No users found", "")])));
+    rowsCard("", ...(rows.length ? rows : [dataRow("No users found", "")])),
+    accountPageControls(context, accountPage),
+    invitations,
+    createAccountCard(context, api));
 });

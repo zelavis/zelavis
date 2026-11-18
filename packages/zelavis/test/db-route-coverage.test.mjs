@@ -101,7 +101,9 @@ test("every documents operation is reachable through a route", async (t) => {
 
   // The surface a caller can reach in process, which is what a route must cover.
   const surface = Object.keys(api.forTenant("acme").documents);
-  const unreachable = surface.filter((method) => !touched.has(method));
+  // A transaction's body is code, and code does not cross a node boundary: queries and writes are data, a body is not.
+  const inProcessOnly = new Set(["transaction"]);
+  const unreachable = surface.filter((method) => !touched.has(method) && !inProcessOnly.has(method));
 
   assert.deepEqual(
     unreachable,
@@ -111,7 +113,7 @@ test("every documents operation is reachable through a route", async (t) => {
   );
   // Guard the guard: if the recorder stopped recording, the assertion above
   // would pass by touching nothing.
-  assert.ok(touched.size >= surface.length, "the recorder saw the routes reach the API");
+  assert.ok(touched.size >= surface.length - inProcessOnly.size, "the recorder saw the routes reach the API");
 });
 
 test("every key/value operation is reachable through a route", async (t) => {

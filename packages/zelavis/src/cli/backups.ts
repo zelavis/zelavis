@@ -4,7 +4,7 @@ import { bodyFlag, required, runTable, type CliTable } from "./command-table.js"
 const usage =
   "zelavis backups <schedules|create-schedule|delete-schedule|run|runs|verify|restore|drill|drill-from> [name] [run-id] [--data JSON] [--confirm NAME] [--schedule NAME] [--recovery-key KEY] [--target-dir PATH] [--target JSON] [--url URL] [--token TOKEN] [--json]";
 
-/** `zelavis backups` — the Platform's scheduled, encrypted, off-site backups of its System Store, through `client.runtime.backups`. */
+/** `zelavis backups` — the Platform's scheduled, encrypted, off-site backups of its System Store and private databases, through `client.runtime.backups`. */
 const table: CliTable = {
   name: "backups",
   usage,
@@ -69,7 +69,7 @@ const table: CliTable = {
         const key = input.flags.get("--recovery-key");
         return input.client.runtime.backups.restore({ schedule: required(input, 0, "A schedule name"), runId: required(input, 1, "A run id"), ...(key === undefined ? {} : { recoveryKey: key }) });
       },
-      text: (result: { runId: string; restoredTo?: string }) => `Restored run ${result.runId} to ${result.restoredTo}; apply it with the Platform stopped: zelavis system-store import ${result.restoredTo}/system-store/records.jsonl --confirm import`,
+      text: (result: { runId: string; restoredTo?: string }) => `Restored run ${result.runId} to ${result.restoredTo}; apply it with the Platform stopped: zelavis system-store import ${result.restoredTo}/system-store/records.jsonl --confirm import; zelavis identity-database restore ${result.restoredTo}/identity --confirm restore; zelavis services-database restore ${result.restoredTo}/database --confirm restore`,
     },
   },
 };

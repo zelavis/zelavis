@@ -30,30 +30,30 @@ test("Platform customers see only the Projects granted to their current session"
   });
   const anonymous = client();
   const password = "password for customer project access";
-  const { session: ownerSession } = await anonymous.auth.bootstrap({
-    bootstrapToken, provider: "password", account: { username: "owner" }, credential: { identifier: "owner", password },
+  const { tokens: ownerSession } = await anonymous.auth.bootstrap.claim({
+    bootstrapToken, username: "owner", password,
   });
-  const owner = client(ownerSession.token);
+  const owner = client(ownerSession.accessToken);
   for (const id of ["visible-app", "hidden-app"]) {
     await owner.projects.create({ id, name: id, recipeName: "@zelavis/app", start: false });
   }
   assert.deepEqual(ids(await owner.projects.list()).sort(), ["hidden-app", "visible-app"]);
   await assert.rejects(anonymous.projects.list(), { status: 401 });
 
-  await owner.auth.admin.setRegistrationSettings({ enabled: true, expectedRevision: 0 });
-  const login = { identifier: "customer@example.com", password };
-  const { account, session } = await anonymous.auth.signUpWithPassword(login);
-  const customer = client(session.token);
+  await owner.auth.registration.setSettings({ enabled: true, expectedRevision: 0 });
+  const login = { username: "customer", password };
+  const { userId, tokens: session } = await anonymous.auth.usernamePassword.signUp(login);
+  const customer = client(session.accessToken);
   assert.deepEqual(ids(await customer.projects.list()), []);
-  const change = { expectedRevision: 0, role: "customer", permissions: [], grants: [scoped("project.view", "visible-app")] };
-  await assert.rejects(owner.auth.admin.setAccountAccess(account.id, {
+  const change = { expectedRevision: 0, role: "customer", permissions: [], grants: [scoped("project.view", "visible-app")], roleAssignments: [] };
+  await assert.rejects(owner.auth.admin.setAccess(userId, {
     ...change, grants: [scoped("project.view", "missing-app")],
   }), { status: 400 });
-  await owner.auth.admin.setAccountAccess(account.id, change);
+  await owner.auth.admin.setAccess(userId, change);
   await assert.rejects(customer.projects.list(), { status: 401 });
 
-  const { session: signedIn } = await anonymous.auth.signInWithPassword(login);
-  const granted = client(signedIn.token);
+  const { tokens: signedIn } = await anonymous.auth.usernamePassword.signIn(login);
+  const granted = client(signedIn.accessToken);
   assert.deepEqual(ids(await granted.projects.list()), ["visible-app"]);
   assert.equal((await granted.projects.get("visible-app")).id, "visible-app");
   await assert.rejects(granted.projects.get("hidden-app"), { status: 403 });
@@ -61,8 +61,8 @@ test("Platform customers see only the Projects granted to their current session"
   await assert.rejects(granted.projects.create({ name: "unapproved-app", recipeName: "@zelavis/app" }), { status: 403 });
   await assert.rejects(granted.auth.admin.accounts(), { status: 403 });
 
-  const { token: listToken } = await owner.auth.admin.createServiceAccount({ name: "List all", permissions: ["projects.list"] });
-  const { token: viewToken } = await owner.auth.admin.createServiceAccount({ name: "View all", permissions: ["project.view"] });
+  const { token: listToken } = await owner.auth.serviceAccounts.create({ name: "List all", permissions: ["projects.list"] });
+  const { token: viewToken } = await owner.auth.serviceAccounts.create({ name: "View all", permissions: ["project.view"] });
   for (const token of [listToken, viewToken]) {
     assert.deepEqual(ids(await client(token).projects.list()).sort(), ["hidden-app", "visible-app"]);
   }
@@ -72,7 +72,7 @@ test("Platform customers see only the Projects granted to their current session"
   globalThis.fetch = through;
   console.log = (...parts) => output.push(parts.join(" "));
   try {
-    await runProjectsCommand(["list", "--url", "http://localhost/zelavis", "--token", signedIn.token, "--json"]);
+    await runProjectsCommand(["list", "--url", "http://localhost/zelavis", "--token", signedIn.accessToken, "--json"]);
   } finally {
     globalThis.fetch = savedFetch;
     console.log = savedLog;
@@ -81,10 +81,10 @@ test("Platform customers see only the Projects granted to their current session"
 
   await owner.projects.remove("visible-app");
   assert.deepEqual(ids(await granted.projects.list()), []);
-  await owner.auth.admin.setAccountAccess(account.id, { ...change, expectedRevision: 1, grants: [] });
+  await owner.auth.admin.setAccess(userId, { ...change, expectedRevision: 1, grants: [] });
   await assert.rejects(granted.projects.list(), { status: 401 });
-  const { session: afterRevocation } = await anonymous.auth.signInWithPassword(login);
-  assert.deepEqual(ids(await client(afterRevocation.token).projects.list()), []);
+  const { tokens: afterRevocation } = await anonymous.auth.usernamePassword.signIn(login);
+  assert.deepEqual(ids(await client(afterRevocation.accessToken).projects.list()), []);
 });
 
 test("scoped inventory reads exact, unique IDs and omits deletion records", async (t) => {

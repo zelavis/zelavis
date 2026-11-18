@@ -190,11 +190,13 @@ A Platform can create the machines that join it. `/runtime/cloud` (SDK `client.c
 
 ```
 GET    /zelavis/api/v1/runtime/cloud               the connection, without its token   (server.cloud.view)
-POST   /zelavis/api/v1/runtime/cloud/connection    connect a provider with an API token (server.cloud.connect)
+POST   /zelavis/api/v1/runtime/cloud/connection    connect a provider with a token/secret (server.cloud.connect)
 DELETE /zelavis/api/v1/runtime/cloud/connection    forget the token                     (server.cloud.connect)
 GET    /zelavis/api/v1/runtime/cloud/nodes         machines this Platform created      (server.cloud.view)
 POST   /zelavis/api/v1/runtime/cloud/nodes         create a machine that enrolls itself (server.cloud.manage)
 DELETE /zelavis/api/v1/runtime/cloud/nodes/:id     delete such a machine                (server.cloud.manage)
+GET    /zelavis/api/v1/runtime/cloud/policy        machine policy or null                (server.cloud.view)
+PUT    /zelavis/api/v1/runtime/cloud/policy        save the machine policy               (server.cloud.connect)
 GET    /zelavis/api/v1/runtime/cloud/scaling       automatic scale-out settings         (server.cloud.view)
 PUT    /zelavis/api/v1/runtime/cloud/scaling       allow or forbid it, with limits      (server.cloud.connect)
 ```
@@ -205,17 +207,52 @@ by use (it must be able to list) before it is kept, is sealed with a key derived
 Platform master secret, and is never returned, logged or put in a machine's first-boot data.
 Every use is audited with the acting principal, and an action that cannot be recorded does
 not run. Disconnecting is refused while machines this Platform created still exist, because
-releasing them needs the token. The provisioning engine is the bundled cloud service
-(`services/zelavis-cloud/bundle`, Alchemy and the Hetzner client inlined, nothing to install). The
-host loads it when `ZELAVIS_CLOUD_POLICY` names the operator's policy file (JSON: `location`, `image`,
-`maxNodes`, and `machineClasses` with `name`, `cpuCores`, `memoryBytes`, `diskBytes`; the Platform
-invents no defaults, because the right sizes are a property of the cloud) **and** the Platform serves an
-enrollment endpoint (`--enrollment-port`), since a machine it creates must be able to join. Without
-both, every route answers `503 cloud-unavailable`.
+releasing them needs the token. Cloud capacity is composed whenever the Platform serves an enrollment endpoint
+(`--enrollment-port`). Without one, the routes answer `503 cloud-unavailable`. Set the machine
+policy before connecting: without one, connecting or requesting capacity answers
+`409 policy-missing`. The policy contains `location`, `image`, `maxNodes` (1–100), optional
+`allowedLocations`, and 1–16 named `machineClasses` with `cpuCores`, `memoryBytes` and `diskBytes`.
+The Platform invents no cloud sizes. Fabric → Infrastructure → Providers edits this policy,
+stored in the Platform System Store. `GET /runtime/cloud/policy` returns `{ policy, updatedAt? }`;
+`PUT` accepts `{ policy, expectedUpdatedAt? }`. Send the read revision to reject a stale save
+with 409 and reload the policy before retrying. The equivalent SDK methods are
+`client.cloud.policy()` and `client.cloud.setPolicy(policy, { expectedUpdatedAt })`;
+the CLI is `zelavis cloud policy` and `zelavis cloud set-policy --data '<policy JSON>'
+--expected-updated-at <revision>` (each supports `--json`).
+
+The Hetzner engine is one adapter bundle inside `zelavis`
+(`dist/adapters/capacity/bundle.js`, Alchemy and the Hetzner client inlined, nothing to install).
+Only first Hetzner use imports it; an unconnected Platform and webhook connections do not load it.
 A requested machine is created with first-boot data that installs the worker role and joins
 with a single-use token, and it is `ready` only after it has enrolled. This path is built
 and tested against a fake cloud, through the bundle and the real enrollment authority; it has not
 yet been run against a real one.
+
+### Your own automation (webhook)
+
+For a datacenter without an API, connect `provider: "webhook"` with `endpoint` (HTTPS, no
+credentials, query or fragment) and a 32–512-character printable signing secret in `token`.
+The endpoint is visible in the connection summary; the secret is sealed and used only for
+signatures. Use `client.cloud.connect({ provider: "webhook", endpoint, token })`, the dashboard,
+or `zelavis cloud connect --provider webhook --endpoint https://automation.example.com/capacity`.
+The CLI reads the provider signing secret from `ZELAVIS_CLOUD_TOKEN`; its `--token` option is
+the separate Zelavis API credential.
+
+Zelavis POSTs JSON with `version: 1`, `platformId` and `action`. For `provision` it also sends
+`requestId`, deterministic `nodeId`, `region`, `machineClass`, `location`, `image` and `firstBoot`.
+Your automation creates the machine and runs that first-boot script as root. `get` and `release`
+carry `nodeId`; `list` carries only the common fields. Provision/get answer
+`{ node: { id, state, region? } | null }`, list answers `{ nodes: [...] }`, and release answers `{}`.
+State is `provisioning`, `ready`, `releasing` or `failed`; Zelavis reports ready only after the
+machine also enrolls. Keep provisioning idempotent by request/node id, including after lost responses.
+
+Verify `zelavis-signature: t=<unix seconds>,v1=<lowercase hex>` as HMAC-SHA256 of
+`<t>.<raw JSON body>` using the signing secret; enforce a timestamp window in your receiver.
+Requests have a 30-second deadline, at most two calls in flight per connection, no redirects and
+a 256-KiB response limit. HTTP failures and invalid responses fail the operation without revealing
+the body or secret. Zelavis records ids before asking for machines, filters inventory to those ids,
+refuses deletion of any other id, and repairs an interrupted provision's record after a null get.
+
 
 ### Automatic scale-out
 

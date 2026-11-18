@@ -27,8 +27,7 @@ const READY_STATUS = {
   required: true,
   available: true,
   tokenRequired: true,
-  providers: ["email-password"],
-  enrollmentProviders: ["email-password"],
+  methods: ["usernamePassword"],
 };
 
 test("bootstrap status reads the Platform's own bootstrap endpoint", async () => {
@@ -40,13 +39,13 @@ test("bootstrap status reads the Platform's own bootstrap endpoint", async () =>
 
   assert.equal(calls[0].url, "http://platform.test/zelavis/api/v1/auth/bootstrap");
   assert.equal(status.required, true);
-  assert.deepEqual(status.enrollmentProviders, ["email-password"]);
+  assert.deepEqual(status.methods, ["usernamePassword"]);
 });
 
 test("the owner request sends the credential the Platform expects", async () => {
   const { calls, fetcher } = recordingFetch(() =>
     jsonResponse(
-      { account: { id: "account_1", email: "owner@example.com" }, session: { token: "zvs_secret" } },
+      { status: "complete", userId: "account_1", account: { id: "account_1", username: "owner" }, tokens: { accessToken: "a", refreshToken: "r" } },
       201,
     ),
   );
@@ -54,7 +53,7 @@ test("the owner request sends the credential the Platform expects", async () => 
   await bootstrapPlatformOwner(
     {
       bootstrapToken: "token-with-at-least-32-characters-here",
-      provider: "email-password",
+      username: "owner",
       email: "owner@example.com",
       displayName: "Owner",
       password: "correct horse battery staple",
@@ -64,23 +63,25 @@ test("the owner request sends the credential the Platform expects", async () => 
 
   const body = JSON.parse(calls[0].init.body);
   assert.equal(calls[0].init.method, "POST");
-  assert.equal(body.bootstrapToken, "token-with-at-least-32-characters-here");
-  assert.equal(body.account.email, "owner@example.com");
-  assert.equal(body.account.displayName, "Owner");
-  // The enrolled identifier has to match the account identity, or the Platform
-  // rejects the pair rather than silently enrolling a credential nobody can use.
-  assert.equal(body.credential.identifier, "owner@example.com");
-  assert.equal(body.credential.password, "correct horse battery staple");
+  assert.deepEqual(body, {
+    bootstrapToken: "token-with-at-least-32-characters-here",
+    username: "owner",
+    password: "correct horse battery staple",
+    displayName: "Owner",
+    email: "owner@example.com",
+  });
+  // No Origin: the Platform answers with tokens rather than browser cookies, and the command never prints them.
+  assert.equal(new Headers(calls[0].init.headers).get("origin"), null);
 });
 
 test("an identity is required before anything is sent", async () => {
   const { calls, fetcher } = recordingFetch(() => jsonResponse({}, 201));
   await assert.rejects(
     bootstrapPlatformOwner(
-      { bootstrapToken: "t", provider: "email-password", password: "secret password here" },
+      { bootstrapToken: "t", password: "secret password here" },
       { url: "http://platform.test/zelavis", fetch: fetcher },
     ),
-    /requires --email or --username/,
+    /requires --username/,
   );
   assert.equal(calls.length, 0);
 });
@@ -93,8 +94,7 @@ test("a Platform error is surfaced instead of being reported as success", async 
     bootstrapPlatformOwner(
       {
         bootstrapToken: "wrong",
-        provider: "email-password",
-        email: "owner@example.com",
+        username: "owner",
         password: "correct horse battery staple",
       },
       { url: "http://platform.test/zelavis", fetch: fetcher },
@@ -109,7 +109,7 @@ test("--password is refused so the owner secret stays out of argv", async () => 
   console.error = (message) => errors.push(String(message));
   const exitCode = process.exitCode;
   try {
-    await runCli(["bootstrap", "--email", "owner@example.com", "--password", "hunter2hunter2hunter2"]);
+    await runCli(["bootstrap", "--username", "owner", "--password", "hunter2hunter2hunter2"]);
   } finally {
     console.error = consoleError;
     process.exitCode = exitCode;
@@ -134,14 +134,10 @@ test("setup is the interactive wizard and points automation at bootstrap", async
   assert.match(errors.join("\n"), /zelavis bootstrap/u);
 });
 
-test("bootstrap status explains a Platform with no credential provider", () => {
-  const summary = formatBootstrapStatus({
-    ...READY_STATUS,
-    providers: [],
-    enrollmentProviders: [],
-  });
+test("bootstrap status names how the owner signs in", () => {
+  const summary = formatBootstrapStatus(READY_STATUS);
   assert.match(summary, /no owner yet/);
-  assert.match(summary, /none installed/);
+  assert.match(summary, /Owner sign-in: usernamePassword/);
 });
 
 test("a completed Platform reports that bootstrap is done", () => {

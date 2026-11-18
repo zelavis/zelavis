@@ -1,10 +1,10 @@
+import { withAuthLock } from "zelavis/sdk/browser";
 import { Data, Effect, Schema } from "effect";
 import { API_PREFIX } from "./mount.ts";
 
-export class ApiError extends Data.TaggedError("ApiError")<{ message: string; status?: number; code?: string; retryAfter?: string }> {}
+export class ApiError extends Data.TaggedError("ApiError")<{ message: string; status?: number; code?: string; retryAfter?: string; permissions?: readonly string[] }> {}
 const ApiConfig = Schema.Struct({ api: Schema.Struct({ basePath: Schema.String }), rootPath: Schema.String, access: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), services: Schema.optional(Schema.Array(Schema.Unknown)), serviceRegistry: Schema.optional(Schema.Array(Schema.Unknown)) });
-const Bootstrap = Schema.Struct({ required: Schema.Boolean, providers: Schema.Array(Schema.String), enrollmentProviders: Schema.Array(Schema.String) });
-const RegistrationStatus = Schema.Struct({ enabled: Schema.Boolean, providers: Schema.Array(Schema.String) });
+const Bootstrap = Schema.Struct({ required: Schema.Boolean, available: Schema.Boolean, tokenRequired: Schema.Boolean, methods: Schema.Array(Schema.String) });
 const Project = Schema.Struct({ id: Schema.String, name: Schema.String, recipe: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), recipeStatus: Schema.optional(Schema.Unknown), dataLayout: Schema.optional(Schema.Unknown), engineVersion: Schema.optional(Schema.String), preview: Schema.optional(Schema.Unknown), kind: Schema.optional(Schema.String), runtimeKind: Schema.optional(Schema.String), runtime: Schema.Struct({ status: Schema.String, error: Schema.optional(Schema.String) }), deletion: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.String) });
 export type Project = typeof Project.Type & { status: string };
 export type Config = typeof ApiConfig.Type;
@@ -35,7 +35,7 @@ const responseText = Effect.fn("new-ui.responseText")(function*(response: Respon
   );
 });
 
-export const request = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX) {
+const requestOnce = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX) {
   if (!apiPrefix.startsWith("/") || !apiPrefix.endsWith("/") || apiPrefix.startsWith("//") || !path.startsWith(apiPrefix) || /\.\.|%|\\/u.test(apiPrefix) || path.includes("..")) return yield* Effect.fail(new ApiError({ message: "Refused a request outside the Zelavis API." }));
   const response = yield* Effect.tryPromise({
     try: signal => fetch(path, { signal, method, credentials: "same-origin", headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
@@ -50,10 +50,29 @@ export const request = Effect.fn("new-ui.request")(function*(path: string, metho
       status: response.status,
       code: typeof code === "string" ? code : undefined,
       retryAfter: response.headers.get("retry-after") ?? undefined,
+      permissions: array(object(data).permissions).filter((p): p is string => typeof p === "string"),
     }));
   }
   return data;
 }, Effect.timeout("30 seconds"), Effect.mapError(error => error instanceof ApiError ? error : new ApiError({ message: "Zelavis did not respond within 30 seconds." })));
+
+export const request = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX) {
+  const call = requestOnce(path, method, body, apiPrefix);
+  return yield* call.pipe(Effect.catch(error => Effect.gen(function* () {
+    if (error.status !== 401 || error.code !== "access_token_expired") return yield* Effect.fail(error);
+    // A proxy request carries the dashboard's cookie, so refresh belongs to the parent API.
+    const auth = `${apiPrefix}${apiPrefix === API_PREFIX ? "v1/" : ""}auth/session`;
+    if (path === `${auth}/refresh`) return yield* Effect.fail(error);
+    const refreshed = yield* withAuthLock(`zelavis.auth.cookie:${auth}`, Effect.gen(function* () {
+      const session = yield* Effect.result(requestOnce(auth, "GET", undefined, apiPrefix));
+      if (session._tag === "Success") return true;
+      if (session.failure.code === "not_signed_in") return false;
+      if (session.failure.code !== "access_token_expired") return yield* Effect.fail(session.failure);
+      return object(yield* requestOnce(`${auth}/refresh`, "POST", {}, apiPrefix)).kind === "rotated";
+    })).pipe(Effect.mapError(cause => cause instanceof ApiError ? cause : new ApiError({ message: "Could not refresh the session." })));
+    return refreshed ? yield* call : yield* Effect.fail(new ApiError({ status: 401, code: "not_signed_in", message: "Sign in to continue." }));
+  })));
+});
 
 export function object(value: unknown): Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 export function array(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
@@ -61,9 +80,6 @@ export function label(value: unknown, fallback = "—"): string { return typeof 
 export function decode<S extends Schema.Top>(schema: S, value: unknown) { return Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(() => new ApiError({ message: "The runtime returned an unexpected response shape." }))); }
 export const loadConfig = request(`${API_PREFIX}v1/runtime/config`).pipe(Effect.flatMap(value => decode(ApiConfig, value)));
 export function bootstrap(config: Config) { return request(`${config.api.basePath}/auth/bootstrap`).pipe(Effect.flatMap(value => decode(Bootstrap, value))); }
-export function registrationStatus(config: Config) {
-  return request(`${config.api.basePath}/auth/registration`).pipe(Effect.flatMap(value => decode(RegistrationStatus, value)));
-}
 export function projects(config: Config) { return request(`${config.api.basePath}/runtime/projects`).pipe(Effect.flatMap(value => decode(Projects, value)), Effect.map(value => value.projects.map(project => ({ ...project, status: project.runtime.status, error: project.runtime.error })))); }
 export const projectConfig = Effect.fn("new-ui.projectConfig")(function*(control: Config, projectId: string) {
   const proxy = `${control.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/proxy`;

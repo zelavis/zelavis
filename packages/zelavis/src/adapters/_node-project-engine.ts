@@ -11,9 +11,12 @@ import { resolveBundledIdentityFrontend } from "../cli/bundled-frontend.js";
 import { loadRecipeArtifact } from "./_recipe-artifact.js";
 import { stageRecipeBackup } from "./_recipe-project-runtime.js";
 import { InvalidBackup } from "../db/errors.js";
-import { createGatewayNonceTracker, verifyGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../platform/gateway-authority.js";
+import { setRequestClientAddress } from "../core/runtime/client-address.js";
+import { createGatewayNonceTracker, verifyGatewayAuthority, verifyGatewayClientAddress, ZELAVIS_GATEWAY_CLIENT_ADDRESS_HEADER, ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../platform/gateway-authority.js";
 import { hasCanonicalSitePath, isPrivateProjectAuthPath, PROJECT_AUTH_ROOT, publicRequestFromPrivateAuth } from "../platform/project-public-auth.js";
-import { bindProjectAccountAccessProof } from "../app/identity/domain/account-access.js";
+import { bindProjectAccountAccessProof } from "../auth/access/access.js";
+import { projectAuthSealingSecret } from "../auth/subsystem.js";
+import { PROJECT_AUTH_SEALING_SECRET_ENV } from "./_project-lease-environment.js";
 import { httpLeaseStore } from "../db/writer-lease-http.js";
 import type { NodeDatabaseLease } from "../db/node-host.js";
 import { remoteDatabaseLeader } from "../db/leader.js";
@@ -114,6 +117,8 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
       return directory;
     } }));
   return {
+    // A Project runtime learns the caller's address only from the signed Gateway envelope, never from a header.
+    trustClientAddressHeader: false,
     open: Effect.fn("ProjectEngine.open")(function* () {
       const gatewaySecret = process.env.ZELAVIS_PROJECT_GATEWAY_SECRET?.trim();
       const gatewayNonces = createGatewayNonceTracker();
@@ -126,6 +131,10 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
       const standingBy = new AbortController();
       const found = leaseFromEnvironment(projectId);
       const lease = found?.role === "standby" ? { ...found, signal: standingBy.signal } : found;
+      const authSealingSecret = lease === undefined ? undefined : process.env[PROJECT_AUTH_SEALING_SECRET_ENV];
+      if (lease !== undefined && (authSealingSecret === undefined || !/^[A-Za-z0-9_-]{43}$/.test(authSealingSecret))) {
+        throw new Error(`A lease-guarded Project start needs ${PROJECT_AUTH_SEALING_SECRET_ENV} from the Platform.`);
+      }
       // The integration host serves the app's own APIs and never places shards.
       const appShards = configuration.integrationOnly === true ? undefined : appShardsFromEnvironment(projectId);
       const adapter = nodeAdapter({ role: "project", dataDirectory, projects: false,
@@ -139,13 +148,15 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
         close: () => present(integration(() => adapter.close?.())),
         resolve: options => present(Effect.gen(function* () {
           const resolved = yield* integration(() => adapter.resolve?.(options));
-          return { ...(resolved ?? {}), metadata: { ...resolved?.metadata, projectId },
+          return { ...(resolved ?? {}), ...(authSealingSecret === undefined ? {} : { [projectAuthSealingSecret]: authSealingSecret }), metadata: { ...resolved?.metadata, projectId },
             resolvePrincipal: ({ request }) => present(Effect.gen(function* () {
               if (!gatewaySecret) return undefined;
               const token = request.headers.get(ZELAVIS_GATEWAY_AUTHORITY_HEADER);
               if (!token) return undefined;
               const claims = yield* integration(() => verifyGatewayAuthority(gatewaySecret, token, { audienceProjectId: projectId, consumeNonce: gatewayNonces }));
               if (!claims) return undefined;
+              const address = yield* integration(() => verifyGatewayClientAddress(gatewaySecret, token, request.headers.get(ZELAVIS_GATEWAY_CLIENT_ADDRESS_HEADER)));
+              if (address !== undefined) setRequestClientAddress(request, address);
               const principal = { id: claims.subject, type: claims.subjectType as "user" | "system" | "service", permissions: claims.permissions,
                 grants: claims.permissions.map(permission => ({ permission, scope: { type: "project" as const, projectId } })),
                 metadata: { projectId, tenantId: claims.tenantId, placementGeneration: String(claims.generation), runtimeNodeId: claims.runtimeNodeId,
@@ -166,7 +177,7 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
         },
       });
       if (lease?.role === "standby") {
-        // Nothing but the database opens before this standby holds the lease: Identity, Workloads and entities write to
+        // Nothing but the database opens before this standby holds the lease: Auth, Workloads and entities write to
         // the database at start, which would make a copy diverge. So the composition runs in the background (it waits
         // inside the database's standby open, following the writer), the engine is ready at once, and it answers 503
         // until the composition has finished.

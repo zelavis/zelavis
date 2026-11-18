@@ -188,7 +188,7 @@ test("account access checks the parent Project scope before invoking a child", a
   p.as({ id: "delegate", type: "user", grants: [
     { permission: "project.users.manage", scope: { type: "project", projectId: "one" } },
   ] });
-  const input = { expectedRevision: 0, role: "user", permissions: [], grants: [] };
+  const input = { expectedRevision: 0, role: "user", permissions: [], grants: [], roleAssignments: [] };
   await assert.rejects(p.send("PUT", "/runtime/projects/two/auth/accounts/target/access", input), { status: 403 });
   await assert.rejects(p.send("PUT", "/runtime/projects/one/auth/accounts/target/access", input), { status: 503 });
 });
@@ -210,29 +210,27 @@ test("the exact Project account access route delegates only held child permissio
     baseUrl: origin, fetch: through, ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
   });
   const password = "password for project account access";
-  const bootstrapped = await client().auth.bootstrap({
-    bootstrapToken, provider: "password", account: { username: "owner" }, credential: { identifier: "owner", password },
-  });
-  const owner = client(bootstrapped.session.token);
+  const bootstrapped = await client().auth.bootstrap.claim({ bootstrapToken, username: "owner", password });
+  const owner = client(bootstrapped.tokens.accessToken);
   const project = await owner.projects.create({ id: "access-app", name: "App", recipeName: "@zelavis/app" });
   await owner.projects.create({ id: "second-app", name: "Second", recipeName: "@zelavis/app", start: false });
   await owner.projects.setRegistrationSettings(project.id, { enabled: true, expectedRevision: 0 });
   const app = createZelavisClient({ baseUrl: project.runtime.url });
-  const { account, session } = await app.auth.signUpWithPassword({ identifier: "person@example.com", password });
+  const { userId, tokens } = await app.auth.usernamePassword.signUp({ username: "person", password });
   const asAppUser = (token) => createZelavisClient({
     baseUrl: project.runtime.url, headers: { authorization: `Bearer ${token}` },
   });
   const grant = (permission, projectId = project.id) => ({ permission, scope: { type: "project", projectId } });
-  const { token } = await owner.auth.admin.createServiceAccount({
+  const { token } = await owner.auth.serviceAccounts.create({
     name: "App delegate", grants: [grant("project.users.manage"), grant("example.access")],
   });
   const delegate = client(token);
-  const input = { expectedRevision: 0, role: "user", permissions: [], grants: [grant("example.access")] };
-  await assert.rejects(delegate.projects.setAccountAccess("second-app", account.id, input), { status: 403 });
-  await assert.rejects(delegate.projects.setAccountAccess(project.id, account.id, { ...input, grants: [grant("example.access", "second-app")] }), { status: 403 });
-  await assert.rejects(delegate.projects.setAccountAccess(project.id, account.id, { ...input, grants: [grant("database.write")] }), { status: 403 });
-  await assert.rejects(delegate.projects.setAccountAccess(project.id, account.id, { ...input, permissions: ["example.access"] }), { status: 403 });
-  assert.equal((await asAppUser(session.token).auth.getSession()).principal.id, account.id);
+  const input = { expectedRevision: 0, role: "user", permissions: [], grants: [grant("example.access")], roleAssignments: [] };
+  await assert.rejects(delegate.projects.setAccountAccess("second-app", userId, input), { status: 403 });
+  await assert.rejects(delegate.projects.setAccountAccess(project.id, userId, { ...input, grants: [grant("example.access", "second-app")] }), { status: 403 });
+  await assert.rejects(delegate.projects.setAccountAccess(project.id, userId, { ...input, grants: [grant("database.write")] }), { status: 403 });
+  await assert.rejects(delegate.projects.setAccountAccess(project.id, userId, { ...input, permissions: ["example.access"] }), { status: 403 });
+  assert.equal((await asAppUser(tokens.accessToken).auth.session.current()).account.id, userId);
 
   const cli = async (target = project.id) => {
     const originalFetch = globalThis.fetch;
@@ -242,7 +240,7 @@ test("the exact Project account access route delegates only held child permissio
       ? through(request, init) : originalFetch(request, init);
     console.log = (...parts) => lines.push(parts.join(" "));
     try {
-      await runProjectsCommand(["set-account-access", target, account.id, "--data", JSON.stringify(input),
+      await runProjectsCommand(["set-account-access", target, userId, "--data", JSON.stringify(input),
         "--url", `${origin}/zelavis`, "--token", token, "--json"]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -250,23 +248,23 @@ test("the exact Project account access route delegates only held child permissio
     }
     return JSON.parse(lines.join("\n"));
   };
-  assert.deepEqual(await cli(), { accountId: account.id, accessRevision: 1, role: "user", permissions: [], grants: input.grants });
+  assert.deepEqual(await cli(), { accountId: userId, accessRevision: 1, role: "user", permissions: [], grants: input.grants, roleAssignments: [] });
   await assert.rejects(cli(), { status: 409 });
   await assert.rejects(cli("second-app"), { status: 403 });
-  await assert.rejects(asAppUser(session.token).auth.getSession(), { status: 401 });
-  await assert.rejects(delegate.projects.setAccountAccess(project.id, account.id, input), { status: 409 });
-  const ordinaryProxy = await owner.request(`/runtime/projects/${project.id}/proxy/zelavis/api/v1/auth/accounts/${account.id}/access`, {
+  await assert.rejects(asAppUser(tokens.accessToken).auth.session.current(), { status: 401 });
+  await assert.rejects(delegate.projects.setAccountAccess(project.id, userId, input), { status: 409 });
+  const ordinaryProxy = await owner.request(`/runtime/projects/${project.id}/proxy/zelavis/api/v1/auth/accounts/${userId}/access`, {
     method: "PUT", body: { ...input, expectedRevision: 1, grants: [] },
   });
   assert.equal(ordinaryProxy.status, 403);
 
   const large = Array.from({ length: 100 }, (_, index) => grant(`example.permission-${String(index).padStart(3, "0")}`));
   const wide = { ...input, expectedRevision: 1, grants: large };
-  assert.deepEqual((await owner.projects.setAccountAccess(project.id, account.id, wide)).grants, large);
-  const after = await app.auth.signInWithPassword({ identifier: "person@example.com", password });
-  assert.deepEqual((await asAppUser(after.session.token).auth.getSession()).principal.grants, large);
+  assert.deepEqual((await owner.projects.setAccountAccess(project.id, userId, wide)).grants, large);
+  const after = await app.auth.usernamePassword.signIn({ username: "person", password });
+  assert.deepEqual((await asAppUser(after.tokens.accessToken).auth.session.current()).account.grants, large);
   const revoke = { ...input, expectedRevision: 2, grants: [] };
-  await assert.rejects(delegate.projects.setAccountAccess(project.id, account.id, revoke), { status: 403 });
-  assert.equal((await owner.projects.setAccountAccess(project.id, account.id, revoke)).accessRevision, 3);
-  await assert.rejects(asAppUser(after.session.token).auth.getSession(), { status: 401 });
+  await assert.rejects(delegate.projects.setAccountAccess(project.id, userId, revoke), { status: 403 });
+  assert.equal((await owner.projects.setAccountAccess(project.id, userId, revoke)).accessRevision, 3);
+  await assert.rejects(asAppUser(after.tokens.accessToken).auth.session.current(), { status: 401 });
 });

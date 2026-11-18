@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
+const runtimes = [];
+afterEach(async () => { for (const runtime of runtimes.splice(0)) await runtime.close(); });
 import { loadEcommercePlugin } from "./load-plugin.mjs";
 import { stripeService } from "../plugins/stripe/dist/index.js";
 import { paypalService } from "../plugins/paypal/dist/index.js";
@@ -8,7 +10,7 @@ import { createMemorySystemStore, zelavis } from "../../../packages/zelavis/dist
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 
 async function platform({ withPaypal = false } = {}) {
-  return zelavis({
+  const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
     serviceRegistry: {
@@ -31,6 +33,8 @@ async function platform({ withPaypal = false } = {}) {
       ],
     },
   });
+  runtimes.push(runtime);
+  return runtime;
 }
 
 async function ecommerceMenu(runtime) {
@@ -73,11 +77,13 @@ test("the payments page reads the gateways this plugin owns", async () => {
   const payments = menu.items.find((item) => item.title === "Payments");
   const html = String((await runtime.plain({ url: payments.page.src })).body);
 
-  assert.match(html, /\/commerce\/payments\/providers/u);
+  assert.match(html, /payments\/providers/u);
   // Scoped to this plugin. A catalogue asking for the wrong owner lists
   // nothing while looking like it worked.
-  assert.match(html, /const OWNER = "@zelavis\/ecommerce"/u);
-  assert.match(html, /runtime\/extensions\?owner=/u);
+  assert.match(html, /createPageApi\("ecommerce"\)/u);
+  assert.match(html, /fulfillment\/failures/u);
+  assert.match(html, /Copy webhook address/u);
+  assert.match(html, /checkoutSupported/u);
 });
 
 test("the catalogue separates installed gateways from available ones", async () => {
@@ -118,6 +124,7 @@ test("a service contributing only a menu is mounted", async () => {
       ],
     },
   });
+  runtimes.push(runtime);
 
   const config = await runtime.plain({ url: "/zelavis/api/v1/runtime/config" });
   assert.ok(

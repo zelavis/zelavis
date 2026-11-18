@@ -4,7 +4,10 @@ import { message, node } from "./dom.ts";
 import { card } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 
-const RegistrationSettings = Schema.Struct({ enabled: Schema.Boolean, revision: Schema.Natural });
+const RegistrationSettings = Schema.Struct({
+  enabled: Schema.Boolean,
+  revision: Schema.Natural,
+});
 
 function unavailable(error: ApiError) {
   return message(error.status === 404
@@ -30,7 +33,10 @@ export const registrationSettingsCard = Effect.fn("ui.registrationSettingsCard")
     status.textContent = notice;
   };
   show(settings, settings.enabled ? "Registration is open." : "Registration is closed.");
-  enabled.addEventListener("change", () => { save.disabled = enabled.checked === settings.enabled; });
+  const changed = () => {
+    save.disabled = enabled.checked === settings.enabled;
+  };
+  enabled.addEventListener("change", changed);
   const form = node("form", { class: "form" },
     node("label", { class: "checkbox-field" }, enabled, "Allow public registration"), save, status);
   form.addEventListener("submit", event => {
@@ -38,12 +44,16 @@ export const registrationSettingsCard = Effect.fn("ui.registrationSettingsCard")
     if (save.disabled) return;
     enabled.disabled = true;
     save.disabled = true;
-    const input = { enabled: enabled.checked, expectedRevision: settings.revision };
+    const input = {
+      enabled: enabled.checked,
+      expectedRevision: settings.revision,
+    };
     const update = Effect.gen(function* () {
       const result = yield* Effect.result(request(path, "PUT", input).pipe(
         Effect.flatMap(value => decode(RegistrationSettings, value))));
       if (result._tag === "Success") {
-        return { settings: result.success, notice: result.success.enabled ? "Registration opened." : "Registration closed." };
+        const notice = result.success.enabled ? "Registration opened." : "Registration closed.";
+        return { settings: result.success, notice };
       }
       const current = yield* Effect.result(read);
       if (current._tag === "Failure") return { error: current.failure };

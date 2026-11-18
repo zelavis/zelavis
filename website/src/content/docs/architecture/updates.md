@@ -180,6 +180,41 @@ Native Zelavis Apps update the complete engine through the same handover used
 by the Platform. Their shared composition has scoped Project authority; the
 outer Platform's Fabric remains the privileged hosting control plane.
 
+## Upgrading from Identity to Zelavis Auth
+
+Releases up to `2.0.0-alpha.45` kept accounts in Identity, the earlier account engine.
+When a release switches from Identity to [Zelavis Auth](/architecture/auth/), the Platform imports its accounts
+during **Update now**. Each existing App imports its own accounts when you explicitly
+upgrade it to that engine. The importer preserves account IDs, passwords, roles, scoped
+grants, registration settings, usable service account tokens, and OAuth links whose
+provider identity can be verified from the stored record. It seals imported OAuth client
+secrets in the new Auth store.
+
+People sign in again after the upgrade. Previous human sessions and outstanding sign-in,
+verification, and recovery links expire. An unverified email used as a password login
+continues to work for sign-in. Sign in and verify that address before using it for recovery.
+
+An OpenID Connect connection name may have served more than one issuer. A link carries
+forward only for the issuer recorded when it was established. The import records an account
+security event for each user who needs to link their provider again. Users with another
+sign-in method can use it to sign in and reconnect their provider. If an OAuth-only account has
+no usable sign-in path, resolve that account's access in Identity before upgrading.
+
+The importer checkpoints each batch and leaves Identity's records intact. An interrupted
+candidate can resume against the same source data. Account or credential changes made
+in the new engine are written to its Auth store. Selecting an earlier engine
+restores access using the credentials and grants held by the earlier engine,
+including passwords or grants changed after the cutover. Treat a rollback as
+an account-data recovery operation. Keep the candidate Auth backup if it accepted
+changes. If the prior engine writes to Identity, the next cutover rebuilds Auth
+from that source and replaces changes from the previous activation. The new
+engine records the rebuild in its security events.
+
+The Platform supplies the same Project-specific Auth sealing key to the writer
+and standby of a lease-guarded App. The Project host receives this key at
+launch. A guarded Project host that was launched before the cutover needs to
+restart before it can select the Auth engine.
+
 ## Data layout changes
 
 An engine opens exactly the data layout it writes and refuses any other. Each engine release declares its layout in its

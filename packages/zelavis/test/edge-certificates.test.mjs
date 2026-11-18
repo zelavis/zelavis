@@ -563,3 +563,92 @@ test("performEdgeOnboarding: managed TLS provisions certificate via certificateC
   assert.equal(storedHostname?.tlsMode, "managed");
   assert.equal(storedHostname?.certificateRef, "certificate:console.example.com");
 });
+
+// ---------------------------------------------------------------------------
+// 6. DNS-01 and wildcard certificates through an adopted zone
+// ---------------------------------------------------------------------------
+
+test("a wildcard certificate is issued through dns-01: the TXT is served by every authority, then removed", async (t) => {
+  const { startDnsAuthority } = await import("./_dns-authority.mjs");
+  const { startAcmeFake } = await import("./_acme-fake.mjs");
+  const { fakeDnsProvider, FAKE_TOKEN, pluginEntry } = await import("./_dns-provider-fake.mjs");
+  const { collectDnsProviders } = await import("../dist/edge/dns-provider.js");
+  const { createEdgeDnsController } = await import("../dist/edge/dns-connections.js");
+  const { createAuthoritativeDnsTxtResolver } = await import("../dist/adapters/_node-authoritative-dns.js");
+
+  const authority = await startDnsAuthority(t, { zones: new Map([["example.com", { ns: ["ns1.example.com", "ns2.example.com"] }]]) });
+  const resolver = createAuthoritativeDnsTxtResolver({ recursiveServers: [authority.address], authoritativePort: authority.port });
+  const fake = fakeDnsProvider({ zones: [{ id: "zone-example", apex: "example.com" }], authority });
+  const store = createMemorySystemStore();
+  const masterSecret = "zelavis-test-master-secret-123456";
+  const dns = createEdgeDnsController({ store, masterSecret, providers: collectDnsProviders([pluginEntry(fake.plugin())]).providers });
+  await dns.connect("fakedns", { credentials: { token: FAKE_TOKEN } });
+  await dns.adoptZone("apps.example.com", { provider: "fakedns", zoneId: "zone-example", hostedSubdomains: true, targets: { a: ["203.0.113.7"], aaaa: [] } });
+
+  const served = [];
+  const acme = await startAcmeFake(t, {
+    verify: async ({ type, identifier, dnsValue }) => {
+      if (type !== "dns-01") return false;
+      const answers = await resolver.txtAtEveryAuthority(`_acme-challenge.${identifier}`);
+      served.push(answers.length);
+      return answers.every(server => server.some(strings => strings.join("") === dnsValue));
+    },
+  });
+  const controller = createZelavisCertificateController({ store, masterSecret, defaultDirectoryUrl: acme.directoryUrl });
+  await assert.rejects(controller.orderCertificate({ hostname: "*.apps.example.com", signal: AbortSignal.timeout(10_000) }), /DNS provider connection/);
+  assert.deepEqual(await controller.attachDns({ dns: dns.access, authoritativeTxt: resolver, propagationIntervalMs: 50 }), { removed: 0, failed: 0 });
+  await assert.rejects(controller.orderCertificate({ hostname: "*.apps.example.com", challenge: "http-01" }), /only be issued through dns-01/);
+  await assert.rejects(controller.orderCertificate({ hostname: "*.*.example.com" }), /exact public hostname/);
+
+  const certificate = await controller.orderCertificate({ hostname: "*.apps.example.com", sanHostnames: ["apps.example.com"], signal: AbortSignal.timeout(10_000) });
+  assert.equal(certificate.ref, "certificate:*.apps.example.com");
+  assert.deepEqual(certificate.sanHostnames, ["apps.example.com"]);
+  assert.deepEqual(acme.notified.map(({ type, identifier, wildcard }) => [type, identifier, wildcard]),
+    [["dns-01", "apps.example.com", true], ["dns-01", "apps.example.com", false]]);
+  // Both nameservers resolve to the fixture's one address, so each check reads one authority.
+  assert.deepEqual(served, [1, 1], "every authority served the value before the CA was told");
+  assert.equal(fake.records.size, 0, "the challenge records are removed");
+  assert.deepEqual((await store.list("edge-acme")).filter(row => row.key.startsWith("dns01:")), []);
+
+  // Renewal reorders the wildcard through dns-01 on its own.
+  const renewal = await controller.checkRenewals({ renewIfWithinDays: 100_000, directoryUrl: acme.directoryUrl });
+  assert.deepEqual(renewal.renewed, ["certificate:*.apps.example.com"]);
+  assert.equal(fake.records.size, 0);
+});
+
+test("a challenge record left by an interrupted dns-01 order is removed when DNS-01 is attached again", async (t) => {
+  const { fakeDnsProvider, FAKE_TOKEN, pluginEntry } = await import("./_dns-provider-fake.mjs");
+  const { startAcmeFake } = await import("./_acme-fake.mjs");
+  const { collectDnsProviders } = await import("../dist/edge/dns-provider.js");
+  const { createEdgeDnsController } = await import("../dist/edge/dns-connections.js");
+  const fake = fakeDnsProvider();
+  const store = createMemorySystemStore();
+  const masterSecret = "zelavis-test-master-secret-123456";
+  const dns = createEdgeDnsController({ store, masterSecret, providers: collectDnsProviders([pluginEntry(fake.plugin())]).providers });
+  await dns.connect("fakedns", { credentials: { token: FAKE_TOKEN } });
+  await dns.adoptZone("example.com", { provider: "fakedns", zoneId: "zone-example", hostedSubdomains: false, targets: { a: [], aaaa: [] } });
+  const acme = await startAcmeFake(t, { verify: () => true });
+  const controller = createZelavisCertificateController({ store, masterSecret, defaultDirectoryUrl: acme.directoryUrl });
+  // Nothing ever serves the value, and the record cannot be removed: what a crash before cleanup leaves behind.
+  await controller.attachDns({ dns: dns.access, authoritativeTxt: { txtAtEveryAuthority: async () => [[]] }, propagationIntervalMs: 20, propagationTimeoutMs: 60 });
+  const removals = { failing: true };
+  const realRemove = dns.access.removeRecord;
+  const brokenAccess = { ...dns.access, removeRecord: (ref, apex) => removals.failing ? realRemove({ ...ref, provider: "absent" }, apex) : realRemove(ref, apex) };
+  await controller.attachDns({ dns: brokenAccess, authoritativeTxt: { txtAtEveryAuthority: async () => [[]] }, propagationIntervalMs: 20, propagationTimeoutMs: 60 });
+  await assert.rejects(controller.orderCertificate({ hostname: "www.example.com", challenge: "dns-01" }), /not served by every authoritative nameserver/);
+  assert.equal(fake.records.size, 1);
+  assert.equal((await store.list("edge-acme")).filter(row => row.key.startsWith("dns01:")).length, 1);
+  // An intent whose create never returned an id is cleaned by its exact value.
+  const { Effect } = await import("effect");
+  const orphan = await Effect.runPromise(Effect.flatMap(dns.access.zoneFor("example.com"), zone =>
+    dns.access.createRecord(zone, { name: "_acme-challenge.orphan.example.com", type: "TXT", content: "orphan-value", ttl: 60 })));
+  assert.ok(orphan);
+  await store.set("edge-acme", "dns01:orphan", { authorization: "x", provider: "fakedns", zoneId: "zone-example", apex: "example.com",
+    name: "_acme-challenge.orphan.example.com", value: "orphan-value", createdAt: new Date().toISOString() });
+  assert.equal(fake.records.size, 2);
+
+  const restarted = createZelavisCertificateController({ store, masterSecret, defaultDirectoryUrl: acme.directoryUrl });
+  assert.deepEqual(await restarted.attachDns({ dns: dns.access }), { removed: 2, failed: 0 });
+  assert.equal(fake.records.size, 0);
+  assert.deepEqual((await store.list("edge-acme")).filter(row => row.key.startsWith("dns01:")), []);
+});

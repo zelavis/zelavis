@@ -5,7 +5,9 @@ import { createMemorySystemStore, createZelavisEdgeManager, createZelavisEdgeRou
 import { createProjectDomainController, normalizeProjectDomainHostname, PROJECT_DOMAINS_NAMESPACE } from "../dist/edge/project-domains.js";
 import { ensureProductionEdge } from "../dist/edge/production.js";
 import { runProjectsCommand } from "../dist/cli/projects.js";
+import { createAuthoritativeDnsTxtResolver } from "../dist/adapters/_node-authoritative-dns.js";
 import { platform } from "./_runtime.mjs";
+import { startDnsAuthority } from "./_dns-authority.mjs";
 
 const tagged = (code) => (error) => error?.code === code || error?.body?.code === code;
 const external = hostname => ({ hostname, tlsMode: "external" });
@@ -143,6 +145,38 @@ test("holds four DNS permits and cancellation cannot resurrect a removed domain"
   assert.equal(results[0].status, "rejected");
   assert.equal(await f.routes.getHostname(domains[0][1].hostname), undefined);
   assert.ok(results.slice(1).every(result => result.status === "fulfilled"));
+});
+
+test("the Node resolver reads the challenge from the zone's authorities, so a record added after a failed check verifies", async t => {
+  const authority = await startDnsAuthority(t, { zones: new Map([["example.com", { ns: ["ns1.example.com", "ns2.example.com"] }]]) });
+  let now = Date.now();
+  const resolver = queryTimeoutMs => createAuthoritativeDnsTxtResolver({
+    recursiveServers: [authority.address], authoritativePort: authority.port, ...(queryTimeoutMs ? { queryTimeoutMs } : {}),
+  });
+  const f = fixture({ now: () => now });
+  const start = dns => f.start({ ingress: { externalTarget: "http://127.0.0.1:3200", dns, probe: async () => true } });
+  const c = start(resolver());
+  const { domain } = await c.add("a", external("shop.example.com"));
+  await assert.rejects(verify(c, "a", domain), tagged("dns_not_verified"));
+  const pending = (await c.list("a")).domains[0];
+  assert.equal(pending.issue, "dns_pending");
+  authority.set(domain.challenge.name, "TXT", [{ type: "TXT", strings: [domain.challenge.value] }]);
+  now += 30_000;
+  const verified = await verify(c, "a", pending);
+  assert.equal(verified.state, "active");
+  const asked = authority.queries.filter(query => query.name === domain.challenge.name && query.type === "TXT");
+  assert.deepEqual(asked.map(query => query.rd), [false, false]);
+
+  const { domain: aliased } = await c.add("a", external("alias.example.com"));
+  authority.set(aliased.challenge.name, "CNAME", [{ type: "CNAME", target: "verify.example.com" }]);
+  await assert.rejects(verify(c, "a", aliased), tagged("dns_not_verified"));
+  assert.equal((await c.list("a")).domains.find(row => row.hostname === aliased.hostname).issue, "dns_pending");
+
+  authority.dropAuthoritative(true);
+  const silent = start(resolver(200));
+  const { domain: unreachable } = await silent.add("a", external("down.example.com"));
+  await assert.rejects(verify(silent, "a", unreachable), tagged("dns_not_verified"));
+  assert.equal((await silent.list("a")).domains.find(row => row.hostname === unreachable.hostname).issue, "dns_unavailable");
 });
 
 test("resumes managed activation and withdrawal only after Edge acknowledgement", async () => {
@@ -303,4 +337,92 @@ test("HTTP, SDK and CLI use the exact Project grant and Project deletion withdra
   assert.equal(await routes.getHostname(next.hostname), undefined);
   assert.equal((await routes.listRoutes({ projectId: "alpha" })).length, 0);
   assert.equal((await routes.getHostname("panel.example.com")).scope, "platform");
+});
+
+test("a hosted subdomain is claimed, addressed and served under the zone's wildcard, and leaves exactly its records", async () => {
+  const { fakeDnsProvider, FAKE_TOKEN, pluginEntry } = await import("./_dns-provider-fake.mjs");
+  const { collectDnsProviders } = await import("../dist/edge/dns-provider.js");
+  const { createEdgeDnsController } = await import("../dist/edge/dns-connections.js");
+  const f = fixture();
+  const fake = fakeDnsProvider({ zones: [{ id: "zone-example", apex: "example.com" }] });
+  const dns = createEdgeDnsController({ store: f.store, masterSecret: "project-domains-test-secret-0123456789",
+    providers: collectDnsProviders([pluginEntry(fake.plugin())]).providers,
+    zoneInUse: apex => Effect.promise(async () => (await f.routes.listHostnames()).some(row => row.host.endsWith(`.${apex}`))) });
+  await dns.connect("fakedns", { credentials: { token: FAKE_TOKEN } });
+  await dns.adoptZone("apps.example.com", { provider: "fakedns", zoneId: "zone-example", hostedSubdomains: true,
+    targets: { a: ["203.0.113.7"], aaaa: ["2001:db8::7"] } });
+  // A record the operator made by hand in the same provider zone; nothing Zelavis does touches it.
+  const unrelated = await fake.definition.createClient({ token: FAKE_TOKEN }, { fetch }).create("zone-example",
+    { name: "www.example.com", type: "A", content: "198.51.100.1", ttl: 300 });
+
+  const capabilities = ["http", "https", "certificate-hot-reload", "websocket", "sse"];
+  const adapter = {
+    id: "traefik", title: "Edge fixture", capabilities,
+    detect: async () => ({ state: "available", installed: true, healthy: true, detail: "active" }),
+    stage: async () => {}, verify: async () => ({ ready: true }), activate: async () => {}, rollback: async () => {},
+  };
+  const manager = createZelavisEdgeManager({
+    store: f.store, adapters: [adapter], defaultAdapterId: adapter.id,
+    certificates: { stage: async () => {}, activate: async () => {}, rollback: async () => {} },
+    getPublication: async () => {
+      const pub = await f.routes.getCurrentPublication();
+      return pub && { id: "zelavis-edge-routes", revision: String(pub.revision), routeCount: pub.routeCount };
+    },
+  });
+  await Effect.runPromise(ensureProductionEdge({ routes: f.routes, manager, port: 3200 }));
+  const issued = new Map();
+  const ordered = [];
+  const certificates = {
+    getCertificate: async ref => issued.get(ref),
+    orderCertificate: async ({ hostname, challenge }) => {
+      ordered.push([hostname, challenge]);
+      const summary = { ref: `certificate:${hostname}`, hostname, status: "valid", expiresAt: new Date(Date.now() + 86400000).toISOString() };
+      issued.set(summary.ref, summary);
+      return summary;
+    },
+    retireProjectCertificate: async () => {},
+  };
+  const c = f.start({ manager, certificates, dns: dns.access, ingress: {
+    dns: { resolveTxt: async () => [] }, preflight: async () => false, probe: async () => true, probeWithdrawal: async () => true,
+  } });
+  const hosted = hostname => ({ hostname, tlsMode: "managed", dns: "automatic" });
+
+  await assert.rejects(c.add("a", hosted("a.shop.apps.example.com")), tagged("hosted_zone_unavailable"));
+  await assert.rejects(c.add("a", { ...hosted("shop.apps.example.com"), tlsMode: "external" }), tagged("hosted_zone_unavailable"));
+  await assert.rejects(c.add("a", hosted("shop.other.example.com")), tagged("hosted_zone_unavailable"));
+  assert.deepEqual(await c.hostedZones("a"), { zones: [{ apex: "apps.example.com" }] });
+
+  const { domain, created } = await c.add("a", hosted("Shop.Apps.Example.com"));
+  assert.equal(created, true);
+  assert.equal(domain.state, "active");
+  assert.equal(domain.dns, "automatic");
+  assert.equal(domain.challenge, undefined);
+  assert.deepEqual(ordered, [["*.apps.example.com", "dns-01"]], "the zone's wildcard is ordered once, through DNS-01");
+  assert.equal((await dns.zone("apps.example.com")).wildcardCertificateRef, "certificate:*.apps.example.com");
+  const row = await f.routes.getHostname("shop.apps.example.com");
+  assert.equal(row.projectId, "a");
+  assert.equal(row.certificateRef, "certificate:*.apps.example.com");
+  assert.equal(row.projectDomain.routing, "active");
+  const records = [...fake.records.values()].filter(record => record.name === "shop.apps.example.com");
+  assert.deepEqual(records.map(({ type, content, ttl }) => [type, content, ttl]), [["A", "203.0.113.7", 300], ["AAAA", "2001:db8::7", 300]]);
+  const stored = (await f.store.get(PROJECT_DOMAINS_NAMESPACE, "a")).value.entries[0];
+  assert.deepEqual(stored.dnsRecords.map(ref => ref.recordId).sort(), records.map(record => record.id).sort());
+  assert.deepEqual(await c.add("a", hosted("shop.apps.example.com")), { domain, created: false });
+
+  await assert.rejects(c.add("b", hosted("shop.apps.example.com")), tagged("hostname_unavailable"));
+  await assert.rejects(c.add("b", external("shop.apps.example.com")), tagged("hostname_unavailable"));
+  await assert.rejects(dns.releaseZone("apps.example.com"), tagged("dns_in_use"));
+
+  // A second hosted subdomain reuses the wildcard; removal and Project deletion each delete exactly their records.
+  const second = (await c.add("b", hosted("blog.apps.example.com"))).domain;
+  assert.equal(second.state, "active");
+  assert.equal(ordered.length, 1);
+  assert.equal(fake.records.size, 5);
+  assert.deepEqual(await c.remove("a", domain.hostname, domain.revision), { removed: true, pending: false });
+  assert.equal(await f.routes.getHostname(domain.hostname), undefined);
+  assert.deepEqual([...fake.records.values()].map(record => record.name).sort(), ["blog.apps.example.com", "blog.apps.example.com", "www.example.com"]);
+  await Effect.runPromise(c.cleanup("b"));
+  assert.deepEqual([...fake.records.values()].map(record => record.id), [unrelated.id]);
+  assert.equal(await f.routes.getHostname(second.hostname), undefined);
+  await dns.releaseZone("apps.example.com");
 });

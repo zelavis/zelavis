@@ -1,10 +1,27 @@
 import { Effect, Schema } from "effect";
-import { RegistrationStatusSchema } from "zelavis/app/identity";
 import { zelavis } from "zelavis/sdk";
 import type { ZelavisPlatformFrontendContext } from "zelavis";
 import { mountOf } from "./mount-rewrite.ts";
+import { accountPageTitles, isAccountPath } from "./account-routes.ts";
 
-export const identityPagePaths = ["/login", "/sign-up"] as const;
+const authPages = {
+  ...accountPageTitles,
+  "/login": "Login",
+  "/sign-up": "Create an account",
+  "/forgot-password": "Forgot password",
+  "/reset-password": "Reset password",
+  "/verify-email": "Verify email",
+  "/change-email": "Change primary email",
+  "/invitation": "Accept invitation",
+  "/mfa": "Verify sign-in",
+  "/oauth/callback": "Provider sign-in",
+} as const;
+
+export const identityPagePaths = Object.keys(authPages);
+const Methods = Schema.Struct({
+  registration: Schema.Struct({ enabled: Schema.Boolean }),
+  methods: Schema.Array(Schema.Struct({ signUp: Schema.Boolean })),
+});
 export const identityAssets = {
   "/auth-assets/identity.js": { file: "identity.js", type: "text/javascript; charset=utf-8" },
   "/auth-assets/identity.css": { file: "identity.css", type: "text/css; charset=utf-8" },
@@ -19,8 +36,12 @@ const pageHeaders = {
   "referrer-policy": "no-referrer",
 };
 
-function field(label: string, name: string, attributes: string): string {
-  return `<label>${label}<input name="${name}" ${attributes}></label>`;
+function identityDocument(mount: string, api: string, path: string, title: string, fallback: string, closed = false): string {
+  return `<!doctype html>
+    <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>${title}</title><link rel="stylesheet" href="${mount}/auth-assets/identity.css">
+    ${closed ? "" : `<script type="module" src="${mount}/auth-assets/identity.js"></script>`}</head>
+    <body><main${isAccountPath(path) ? " data-account" : ""} data-api="${api}" data-path="${path}" data-mount="${mount}"><h1>${title}</h1>${fallback}</main></body></html>`;
 }
 
 export function register({ context, assets }: {
@@ -39,48 +60,33 @@ export function register({ context, assets }: {
     }
     const asset = path && assets.get(path);
     if (asset) return { status: 200, headers: { ...pageHeaders, "content-type": asset.type }, body: asset.body };
-    if (path !== "/login" && path !== "/sign-up") return { status: 404, headers: pageHeaders, body: "Not found" };
-
+    if (path === undefined || !Object.hasOwn(authPages, path)) return { status: 404, headers: pageHeaders, body: "Not found" };
+    const title = authPages[path as keyof typeof authPages];
     const signup = path === "/sign-up";
-    const probe = (suffix: string, headers?: HeadersInit) => Effect.tryPromise({
-      try: signal => context.fetch(new Request(new URL(`${api}/auth/${suffix}`, url.origin), { signal, headers })),
-      catch: cause => cause,
-    });
-    const registration = yield* probe("registration").pipe(
-      Effect.flatMap(response => Effect.tryPromise({ try: () => response.json() as Promise<unknown>, catch: cause => cause }).pipe(
-        Effect.flatMap(body => response.ok ? Schema.decodeUnknownEffect(RegistrationStatusSchema)(body) : Effect.fail(new Error("Registration status is unavailable."))),
-      )),
-      Effect.result,
-    );
-    const available = registration._tag === "Success" && registration.success.enabled && registration.success.providers.includes("password");
-    const cookie = request.headers.get("cookie");
-    const session = !signup && cookie ? yield* probe("session", { cookie }).pipe(
-      Effect.tap(response => Effect.tryPromise({ try: () => response.body?.cancel() ?? Promise.resolve(), catch: cause => cause })),
-      Effect.result,
-    ) : undefined;
-    const signedIn = session?._tag === "Success" && session.success.ok;
-
-    const loginLink = `<a href="${mount}/login">${signup ? "Back to login" : "Login"}</a>`;
-    const closed = signup && !available;
-    const unavailable = signup && registration._tag === "Failure";
-    const title = unavailable ? "Registration is unavailable" : closed ? "Registration is closed" : signup ? "Create an account" : signedIn ? "You're signed in" : "Login";
-    const passwordAttributes = `type="password" autocomplete="${signup ? "new-password" : "current-password"}" ${signup ? 'minlength="15" ' : ""}maxlength="1024" required`;
-    const feedback = '<p role="status" aria-live="polite" data-feedback></p>';
-    const form = closed ? loginLink : signedIn
-      ? `<a href="/">Continue to site</a><form method="post" data-operation="session">${feedback}<button disabled>Sign out</button></form>`
-      : `<form method="post" data-operation="${signup ? "sign-up/password" : "authenticate/password"}">
-          ${field("Email or username", "identifier", 'autocomplete="username" maxlength="254" required')}
-          ${signup ? field("Display name (optional)", "displayName", 'autocomplete="name" maxlength="120"') : ""}
-          ${field("Password", "password", passwordAttributes)}
-          ${signup ? field("Confirm password", "confirm", passwordAttributes) : ""}
-          ${feedback}<button disabled>${signup ? "Create account" : "Login"}</button></form>
-          ${signup ? loginLink : available ? `<a href="${mount}/sign-up">Create account</a>` : ""}`;
-
-    return { status: unavailable ? 503 : closed ? 404 : 200, headers: pageHeaders, body: `<!doctype html>
-      <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>${title}</title><link rel="stylesheet" href="${mount}/auth-assets/identity.css">
-      ${closed ? "" : `<script type="module" src="${mount}/auth-assets/identity.js"></script>`}</head>
-      <body><main data-api="${api}"><h1>${title}</h1>${form}</main></body></html>` };
+    let open = false;
+    let unavailable = false;
+    if (signup || path === "/login") {
+      const methods = yield* Effect.result(Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: signal => context.fetch(new Request(new URL(`${api}/auth/methods`, url.origin), { signal })),
+          catch: cause => cause,
+        });
+        if (!response.ok) return yield* Effect.fail(new Error("Auth methods are unavailable."));
+        const data = yield* Effect.tryPromise({ try: () => response.json(), catch: cause => cause });
+        return yield* Schema.decodeUnknownEffect(Methods)(data);
+      }));
+      unavailable = methods._tag === "Failure";
+      open = methods._tag === "Success" && methods.success.registration.enabled && methods.success.methods.some(method => method.signUp);
+    }
+    const closed = signup && !open;
+    const fallback = path === "/login"
+      ? open ? `<a href="${mount}/sign-up">Create account</a>` : ""
+      : `<a href="${mount}/login">Back to login</a>`;
+    const heading = closed ? unavailable ? "Registration is unavailable" : "Registration is closed" : title;
+    return {
+      status: closed ? unavailable ? 503 : 404 : 200, headers: pageHeaders,
+      body: identityDocument(mount, api, path, heading, fallback, closed),
+    };
   }).pipe(Effect.timeout("10 seconds"), Effect.catchCause(cause => Effect.gen(function* () {
     yield* Effect.logWarning("App auth page delivery failed", cause);
     return { status: 503, headers: pageHeaders, body: "Sign-in is temporarily unavailable." };

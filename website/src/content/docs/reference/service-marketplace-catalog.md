@@ -119,3 +119,12 @@ On Node, uploaded ZIP packages resolve through the Node adapter package
 installer and uploaded ESM specifiers resolve through the Node adapter importer.
 Bun follows the same local-runtime model. Future Deno support should preserve
 that local service cache and runtime-graph activation shape.
+
+## Hosting Provider
+
+The Platform Marketplace lists Hosting Provider (`@zelavis/hosting`) as an
+optional extension for hosting and cloud companies. It extends Ecommerce's
+fulfillment capability and asks the operator to approve its Platform
+permissions. Install Ecommerce and a compatible payment provider first. The
+Hosting package becomes installable through the allow-list at its first
+release. See the [Hosting Provider guide](../guides/hosting-provider.md).

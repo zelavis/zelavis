@@ -82,15 +82,37 @@ to that Project. Server operators can inspect verified hostnames under
 2. Point its A or AAAA record, or a subdomain CNAME, at the ingress address your
    server operator provides. Also create the TXT record shown in Domains,
    `_zelavis-challenge.<hostname>`, using the exact displayed value.
-3. Choose **Verify DNS** after the TXT record propagates. The challenge expires
-   after 24 hours. The complete TXT record name must fit DNS length limits.
-   Generate a fresh challenge in Domains if it expires, and
+3. Choose **Verify DNS** once your DNS provider has published the TXT record.
+   The challenge expires after 24 hours. The complete TXT record name must fit
+   DNS length limits. Generate a fresh challenge in Domains if it expires, and
    wait 30 seconds between TXT checks on the same domain.
 4. Choose **Open site** once the domain is active. Retry activation from the
    same domain entry if ingress or certificate issuance is pending.
 5. Choose **Remove domain** to withdraw the route. Project deletion also
    withdraws its domains. For externally terminated TLS, remove the external
    proxy's hostname mapping when disconnecting the domain.
+
+Zelavis reads the TXT record from the zone's own authoritative nameservers,
+not through a caching resolver. It finds the zone from the SOA in the answer
+for `_zelavis-challenge.<hostname>`, so a hostname that is a CNAME into another
+provider's zone, or one in a delegated subzone, is checked in its own zone. A
+check made before the record existed is therefore not cached: the next check
+sees the record as soon as the provider serves it. Only an authoritative answer
+counts; when no nameserver of the zone answers, Domains reports that DNS is
+unavailable rather than that the record is missing. Limits:
+
+- A CNAME at `_zelavis-challenge.<hostname>` is not followed. Create the TXT
+  record at that exact name, not a delegation to another verification name.
+- DNSSEC signatures are not validated.
+- A zone delegated so recently that the server's resolver still holds the
+  parent's negative answer reports DNS as unavailable until that answer expires.
+- A verified domain is not checked again later. Removing the TXT record after
+  verification does not withdraw the domain; remove it in Domains.
+
+On November 17, 2026, a disposable VPS run against `zelavis.com` verified a
+real TXT record through authoritative DNS while Google Public DNS still
+returned its cached negative answer. The run used the packed working-tree
+candidate based on `0e4548dbcc`; `pnpm release:qualify:domains` repeats the proof.
 
 DNS TXT proof grants ownership of that exact hostname. A pending challenge
 occupies one of the Project's 20 domain slots. Edge claims the global hostname
@@ -122,22 +144,94 @@ reserved while its published route is being withdrawn.
   withdrawal with Let’s Encrypt staging. The test client used the staging
   trust roots.
 
+## DNS automation and wildcard certificates
+
+An operator can connect a DNS provider so Zelavis manages records in the
+operator's own zones: ACME DNS-01 (and with it wildcard certificates) and
+**hosted subdomains**, where a customer takes `shop.apps.example.com` under an
+operator zone without creating any DNS record. The
+[DNS automation guide](../guides/dns-automation.md) walks through it.
+
+- **Providers.** Core owns the DNS provider contract (`zelavis/edge/dns-provider`).
+  First-party drivers live behind the adapter boundary and are handed to the
+  composition by the host adapter: Cloudflare under Node
+  (`packages/zelavis/src/adapters/_dns-cloudflare.ts`). A plugin adds another by
+  declaring `zelavis/edge:dns` and exporting `service.dnsProviders`
+  (`defineDnsProviders`); a plugin provider named like a built-in one is refused
+  (`dns_provider_conflict` in the Platform log), never used in its place.
+- **Connections** keep one provider's credentials, checked against the provider
+  first, encrypted with a key bound to that provider, never returned. Every
+  provider call is bounded (ten seconds, four at a time per provider) and
+  logged as `edge.dns.call` with provider, operation, zone and outcome, never a
+  credential. Connections, zones and wildcard certificates are Platform Edge
+  authority: read with `server.edge.view`, changed with `server.edge.manage`.
+- **Adopted zones** name an apex Zelavis manages (the provider zone itself or a
+  name below it), whether Projects may take a subdomain one label below it,
+  and the A/AAAA addresses (two each) or the one CNAME those subdomains point
+  at. At most 50 zones. A zone cannot be released while a Project domain holds
+  a hostname under it, nor a connection deleted while a zone uses it.
+- **DNS-01.** A wildcard (`*.` plus an exact hostname) is issued only through
+  DNS-01. For each authorization Zelavis records a checkpoint, creates the TXT
+  at `_acme-challenge.<name>` (TTL 60) in the adopted zone covering it, waits
+  (every 5 s, at most 120 s) until every authoritative nameserver of the zone
+  serves the value, then asks the CA to validate, and removes the record by its
+  id afterwards. A record an interrupted order left behind is removed the next
+  time the Platform starts, by its id or, if the id was never recorded, by its
+  exact value. Renewal reorders a wildcard through DNS-01 on its own.
+- **Hosted subdomains** (`dns: "automatic"` when adding a Project domain,
+  managed TLS only) need no TXT proof: the operator's zone owns the name. Edge
+  claims the hostname, creates its address records (TTL 300) and persists each
+  record id on the domain before going on, and serves it under the zone's
+  wildcard certificate, ordering that first when the zone has none. Removing
+  the domain or deleting its Project withdraws the route, deletes exactly those
+  records by id (and any it made without recording one), then releases the
+  hostname. Another Project cannot take a claimed name.
+- The wildcard's private key stays in this Platform's Edge store; nothing
+  distributes it to other servers.
+
+| HTTP (under the API base) | Access | SDK | CLI |
+| --- | --- | --- | --- |
+| `GET /runtime/edge/dns/providers` | `server.edge.view` | `client.edge.dns.providers()` | `zelavis edge dns-providers` |
+| `PUT /runtime/edge/dns/connections/:provider` | `server.edge.manage` | `client.edge.dns.connect(provider, input)` | `zelavis edge dns-connect PROVIDER --data JSON` |
+| `DELETE /runtime/edge/dns/connections/:provider` | `server.edge.manage` | `client.edge.dns.disconnect(provider)` | `zelavis edge dns-disconnect PROVIDER` |
+| `GET /runtime/edge/dns/connections/:provider/zones` | `server.edge.manage` | `client.edge.dns.providerZones(provider, cursor?)` | `zelavis edge dns-provider-zones PROVIDER [--cursor C]` |
+| `GET /runtime/edge/dns/zones` | `server.edge.view` | `client.edge.dns.zones()` | `zelavis edge dns-zones` |
+| `PUT /runtime/edge/dns/zones/:apex` | `server.edge.manage` | `client.edge.dns.adoptZone(apex, input)` | `zelavis edge dns-adopt-zone APEX --data JSON` |
+| `DELETE /runtime/edge/dns/zones/:apex` | `server.edge.manage` | `client.edge.dns.releaseZone(apex)` | `zelavis edge dns-release-zone APEX` |
+| `POST /runtime/edge/dns/zones/:apex/wildcard-certificate` | `server.edge.manage` | `client.edge.dns.orderWildcard(apex)` | `zelavis edge dns-wildcard APEX` |
+| `GET /runtime/projects/:id/domains/hosted-zones` | `project.domains.manage` | `client.projects.hostedZones(id)` | `zelavis projects hosted-zones ID` |
+
+Limits: customer-owned DNS connections and automatic records in customer zones
+are not supported; hosted subdomains are exactly one label below an adopted
+zone; the zone's wildcard is ordered while the customer's request waits.
+
+The November 17, 2026 qualification used real Cloudflare records on
+`zelavis.com`, deployed Traefik and Let's Encrypt staging. It passed HTTP-01,
+DNS-01 wildcard issuance and automatic subdomain routing; an off-host client
+verified both staging certificate chains with trust confined to that client.
+Cleanup removed the run's records, units, address and redirects, and existing
+production processes kept their PIDs. Public CA production issuance remains
+unqualified.
+
 ## Native App authentication ingress
 
 A verified Project hostname and its supported Edge preview share the same
 public Auth routing rules. Zelavis sends the following exact routes to the
 running native App engine even when another frontend serves the site root.
 
-| Method | Default App paths |
+| Kind | Default App paths |
 | --- | --- |
-| `GET` | `/zelavis/login`, `/zelavis/sign-up` |
-| `GET` | `/zelavis/auth-assets/identity.js`, `/zelavis/auth-assets/identity.css` |
-| `GET` | `/zelavis/api/v1/auth/registration`, `/zelavis/api/v1/auth/session` |
-| `POST` | `/zelavis/api/v1/auth/authenticate/password`, `/zelavis/api/v1/auth/sign-up/password`, `/zelavis/api/v1/auth/session/rotate` |
-| `DELETE` | `/zelavis/api/v1/auth/session` |
+| Pages (`GET`) | `/zelavis/login`, `/zelavis/sign-up`, `/zelavis/forgot-password`, `/zelavis/reset-password`, `/zelavis/verify-email`, `/zelavis/change-email`, `/zelavis/mfa`, `/zelavis/oauth/callback`, `/zelavis/invitation`, `/zelavis/account` and its `passkeys`, `two-factor`, `emails`, `password` and `sessions` pages |
+| Assets (`GET`) | `/zelavis/auth-assets/identity.js`, `/zelavis/auth-assets/identity.css` |
+| Auth API | Every route under `/zelavis/api/v1/auth/` that needs no permission: session, refresh, sessions, JWKS, methods, registration status, username and password, email and password (sign-up, sign-in, change password, change email, recovery), added emails, OAuth start, callback and redeem, passkey sign-up, sign-in and management, MFA, and invitation acceptance |
+
+Routes that need a permission (settings, connections, administration) are never
+public; an operator reaches them through the Project Gateway. An App still
+locked to a published engine keeps its own earlier password and session routes
+until its explicit upgrade.
 
 App Auth responses use `Cache-Control: no-store` and auth writes have an 8 KiB
-body limit. The Platform dashboard, child administrative Auth and OAuth
-callback routes stay outside this public allowlist. A stopped native App
+body limit. The Platform dashboard and child administrative Auth routes stay
+outside this public allowlist. A stopped native App
 returns a site availability error. A running App engine without these pages
 returns 404. Managed third-party Project sites retain their own authentication.

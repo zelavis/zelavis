@@ -16,11 +16,12 @@ assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
 let to = process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION || JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
 import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
+import { qualificationSessionFile, signInQualificationOwner } from './lib/qualification-auth.mjs';
 import { updateToLocalCandidate } from './lib/candidate-update.mjs';
 const load = (root, file) => import(pathToFileURL(join(root, 'platform/dist', file)));
 let { createZelavisClient } = await load(previous, 'sdk/fetch.js');
 const baseUrl = 'http://127.0.0.1:3000';
-const cookie = await readFile('/var/lib/zelavis/qualification-session', 'utf8');
+let cookie = await readFile(qualificationSessionFile, 'utf8');
 const config = { baseUrl, headers: { cookie, origin: baseUrl }, fetch: (url, init) => fetch(url, {
   ...init, signal: AbortSignal.any([init?.signal, AbortSignal.timeout(90_000)].filter(Boolean)),
 }) };
@@ -43,6 +44,22 @@ export function register() { zelavis.operations.create({ id: "engine.get", resou
   spec: { operationId: "getExecutingEngine", summary: "Report the executing engine" }, handler: () => ({ status: 200, body: { version: ZELAVIS_VERSION } }) }); }`);
 execFileSync('chown', ['-R', 'zelavis:zelavis', join(frontend, '..')]);
 const app = await client.projects.start(id);
+const previewOrigin = `http://127.0.0.1:${app.preview.port}`;
+const authPath = "/zelavis/api/v1/auth";
+const appPassword = "disposable qualification App password";
+async function appAuth(path, body) {
+  return fetch(previewOrigin + authPath + path, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
+  });
+}
+const registrationPath = `/runtime/projects/${id}/auth/registration/settings`;
+const settings = await client.json(registrationPath);
+await client.json(registrationPath, { method: "PUT", body: { enabled: true, expectedRevision: settings.revision } });
+const legacyUsername = "qualification-app";
+const seeded = await appAuth("/sign-up/password", { identifier: legacyUsername, password: appPassword });
+assert.equal(seeded.status, 201, "The published App creates its original account");
+const originalAppAccount = (await seeded.json()).account.id;
 const data = () => client.data(id);
 await data().collections.create({ name: 'continuity' });
 await data().documents.insert('continuity', { id: 'stable', data: { value: 'retained across real engine versions' } });
@@ -101,11 +118,18 @@ const diagnosticIdentities = async () => {
     return `${value.workloadId}:${process.pid}:${process.startedAt}`;
   }).sort();
 };
-const wpClient = projectClient(wp.id);
+let wpClient = projectClient(wp.id);
 const initialBound = await wpClient.runtime.config();
 assert.equal(initialBound.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
 const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
+// Browser sessions end at the Auth cutover. The same scoped machine identity must serve throughout it.
+const issued = await client.json("/auth/service-accounts", { method: "POST", body: {
+  name: "Update continuity monitor",
+  grants: [id, wp.id, catalogueApp.id].flatMap(projectId =>
+    ["project.view", "project.runtime.manage", "project.settings.manage"].map(permission => ({ permission, scope: { type: "project", projectId } }))),
+} });
+const trafficHeaders = { authorization: `Bearer ${issued.token}` };
 const before = await identities();
 const agentDescriptor = async () => JSON.parse(await readFile('/var/lib/zelavis/agent/agent.json', 'utf8'));
 const agentBefore = await agentDescriptor().catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
@@ -123,7 +147,7 @@ async function underTraffic(operation, label = "live operation") {
   let finished = false; const started = Date.now();
   const traffic = Promise.all(urls.map(async url => {
     do {
-      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(trafficTimeoutMs) })
+      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: trafficHeaders } : {}), redirect: 'manual', signal: AbortSignal.timeout(trafficTimeoutMs) })
         .catch(error => { throw Error(`${label}: ${url} failed after ${Date.now() - started}ms`, { cause: error }); });
       assert.ok([200, 302].includes(response.status), `${url}: ${response.status}`);
       await response.arrayBuffer(); counts[url]++;
@@ -164,6 +188,11 @@ await underTraffic(async () => {
   }
   await updateToLocalCandidate({ previous, to, baseUrl });
 });
+cookie = await signInQualificationOwner(baseUrl);
+config.headers = { cookie, origin: baseUrl };
+await writeFile(qualificationSessionFile, cookie, { mode: 0o600 });
+client = createZelavisClient(config);
+console.log("PASS: the published Platform owner signs in to the updated engine.");
 trafficTimeoutMs = 30_000;
 assert.equal(hostPid(), initialPid, 'Platform host must remain the same process');
 const agentAfter = await agentDescriptor();
@@ -252,8 +281,12 @@ for (const version of [from, to]) {
 }
 console.log('PASS: domain-free production ingress and assets; Platform rollback/reselection preserve proxy and traffic.');
 
+cookie = await signInQualificationOwner(baseUrl);
+config.headers = { cookie, origin: baseUrl };
+await writeFile(qualificationSessionFile, cookie, { mode: 0o600 });
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
+wpClient = projectClient(wp.id);
 assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
 const catalogueAfter = await client.projects.get(catalogueApp.id);
 assert.equal(catalogueAfter.recipe.managed.adminTitle, 'WordPress Admin');
@@ -263,7 +296,8 @@ assert.equal(catalogueAfter.preview.port, catalogueApp.preview.port);
 assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueAfterConversion, 'Forward updates and Open never rewrite the frozen host descriptor');
 const catalogueConfig = await projectClient(catalogueApp.id).runtime.config();
 assert.equal(catalogueConfig.services.find(service => service.name === '@zelavis/wordpress').kind, 'app');
-for (const capability of ['database', 'identity', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
+for (const capability of ['database', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
+assert.equal((catalogueConfig.capabilities.auth ?? catalogueConfig.capabilities.identity).used, false);
 // Keep sending Gateway requests while the bound App remains on its old engine.
 // The Project host's replay cache holds 128 commands. A layout hold should not
 // issue a new private command for every public request.
@@ -279,7 +313,7 @@ counts[catalogueControl] = 0;
 const beforeIntegration = await wpClient.runtime.config();
 assert.equal(beforeIntegration.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
-for (const capability of ['database', 'identity', 'storage', 'workloads']) {
+for (const capability of ['auth', 'database', 'storage', 'workloads']) {
   assert.equal(beforeIntegration.capabilities[capability].available, true, `An adopted bound App must execute the current engine's ${capability} API`);
   assert.equal(beforeIntegration.capabilities[capability].used, false, 'Unused APIs stay hidden after engine convergence');
 }
@@ -361,10 +395,32 @@ const verifySelected = async (switched, version, label) => {
   assert.deepEqual((await data().documents.get('continuity', 'stable')).data, { value: 'retained across real engine versions' });
   console.log(`PASS: ${label} ${version} with matching recipe, same preview and retained database record.`);
 };
+async function proveAppSignIn(username, expectedId) {
+  const response = await appAuth("/username-password/sign-in", { username, password: appPassword });
+  assert.equal(response.status, 200, "The upgraded App authenticates the account created by its previous engine");
+  assert.equal((await response.json()).userId, expectedId);
+}
+
 if (dataFormatOf(from) === dataFormatOf(to)) {
-  for (const version of [to, from]) {
-    await verifySelected(await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`), version, 'live App selection');
-  }
+  await verifySelected(await underTraffic(() => client.projects.upgrade(id, { engineVersion: to }), "App recipe upgrade"), to, "live App upgrade");
+  await proveAppSignIn(legacyUsername, originalAppAccount);
+  const binaryRollbackProbe = await appAuth("/username-password/sign-up", { username: "candidate-writer", password: appPassword });
+  assert.equal(binaryRollbackProbe.status, 200, "Candidate Auth accepts a distinct disposable account write");
+  await binaryRollbackProbe.body?.cancel();
+  await verifySelected(await underTraffic(() => client.projects.switchVersion(id, from), "App rollback"), from, "live App selection");
+  const rollbackUsername = "rollback-writer";
+  const rollbackAccount = await appAuth("/sign-up/password", { identifier: rollbackUsername, password: appPassword });
+  assert.equal(rollbackAccount.status, 201, "The prior engine can write after rollback");
+  const rollbackId = (await rollbackAccount.json()).account.id;
+  // Traffic was held open during the first upgrade and the rollback. Reopen from the prior engine's write
+  // and check which Auth records the candidate serves after rebuilding.
+  await verifySelected(await client.projects.upgrade(id, { engineVersion: to }), to, "App upgrade after rollback");
+  await proveAppSignIn(legacyUsername, originalAppAccount);
+  await proveAppSignIn(rollbackUsername, rollbackId);
+  const lostWrite = await appAuth("/username-password/sign-in", { username: "candidate-writer", password: appPassword });
+  assert.equal(lostWrite.status, 404, "The documented rebuild replaces candidate-only writes after the old engine writes");
+  await lostWrite.body?.cancel();
+  console.log("PASS: released App account signs in after upgrade and the rollback rebuild imports the prior engine's new account.");
 } else {
   // The two engines write different data layouts, so a running App is never switched in place: the plain request is refused and
   // the explicit restart stops the App, migrates its data (the earlier layout stays beside it) and starts it on the new engine.
@@ -376,6 +432,7 @@ if (dataFormatOf(from) === dataFormatOf(to)) {
   assert.ok(Date.now() - crossingStarted < 90_000, 'The restarting layout switch finishes within the deadline');
   assert.deepEqual([crossed.dataMigration?.from, crossed.dataMigration?.to], [dataFormatOf(from), dataFormatOf(to)], 'The migration is reported');
   await verifySelected(crossed, to, 'App selection across a data layout change (stop, migrate, start)');
+  await proveAppSignIn(legacyUsername, originalAppAccount);
 }
 for (const version of ['latest', '^2.0.0', '99.0.0']) await assert.rejects(client.projects.switchVersion(id, version), { status: 400 });
 const historical = await client.projects.create({ id: 'explicit-historical', name: 'Historical', engineVersion: from, start: false });

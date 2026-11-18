@@ -1,3 +1,5 @@
+import { memoryFulfillment } from "./memory-fulfillment.js";
+import { memoryEvents } from "./memory-events.js";
 /**
  * Repositories backed by a Map, for tests and for running without a database.
  *
@@ -7,9 +9,11 @@
  * drift apart.
  */
 import { Effect } from "effect";
+import { StorageFailure } from "../errors.js";
 import type { EcommerceRepositories, Repository } from "../contracts/repositories.js";
 import type {
   BillingSubscription,
+  Checkout,
   Coupon,
   Customer,
   Order,
@@ -48,8 +52,20 @@ export function createInMemoryEcommerceRepositories(
   overrides: Partial<EcommerceRepositories> = {},
 ): EcommerceRepositories {
   const coupons = inMemoryRepository<Coupon>((coupon) => coupon.code);
-  return {
-    customers: inMemoryRepository<Customer>((customer) => customer.id),
+  const outbox = memoryFulfillment();
+  const customers = inMemoryRepository<Customer>(customer => customer.id);
+  const customerRepository = {
+    ...customers,
+    setProviderReference: (id: string, provider: string, reference: string, at: Date) => Effect.uninterruptible(Effect.gen(function* () {
+      const existing = yield* customers.findById(id);
+      if (!existing) return yield* new StorageFailure({ operation: "setProviderReference", cause: "Customer is missing" });
+      return yield* customers.update({ ...existing, providerReferences: { ...existing.providerReferences, [provider]: reference }, updatedAt: at });
+    })),
+  };
+  const repositories = {
+    fulfillment: outbox.repository,
+    checkouts: inMemoryRepository<Checkout>((checkout) => checkout.id),
+    customers: customerRepository,
     products: inMemoryRepository<Product>((product) => product.id),
     orders: inMemoryRepository<Order>((order) => order.id),
     paymentAttempts: inMemoryRepository<PaymentAttempt>((attempt) => attempt.id),
@@ -63,4 +79,9 @@ export function createInMemoryEcommerceRepositories(
     },
     ...overrides,
   };
+  const customBilling = ["customers", "checkouts", "paymentAttempts", "subscriptions", "fulfillment"].some(name => Object.hasOwn(overrides, name));
+  const events = overrides.events ?? (customBilling ? {
+    apply: () => Effect.fail(new StorageFailure({ operation: "applyProviderEvent", cause: "Custom billing repositories require an atomic events repository and matching outbox" })),
+  } : memoryEvents(repositories, outbox.emit));
+  return { ...repositories, events };
 }

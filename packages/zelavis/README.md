@@ -11,16 +11,27 @@ root. Internal symlinks are supported; arbitrary filesystem imports require the
 explicit filesystem source policy. Managed files must remain under host control
 while code is loaded; these checks do not sandbox executable plugins.
 Lower-level packages such as `zelavis/core`, `zelavis/app/db`, and
-`zelavis/app/identity` remain independently useful primitives.
+`zelavis/auth` remain independently useful primitives.
 
 `zelavis/core` owns reusable Fabric, workload, Agent, service, routing, and
 access primitives. The Platform composes them into native subsystems (the
-Server Control Plane, Identity, Database, Fabric) with Platform authority; those
-mount as endpoint groups, not services. The bundled `@zelavis/marketplace`,
+Server Control Plane, Auth, Email, Database, Fabric) with Platform authority; those
+mount as endpoint groups, not services. Email (`zelavis/app/email`) is SMTP
+delivery with a durable outbox in each runtime's own System Store, so the
+Platform and every native App send with their own settings; see the Email
+Delivery guide. The bundled `@zelavis/marketplace`,
 `@zelavis/auth` and `@zelavis/ui` packages add the product Marketplace, Auth
 settings and dashboard, which owns the Server navigation. This assembly, plus official Project recipes such as
 `zelavis/app`, is what makes the reusable server framework the Zelavis
 Platform OS.
+
+Cloud capacity ships in this package behind the capacity adapter boundary. Platforms with
+an enrollment endpoint expose a revisioned machine policy (`/runtime/cloud/policy`,
+`client.cloud.policy` / `setPolicy`, `zelavis cloud policy` / `set-policy`) and the dashboard's
+Providers page. Hetzner uses the Alchemy bundle only on first use; the signed HTTPS webhook
+provider connects operator automation without loading it. Existing servers need no provider.
+Real Hetzner boot/provisioning remains unqualified; local fake-provider and browser tests cover
+the implemented flow. See the [node enrollment and capacity guide](https://zelavis.com/architecture/node-enrollment/).
 
 The Platform OS creates projects from services with `kind: "app"`. With the
 Node adapter, every project receives its own data directory and long-running
@@ -84,10 +95,11 @@ users can still sign in. New Platform accounts have the `customer` role and
 new App accounts have the `user` role, with no implicit grants.
 
 An administrator can replace another human account's access with
-`client.auth.admin.setAccountAccess(accountId, input)` or
-`zelavis auth set-account-access ACCOUNT --data JSON --json`.
-The input carries `expectedRevision`, one `role`, `permissions` and explicit
-`grants`. Read `accessRevision` through `auth.admin.accounts(accountId)`.
+`client.auth.admin.setAccess(accountId, input)` or
+`zelavis auth admin set-access ACCOUNT --data JSON --json`.
+The input carries `expectedRevision`, one `role`, `permissions`, explicit
+`grants` and `roleAssignments` (custom roles, each optionally for named
+Projects; `client.auth.admin.roles()` and `zelavis auth roles` list them). Read `accessRevision` through `auth.admin.accounts(accountId)`.
 Platform role labels are `customer`, `operator` and `reseller`. An App uses
 `user`. The administrator must hold every existing and requested capability.
 Changed access atomically invalidates earlier sessions. A matching no-op keeps
@@ -97,6 +109,18 @@ Platform owners can grant customers access to manage exact Project hostnames.
 Project Domains verifies a DNS TXT challenge before routing a hostname to the
 Project. The dashboard, JavaScript SDK and `zelavis projects` commands share
 the same domain operations.
+
+The Platform's **Server → Domains** registrar section uses the operator's own
+account to register, transfer in and explicitly renew domains. Namecheap is
+built into the Node adapter; plugins extend `zelavis/edge:registrar`. System-scoped
+`server.domains.view` reads inventory/orders, and `server.domains.purchase` owns
+connections, contacts and spending. `client.registrar`, `/runtime/registrar/*`
+and `zelavis registrar` share fresh price confirmation and durable idempotency;
+uncertain submissions are reconciled without resubmission. Credentials and
+contacts are encrypted, and transfer codes are never stored. Availability/pricing,
+registration, renewal and inventory passed Namecheap sandbox qualification on
+November 17, 2026; production registrar purchases remain unqualified. See the Domain
+Registration guide for recovery limits and the qualification command.
 
 Project account edits use `client.projects.setAccountAccess(projectId, accountId, input)`
 or `zelavis projects set-account-access PROJECT ACCOUNT --data JSON --json`.
@@ -128,10 +152,11 @@ attempt state and privacy-safe security events; administrators can inspect the
 audit stream and revoke individual or all account sessions without exposing
 stored token hashes.
 
-Credential recovery is provider-owned and endpoint-backed under
-`/zelavis/api/v1/auth/recovery/*`. Password plugins can opt into expiring,
-hashed one-time recovery tokens with an operator-supplied delivery callback;
-successful recovery revokes the account's active sessions.
+The built-in password provider sends single-use verification and recovery
+links through the runtime's own SMTP outbox. Verification is optional by
+default. The `emailVerification` registration setting can require it before
+issuing a session. Successful recovery changes the password and revokes
+the account's existing sessions.
 
 SQLite-compatible App drivers serialize top-level write transactions and
 enforce unique event-stream revisions. Raw `sql.execute()` accepts one
@@ -510,7 +535,7 @@ Use scoped packages when building lower-level primitives, adapters, services, or
 
 ```ts
 import { zelavis } from "zelavis/sdk";
-import { authService } from "zelavis/app/identity";
+import { defineOAuthProviders } from "zelavis/auth";
 ```
 
 Plugins are standard npm packages configured via `package.json` manifests (`"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`).
@@ -1010,8 +1035,7 @@ const client = createBrowserZelavisClient({
 const config = await client.runtime.config();
 ```
 
-The SDK also re-exports the runtime-neutral `zelavis/app/db` and
-`zelavis/app/identity` core APIs. Today that enables in-memory local development.
+Use the browser SDK's `client.auth` and `client.data(projectId)` for HTTP access to a runtime.
 Future browser storage adapters such as IndexedDB and SQLite WASM should attach
 to the same database driver boundary instead of creating a separate browser DB
 model.
@@ -1255,3 +1279,11 @@ Project's private loopback target. The port survives Project and Platform
 restarts, closes while stopped, and is removed on deletion. Previews follow the
 Platform's listen host; remote Node previews are unavailable. Preview HTTP is
 separate from hostname and HTTPS configuration.
+
+## License
+
+Zelavis is licensed under the MIT License (`LICENSE`). Third-party derived
+authentication source files remain under the Apache License, Version 2.0
+(`LICENSE-APACHE`): each carries its provenance header, `src/auth/upstream.json`
+records them, and `NOTICE` carries the attribution. The package's license is
+therefore `MIT AND Apache-2.0`.

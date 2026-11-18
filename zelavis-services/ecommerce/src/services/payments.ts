@@ -22,6 +22,7 @@ import {
   InvalidInput,
   NotFound,
   ProviderFailure,
+  ProviderNotConfigured,
   type StorageFailure,
   UnknownProvider,
   UnsupportedOperation,
@@ -40,12 +41,12 @@ export class Payments extends Context.Service<Payments, {
   createPayment(
     order: Order,
     providerName: string,
-  ): Effect.Effect<PaymentAttempt, UnknownProvider | ProviderFailure | StorageFailure>;
+  ): Effect.Effect<PaymentAttempt, UnknownProvider | ProviderFailure | ProviderNotConfigured | StorageFailure>;
   listPaymentAttempts(): Effect.Effect<ReadonlyArray<PaymentAttempt>, StorageFailure>;
   createSubscription(
     input: CreateSubscriptionInput,
     providerName: string,
-  ): Effect.Effect<BillingSubscription, UnsupportedOperation | ProviderFailure | StorageFailure>;
+  ): Effect.Effect<BillingSubscription, UnsupportedOperation | ProviderFailure | ProviderNotConfigured | StorageFailure>;
   getSubscriptionById(id: string): Effect.Effect<BillingSubscription | undefined, StorageFailure>;
   listSubscriptions(): Effect.Effect<ReadonlyArray<BillingSubscription>, StorageFailure>;
   cancelSubscription(
@@ -53,7 +54,7 @@ export class Payments extends Context.Service<Payments, {
     options?: CancelSubscriptionOptions,
   ): Effect.Effect<
     BillingSubscription,
-    NotFound | UnsupportedOperation | ProviderFailure | StorageFailure
+    NotFound | UnsupportedOperation | ProviderFailure | ProviderNotConfigured | StorageFailure
   >;
 }>()("zelavis/ecommerce/Payments") {
   static readonly layer = Layer.effect(
@@ -67,10 +68,10 @@ export class Payments extends Context.Service<Payments, {
         provider: string,
         operation: string,
         run: () => Promise<A>,
-      ): Effect.Effect<A, ProviderFailure> =>
+      ): Effect.Effect<A, ProviderFailure | ProviderNotConfigured> =>
         Effect.tryPromise({
           try: run,
-          catch: (cause) => new ProviderFailure({ provider, operation, cause }),
+          catch: (cause) => cause && typeof cause === "object" && "_tag" in cause && cause._tag === "ProviderNotConfigured" ? new ProviderNotConfigured({ provider }) : new ProviderFailure({ provider, operation, cause }),
         });
 
       const registerProvider = Effect.fn("Payments.registerProvider")(

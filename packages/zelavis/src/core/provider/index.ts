@@ -165,3 +165,7 @@ export function getProviderCapability<TApi = unknown>(
   return provider.capabilities.find((capability) => capability.kind === kind)
     ?.api as TApi | undefined;
 }
+
+export * from "./capacity-error.js";
+export * from "./worker-first-boot.js";
+export * from "./capacity-name.js";

@@ -72,8 +72,10 @@ export type ZelavisServiceCapability =
   // the Platform's own services appear here: a capability owned by a plugin is
   // that plugin's to name, and listing one would make core know about a
   // product it does not ship.
-  | "zelavis/identity:credentials"
-  | "zelavis/identity:oauth"
+  | "zelavis/auth:authenticator"
+  | "zelavis/auth:oauth"
+  | "zelavis/edge:dns"
+  | "zelavis/edge:registrar"
   | (string & {});
 
 export interface ZelavisServiceMarketplaceMetadata {

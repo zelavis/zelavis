@@ -1,14 +1,21 @@
+import { fileURLToPath } from "node:url";
 import { appShardConfiguration, appShardEnvironment } from "./_app-shard-environment.js";
 import { projectLeaseConfiguration, projectLeaseEnvironment, projectLeaseEnvironmentAt, type ProjectLeaseRole } from "./_project-lease-environment.js";
-import type { NodeDatabaseLease } from "../db/node-host.js";
+import { openNodeDatabase, type NodeDatabaseLease, type OpenNodeDatabase } from "../db/node-host.js";
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
-import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
+import { databaseComponent, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
 import { InvalidBackup } from "../db/errors.js";
 import { systemStoreComponent } from "../platform/platform-backups.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { createZelavisEdgePreviews } from "../edge/previews.js";
-import { createNodeDnsTxtResolver } from "../domain-verifier.js";
+import { createAuthoritativeDnsTxtResolver } from "./_node-authoritative-dns.js";
+export { namecheapRegistrar, createNamecheapRegistrar } from "./_registrar-namecheap.js";
+import { namecheapRegistrar } from "./_registrar-namecheap.js";
+import { cloudflareDnsProvider } from "./_dns-cloudflare.js";
+/** The built-in Cloudflare DNS driver; `createCloudflareDnsProvider({ apiBase })` points it elsewhere (tests, a proxy). */
+export { cloudflareDnsProvider, createCloudflareDnsProvider } from "./_dns-cloudflare.js";
+import { smtpTransport } from "./_node-smtp.js";
 import { preflightHostname } from "../edge/onboarding.js";
 import { isProjectDomainLoopbackTarget, PROJECT_DOMAIN_PROBE_PATH, type ProjectDomainTlsMode } from "../edge/project-domains.js";
 import { fetchNodeSite } from "./_node-site-fetch.js";
@@ -21,7 +28,7 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
-import { writeFile } from "node:fs/promises";
+import { readdir, stat, writeFile } from "node:fs/promises";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { AppShardPlacementNode } from "../platform/app-data-placement.js";
@@ -30,7 +37,7 @@ import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-r
 import { availableRequirements } from "./_recipe-requirements.js";
 import { runtimePlatform } from "./_recipe-runtimes.js";
 import { provisionableRequirements } from "../project-host-packages.js";
-import { composeCloudCapacity, readCloudPolicy } from "../platform/cloud-engine.js";
+import { composeCloudCapacity } from "../platform/cloud-engine.js";
 import type { CloudCapacityController } from "../platform/cloud-capacity.js";
 import { loadRemoteNodeSources } from "./_remote-node-sources.js";
 import { createHttpsProjectDispatcher } from "./_project-dispatch-https.js";
@@ -217,11 +224,11 @@ export interface NodeAdapterOptions {
   /** Where machines enroll and the pin to use; published for operators when the host serves one. */
   enrollmentEndpoint?: { url: string; fingerprint: string };
   /**
-   * Cloud capacity: the bundled engine and the operator's policy file (location, image, approved
-   * sizes, ceiling). Needs an enrollment endpoint, because a machine the Platform creates must be
-   * able to join it. Without both, connecting a provider answers 503.
+   * Set false to disable cloud capacity. Otherwise it is composed on Platforms with an enrollment
+   * endpoint and System Store. Operators save the machine policy through /runtime/cloud/policy;
+   * the provider bundle loads only on first Hetzner use.
    */
-  cloud?: { bundlePath: string; policyFile: string };
+  cloud?: false;
   /**
    * More of what a Project's backups capture, beside its database, runtime store and media: a managed app's
    * integration runtime adds the app's own data (`app`, see `stageRecipeBackup`).
@@ -290,6 +297,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             workloads: false,
           };
 
+      // Every runtime, the Platform and each App, sends its own mail over SMTP.
+      nextSubsystems.email = { send: smtpTransport() };
+
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -305,21 +315,53 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
       if (systemStore) stores.add(systemStore);
 
-      // The Platform's own backups: its System Store, on the schedules its owner makes. Their loops live in a
-      // scope that closes with the runtime.
+      // One Platform backups host captures the System Store, private Auth data and services database.
+      // The identity database (Platform users' Auth data) is separate from the System Store and from every Project's
+      // database, opened for no route and no service; it brings the one backups host the schedules run on.
+      // Their loops live in a scope that closes with the runtime.
       let platformBackups: DatabaseBackupsHost | undefined;
       if (!isProjectRuntime && systemStore) {
         const backupScope = yield* integration(() => Effect.runPromise(Scope.make()));
-        stores.add({ close: () => Effect.runPromise(Scope.close(backupScope, Exit.void)) });
+        let identity: OpenNodeDatabase | undefined;
+        let services: OpenNodeDatabase | undefined;
+        stores.add({ close: () => present(Scope.close(backupScope, Exit.void).pipe(
+          Effect.ensuring(integration(() => identity?.close()).pipe(
+            Effect.ensuring(integration(() => services?.close()).pipe(Effect.orDie)),
+            Effect.orDie,
+          )),
+        )) });
+        const servicesDirectory = join(dataDirectory, "services-database");
+        const shardDirectory = yield* integration(() => stat(join(servicesDirectory, "shards"))).pipe(
+          Effect.catchIf((failure) => (unwrapFailure(failure) as NodeJS.ErrnoException).code === "ENOENT", () => Effect.succeed(undefined)),
+        );
+        if (shardDirectory === undefined) {
+          const entries = yield* integration(() => readdir(servicesDirectory)).pipe(
+            Effect.catchIf((failure) => (unwrapFailure(failure) as NodeJS.ErrnoException).code === "ENOENT", () => Effect.succeed([] as string[])),
+          );
+          if (entries.some((name) => name.startsWith("shards.replaced-"))) {
+            return yield* new IntegrationFailure(new Error("An interrupted services-database restore needs finishing: run zelavis services-database restore again."));
+          }
+        }
+        services = yield* integration(() => openNodeDatabase({
+          directory: join(dataDirectory, "services-database", "shards"),
+          nodeId: "local",
+          shards: ["services-0"],
+          backups: false,
+        }));
         const writeLines = (path: string, lines: ReadonlyArray<string>) => Effect.tryPromise({
           try: () => writeFile(path, lines.length === 0 ? "" : `${lines.join("\n")}\n`, { mode: 0o600 }),
           catch: (cause) => new InvalidBackup({ reason: `system-store.write: ${String(cause)}` }),
         });
-        platformBackups = yield* integration(() => Effect.runPromise(backupsHost({
-          directory: join(dataDirectory, "backups"),
-          components: [systemStoreComponent(systemStore, writeLines)],
-          scope: backupScope,
-        })));
+        identity = yield* integration(() => openNodeDatabase({
+          directory: join(dataDirectory, "identity-database", "shards"),
+          nodeId: "local",
+          shards: ["identity-0"],
+          backups: { directory: join(dataDirectory, "backups"), componentName: "identity", scope: backupScope },
+          backupComponents: [systemStoreComponent(systemStore, writeLines), databaseComponent(services.database, services.engine)],
+        }));
+        platformBackups = identity.backups;
+        nextSubsystems.identityDatabase = identity.api;
+        nextSubsystems.servicesDatabase = services.api;
       }
 
       if (databaseOptions !== false) {
@@ -634,21 +676,20 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       if (edgePreviews) stores.add(edgePreviews);
 
       let cloudCapacity: CloudCapacityController | undefined;
-      if (options.cloud && options.enrollmentEndpoint && systemStore && !isProjectRuntime) {
-        const cloud = options.cloud;
+      if (options.cloud !== false && options.enrollmentEndpoint && systemStore && !isProjectRuntime) {
         const endpoint = options.enrollmentEndpoint;
         const store = systemStore;
         const masterSecret = yield* integration(() => loadPlatformMasterSecret(store));
-        const policy = yield* readCloudPolicy(cloud.policyFile).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
         // One stable id per installation: it labels every machine this Platform creates.
         const platformId = yield* integration(() => store.setIfAbsent("fabric.cloud-platform.v1", "id", crypto.randomUUID()))
           .pipe(Effect.map((result) => String(result.record.value)));
         cloudCapacity = yield* composeCloudCapacity({
-          store, masterSecret, platformId, bundlePath: cloud.bundlePath, policy, endpoint,
+          store, masterSecret, platformId, bundlePath: fileURLToPath(new URL("./capacity/bundle.js", import.meta.url)), endpoint,
           workDir: join(dataDirectory, "system", "cloud"),
         }).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
       }
 
+      const authoritativeDns = createAuthoritativeDnsTxtResolver();
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
@@ -683,8 +724,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(!isProjectRuntime ? { projectInstallHost: () => present(availableRequirements(provisionableRequirements(hostOperations !== undefined)).pipe(
             Effect.map((requirements) => ({ drivers: ["js" as const], requirements, ...(runtimePlatform() ? { platform: runtimePlatform()! } : {}) })))) } : {}),
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
+          ...(!isProjectRuntime && systemStore ? { edgeDnsProviders: [cloudflareDnsProvider], edgeRegistrars: [namecheapRegistrar], edgeAuthoritativeTxt: authoritativeDns } : {}),
           ...(!isProjectRuntime && systemStore ? { projectDomainIngress: {
-            dns: createNodeDnsTxtResolver(),
+            dns: authoritativeDns,
             ...(externalTarget ? { externalTarget } : {}),
             preflight: (hostname: string) => present(Effect.gen(function* () {
               const dns = yield* integration(() => preflightHostname(hostname));

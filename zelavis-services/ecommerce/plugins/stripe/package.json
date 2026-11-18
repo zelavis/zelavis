@@ -9,7 +9,9 @@
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "@zelavis/ecommerce:payments"
+      "@zelavis/ecommerce:payments",
+      "api:routes",
+      "dashboard:menu"
     ],
     "namespace": "stripe",
     "marketplace": {
@@ -34,11 +36,12 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json --emitDeclarationOnly && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --external:zelavis --external:'zelavis/*' --external:effect --external:'effect/*' --banner:js=\"import { createRequire as __zelavisCreateRequire } from 'node:module'; const require = __zelavisCreateRequire(import.meta.url);\" --outfile=dist/index.js",
+    "build": "rm -rf dist && tsc -p tsconfig.json --emitDeclarationOnly && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --external:zelavis --external:'zelavis/*' --external:effect --external:'effect/*' --banner:js=\"import { createRequire as __zelavisCreateRequire } from 'node:module'; const require = __zelavisCreateRequire(import.meta.url);\" --outfile=dist/index.js && esbuild ../../src/dashboard-api.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dashboard/api.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run typecheck"
   },
   "files": [
+    "dashboard",
     "dist"
   ],
   "publishConfig": {
@@ -55,14 +58,16 @@
   },
   "peerDependencies": {
     "zelavis": ">=2.0.0-alpha.45",
-    "@zelavis/ecommerce": ">=2.0.0-alpha.4"
+    "@zelavis/ecommerce": ">=2.0.0-alpha.4",
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "@zelavis/ecommerce": "workspace:*",
     "esbuild": "^0.28.2",
     "stripe": "^23.1.0",
     "typescript": "^7.0.2",
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "effect": "4.0.0"
   },
   "keywords": [
     "stripe",

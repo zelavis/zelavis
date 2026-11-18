@@ -46,7 +46,7 @@ export function register() {
         const existing = yield* call(() => tenant.documents.listCollections());
         if (!existing.some(collection => collection.name === "power")) yield* call(() => tenant.documents.createCollection({ name: "power" }));
         yield* call(() => tenant.documents.insert({ collection: "power", id: "proof", data: { title: "private app data" } }));
-      } else if (params.capability === "identity") yield* call(() => context.core.auth.accounts.create({ id: "integration-user", email: "user@example.test" }));
+      } else if (params.capability === "auth") yield* call(() => context.core.auth.methods(new Request("http://localhost")));
       else if (params.capability === "storage") yield* call(() => context.core.storage.put({ path: "integration-proof.txt", body: new TextEncoder().encode("private storage") }));
       else if (params.capability === "workloads") yield* call(() => context.core.workloads.store.save({ id: "integration-job", projectId: "site", type: "job", name: "integration job", code: "export default () => {}", enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
       return { status: 200, body: { exercised: params.capability } };
@@ -688,10 +688,10 @@ test("managed apps provide ordinary private APIs by default and retain usage and
   const json = async (path, init) => { const response = await request(path, init); assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
   const configuration = () => json("/zelavis/api/v1/runtime/config");
   let config = await configuration();
-  for (const domain of ["database", "identity", "storage", "workloads"]) assert.deepEqual(config.capabilities[domain], { available: true, used: false });
+  for (const domain of ["database", "auth", "storage", "workloads"]) assert.deepEqual(config.capabilities[domain], { available: true, used: false });
   assert.equal(config.capabilities.fabric.available, false, "A bound App must never acquire parent Fabric authority");
   assert.equal((await request("/zelavis/api/v1/auth/accounts", {}, [])).status, 403);
-  assert.equal((await configuration()).capabilities.identity.used, false, "Denied requests do not reveal menus");
+  assert.equal((await configuration()).capabilities.auth.used, false, "Denied requests do not reveal menus");
   assert.equal((await request("/zelavis/api/v1/database/not-a-real-api")).status, 404);
   assert.equal((await configuration()).capabilities.database.used, false);
   await managedRecipePackage(f.root, { marker: "v2", version: "2.0.0", backend: true });
@@ -699,15 +699,20 @@ test("managed apps provide ordinary private APIs by default and retain usage and
   await f.driver.applyUpdate("site", update, async choice => { record = { ...(choice === "target" ? f.candidate : f.previous), recipe: choice === "target" ? update.recipe : f.previous.recipe }; });
   config = await configuration();
   assert.equal(config.capabilities.database.used, true, "An ordinary setup API call automatically reveals its native section");
-  assert.equal(config.capabilities.identity.used, false, "Merely receiving Auth in the setup context is not usage");
-  for (const capability of ["database", "identity", "storage", "workloads"]) {
+  assert.equal(config.capabilities.auth.used, false, "Merely receiving Auth in the setup context is not usage");
+  for (const capability of ["database", "auth", "storage", "workloads"]) {
     assert.equal((await json("/zelavis/api/v1/integration-native/" + capability, { method: "POST" })).exercised, capability);
   }
+  const created = await request("/zelavis/api/v1/auth/accounts", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "integration-user", password: "a long private integration password" }),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const { account } = await created.json();
   const checkData = async () => {
     const active = await configuration();
-    for (const domain of ["database", "identity", "storage", "workloads"]) assert.deepEqual(active.capabilities[domain], { available: true, used: true });
-    const accounts = await json("/zelavis/api/v1/auth/accounts");
-    assert.ok(accounts.some(account => account.id === "integration-user"));
+    for (const domain of ["database", "auth", "storage", "workloads"]) assert.deepEqual(active.capabilities[domain], { available: true, used: true });
+    const { accounts } = await json("/zelavis/api/v1/auth/accounts");
+    assert.ok(accounts.some(entry => entry.id === account.id));
     assert.equal(await (await request("/zelavis/api/v1/storage/files/integration-proof.txt")).text(), "private storage");
     const workloads = await json("/zelavis/api/v1/workloads/?projectId=site");
     assert.ok(workloads.workloads.some(workload => workload.id === "integration-job"));
@@ -755,7 +760,7 @@ test("a catalogue summary cannot override the verified managed recipe or send da
   const body = await new Response(config.body).json();
   assert.equal(body.services.find(service => service.name === "@acme/site").menus[0].title, "Integration v1");
   assert.equal(body.capabilities.database.used, false);
-  assert.equal(body.capabilities.identity.used, false);
+  assert.equal(body.capabilities.auth.used, false);
   assert.equal(await readFile(join(projects, "site", "workload-events"), "utf8"), "start:v1\n");
 });
 

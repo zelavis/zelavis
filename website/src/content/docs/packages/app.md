@@ -2,9 +2,9 @@
 title: "zelavis/app"
 ---
 
-`zelavis/app` is the official Zelavis-native project stack. It owns the app
-database, auth, and workloads modules that used to live as separate workspace
-packages.
+`zelavis/app` is the official Zelavis-native project stack. A Project runtime
+composes the database (`zelavis/db`), Zelavis Auth (`zelavis/auth`) and
+workloads as native subsystems.
 
 It is a `kind: "app"` Project recipe and runtime stack exported as a subpath of
 the unified `zelavis` package and used directly by the Platform project creator.
@@ -14,9 +14,9 @@ the unified `zelavis` package and used directly by the Platform project creator.
 Use subpath imports when lower-level code needs direct access:
 
 ```ts
-import { createDatabase, defineDatabaseService } from "zelavis/app/db";
-import { createAuth, authService } from "zelavis/app/identity";
-import { workloadsService } from "zelavis/app/workloads";
+import { openShardOverKv } from "zelavis/db";
+import { createAuth } from "zelavis/auth";
+import { workloadsEndpointGroup } from "zelavis/app/workloads";
 import { createServiceRuntime } from "zelavis/core";
 ```
 
@@ -45,17 +45,18 @@ parent Platform upgrade preserves that lock. The current Node driver does not
 yet materialize older versions independently; immutable Project artifacts are
 the next step for true side-by-side version execution.
 
-The recipe includes Project-owned Auth with password sign-in, optional public
-registration, session lifecycle, OAuth/OpenID Connect configuration, and durable
-accounts and credentials in the Project database. These identities are the
+Each App runs its own Zelavis Auth: username and password, email and password,
+passkeys, OAuth and OpenID Connect, TOTP, optional public registration and
+invitations, with accounts, credentials and sessions in the App's own Project
+database and access tokens signed by the App's own key. These accounts are the
 App's users; Platform owners and service accounts remain a separate authority
 boundary. Registration starts closed and the Project's saved setting applies
 immediately. Closing it preserves existing sign-in. The Platform can manage
 the setting on a running Project with `zelavis projects registration-settings PROJECT`
 and `zelavis projects set-registration-settings PROJECT --data JSON`.
 Visitors sign in at `/zelavis/login` on the App's verified site hostname or
-Edge preview. When the App owner enables password registration, the login
-page links to `/zelavis/sign-up`. Both forms return to the site's root on
+Edge preview. When the App owner enables registration, the login page links to
+`/zelavis/sign-up`. Both forms return to the site's root on
 success and work alongside the Project's selected frontend. Use HTTPS for
 public password traffic. Connect the hostname through **Project → Domains** and
 wait for it to become active. For an App at `https://app.example.com`, the

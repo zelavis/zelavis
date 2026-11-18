@@ -1,3 +1,4 @@
+import { accountPageTitles, isAccountPath } from "../src/account-routes.ts";
 import { dashboardRoutes } from "./dashboard-routes.ts";
 import type { RouteDefinition } from "fuzor/runtime";
 export type DashboardHandle = { pageLabel: string; sidebarTrail: readonly string[] };
@@ -10,6 +11,7 @@ Object.assign(clientRoutes, { "/:section*": "/", "/projects/:projectId/:section*
 const routeHandle = (path: string): DashboardHandle => {
   if (path.startsWith("/projects/:projectId")) { const section = path.split("/")[3]; return handle(section ? section[0].toUpperCase() + section.slice(1) : "Project overview", "projects", "project", ...(section && !section.startsWith(":") ? [section] : [])); }
   if (path.startsWith("/server")) return handle(path.split("/")[2] ?? "Server", "server");
+  if (isAccountPath(path)) return handle(accountPageTitles[path]);
   if (path.startsWith("/settings")) return handle("Settings", "settings");
   return handle(path === "/" || path === "/projects" ? "Projects" : path.slice(1));
 };

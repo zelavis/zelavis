@@ -71,3 +71,5 @@ Thumbs.db
 
 # Alchemy working directory
 .alchemy/
+
+packages/zelavis/.capacity-build/

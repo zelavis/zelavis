@@ -133,8 +133,9 @@ and AI agents should all pass through that same model.
 
 The base authorization contract lives in `zelavis/core`, because route
 access requirements must be enforceable for every service no matter which auth
-method produced the principal. `zelavis/app/identity` owns accounts, credentials,
-sessions, and pluggable authentication methods.
+method produced the principal. Zelavis Auth (`zelavis/auth`) owns accounts,
+credentials, sessions and sign-in methods, with one instance per runtime: the
+Platform's accounts and each App's users never share a store, key or cookie.
 
 That split is important for the future official Hosting Provider module:
 customers and resellers should not get a separate permission system. They
@@ -150,15 +151,18 @@ Core package and public surfaces:
 
 - [packages/zelavis](packages/zelavis)
   The unified framework and App Platform. Reusable runtime and Fabric code is
-  under `src/core`; the official versioned App recipe, Auth, Database, and
-  Workloads stack is under `src/app`; trusted product services are under
+  under `src/core`; Zelavis Auth is under `src/auth`; the App stack
+  (workloads, email) is under `src/app`; trusted product services are under
   `src/platform`.
 - [packages/zelavis/src/core](packages/zelavis/src/core)
   Public `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`,
   `zelavis/workload`, `zelavis/artifact`, and `zelavis/provider` surfaces.
 - [packages/zelavis/src/app](packages/zelavis/src/app)
-  Public `zelavis/app`, `zelavis/app/identity`, and `zelavis/app/workloads`
+  Public `zelavis/app`, `zelavis/app/email`, and `zelavis/app/workloads`
   surfaces.
+- [packages/zelavis/src/auth](packages/zelavis/src/auth)
+  Public `zelavis/auth` surface: Zelavis Auth, with per-file upstream
+  provenance in `upstream.json` (Apache-2.0, see `packages/zelavis/NOTICE`).
 - [packages/zelavis/src/db](packages/zelavis/src/db)
   Public `zelavis/db` multi-model object store and its Node opener.
 - [packages/zelavis/src/platform](packages/zelavis/src/platform)
@@ -277,7 +281,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/workloads
 ```
 
-Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/app/identity` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 

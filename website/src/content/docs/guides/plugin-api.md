@@ -50,7 +50,7 @@ include dashboard extensions, authentication methods, payment providers,
 database-related services, routes, commands, and other optional capabilities.
 
 “Provider” is not a kind. A provider is an ordinary plugin discovered by a
-capability such as `zelavis/identity:oauth` or
+capability such as `zelavis/auth:authenticator` or
 `@zelavis/ecommerce:payments`.
 
 Minimal manifest:
@@ -221,8 +221,8 @@ Common built-in capability names include:
 - `dashboard:settings`
 - `web:app`
 - `web:site`
-- `zelavis/identity:credentials`
-- `zelavis/identity:oauth`
+- `zelavis/auth:authenticator` (a bearer authenticator)
+- `zelavis/auth:oauth` (named OpenID Connect issuers, `defineOAuthProviders` from `zelavis/auth`)
 
 The capability type is extensible, so a plugin may define a namespaced
 capability. Capabilities express what a service supplies or which owning
@@ -624,6 +624,12 @@ If the page boots a SPA, the plugin owns that SPA's internal routing. Zelavis
 menu metadata selects the HTML entry; it does not deep-link into the private
 routes of the embedded SPA.
 
+A sandboxed service page can request a hosted checkout or portal from its own API
+using `createServicePageFetch({ offerExternalLink: true })` from
+`zelavis/sdk/service-page`. On a successful POST with a JSON `url` field, the
+dashboard may show the destination and let the viewer open it in a separate tab.
+The dialog accepts HTTPS destinations and HTTP loopback destinations.
+
 ### Dashboard surfaces and trust
 
 The surface names are:
@@ -835,7 +841,7 @@ export function register() {
 
 The callback may instead return `{ endpointGroups }`. Group ids must be unique
 across the runtime; a group cannot reuse the id of a native subsystem such as
-`identity` or `database`. The callback receives the runtime's scoped setup
+`auth` or `database`. The callback receives the runtime's scoped setup
 context once that runtime is available. Register it once per package load.
 Endpoint groups do not replace the owning package's manifest or its SDK API
 declarations, and they never appear in the service inventory.
@@ -1115,3 +1121,81 @@ When this document and the repository disagree, follow the repository:
   first-party plugin: one menu, one page, no routes of its own.
 
 When this guide and the repository disagree, the repository wins.
+
+## Sealed service credentials and workers
+
+`zelavis.setup` receives `core.secrets` wherever `core.store` is available. It is
+fixed to the receiving service, and each runtime has its own sealing secret.
+Use `get(name)`, `set(name, value)`, `delete(name)` and `list()`; listing returns
+names only. Names match `^[a-z][a-z0-9._-]{0,63}$`, values contain at most 4096 UTF-8
+bytes, and a service may keep at most 32 credentials. Never copy plaintext into
+ordinary records, API responses, errors or logs. Settings APIs return configured
+flags and a short hint, with explicit route permissions.
+
+A setup hook can contribute to the existing runtime lifecycle with
+`context.addRuntimePlugin(({ hooks }) => { ...; return cleanup; })`.
+Register startup through `hooks.hook("start", startWorker)` and return cleanup
+that stops the worker. Contributions start after service setup and mounting;
+cleanup also runs on failed startup and precedes database/System Store closure.
+Use Effect for worker orchestration and scoped interruption.
+
+## Ecommerce fulfillment
+
+An extension declaring `@zelavis/ecommerce:fulfillment` exports
+`service.register(api: EcommerceApi)` and calls
+`api.fulfillment.registerHandler(name, handler)` through `api.runPromise`.
+Ecommerce validates and registers the extension by capability, without a package
+name allow-list or child-service graph. This is the same extension mechanism
+payment providers use with `@zelavis/ecommerce:payments`.
+
+```ts
+import { Effect } from "effect";
+import type { EcommerceApi } from "@zelavis/ecommerce";
+
+export default {
+  service: {
+    register(api: EcommerceApi) {
+      return api.runPromise(api.fulfillment.registerHandler("receipts", message =>
+        Effect.runPromise(Effect.logInfo("Commerce event", {
+          messageId: message.id, type: message.type,
+        })),
+      ));
+    },
+  },
+};
+```
+
+Replace the example's logging with your business operation. Validate its payload
+and deduplicate by `message.id` in the same commit as your change. A message is
+`{ id, type, payload, occurredAt }`; the type is
+`commerce.checkout.completed`, `commerce.subscription.updated`,
+`commerce.payment.succeeded` or `commerce.payment.failed`. Payloads are the applied
+records as JSON (dates are ISO strings).
+
+The outbox message commits with the provider event's state change and idempotency
+receipt. Delivery is at least once, including after a crash; successful handlers
+are tracked separately from failing ones. Each pass reads 50 messages with at most
+four concurrent calls and a 30-second deadline. Retries back off through 30 seconds,
+two minutes, ten minutes, one hour and six hours; they do not give up. A handler
+registered later receives only messages still pending. With no handlers, messages
+remain queued. The service worker stops before its database closes.
+
+Operators inspect failures through
+`GET /zelavis/api/v1/plugins/ecommerce/fulfillment/failures`,
+`client.plugins.ecommerce.fulfillment.failures()` or
+`zelavis plugins ecommerce fulfillment failures` (`ecommerce.view`). Results carry
+`{ deliveries, next? }`; pass the cursor as query `after` for the next page.
+Arbitrary handler exception text is excluded from persisted failure descriptions.
+
+Native Apps accept provider callbacks on verified public hostnames and previews
+only at `POST <api-base>/plugins/<namespace>/webhooks/<provider>`. That exact
+service-webhook convention is separate from the Auth allow-list and exposes no
+ordinary service administration route. The forwarding boundary preserves raw
+bytes and signature headers, caps bodies at 256 KiB and strips Platform authority;
+the receiving service must verify its provider's signature. These are
+provider callbacks, exempt from SDK/CLI operation parity.
+
+A timed-out Promise handler keeps its in-flight slot until its Promise settles;
+the handler contract has no cancellation signal. This preserves the four-call
+bound even when a handler ignores its deadline. Handlers should bound their own
+external calls so an unresponsive dependency does not occupy every slot.

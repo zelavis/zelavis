@@ -13,6 +13,11 @@ import type { CreateSubscriptionInput } from "./contracts/payment-provider.js";
 import type { PluginOperationOptions } from "zelavis/sdk";
 
 export interface EcommercePluginClient {
+  readonly fulfillment: { failures(input?: undefined, options?: PluginOperationOptions): Promise<{ deliveries: readonly import("./services/fulfillment.js").Delivery[]; next?: string }> };
+  readonly checkouts: {
+    create(input: import("./services/checkouts.js").CheckoutInput, options?: PluginOperationOptions): Promise<{ checkout: import("./domain/entities.js").Checkout }>;
+    get(input: undefined, options: PluginOperationOptions & { params: { id: string } }): Promise<{ checkout: import("./domain/entities.js").Checkout }>;
+  };
   readonly health: {
     get(input?: undefined, options?: PluginOperationOptions): Promise<{
       service: string;
@@ -32,6 +37,7 @@ export interface EcommercePluginClient {
     getById(input: undefined, options: PluginOperationOptions & { params: { id: string } }): Promise<Order>;
   };
   readonly customers: {
+    portal(input: import("./services/checkouts.js").PortalInput, options: PluginOperationOptions & { params: { id: string } }): Promise<{ url: string }>;
     list(input?: undefined, options?: PluginOperationOptions): Promise<readonly Customer[]>;
     create(input: CreateCustomerInput, options?: PluginOperationOptions): Promise<Customer>;
     getById(input: undefined, options: PluginOperationOptions & { params: { id: string } }): Promise<Customer>;
@@ -43,7 +49,8 @@ export interface EcommercePluginClient {
   };
   readonly payments: {
     providers(input?: undefined, options?: PluginOperationOptions): Promise<{
-      providers: readonly { name: string; plugin?: string }[];
+      providers: readonly { name: string; checkoutSupported: boolean; webhookPath: string }[];
+      plugins: readonly { name: string; title: string; status: string }[];
     }>;
     attempts(input?: undefined, options?: PluginOperationOptions): Promise<readonly unknown[]>;
     create(

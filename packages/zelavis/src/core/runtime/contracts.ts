@@ -99,6 +99,8 @@ export interface ZelavisRouteContext<TService = unknown> {
   request: Request;
   principal?: ZelavisPrincipal;
   platform?: unknown;
+  /** What the runtime knows about the caller's network origin; never a value the caller chose. */
+  client: { readonly address?: string };
 }
 
 export interface ZelavisRouteResponse {

@@ -16,12 +16,14 @@ import { CloudCapacityError, type CloudCapacityController } from "./cloud-capaci
 const noStore = { "cache-control": "no-store" } as const;
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } =>
   value !== null && typeof value === "object" && !Array.isArray(value);
-const bad = (message: string) => ({ status: 400, headers: noStore, body: { error: message } });
+const bad = (message: string) => ({ status: 400, headers: noStore, body: { error: message, code: "invalid-request" } });
 
 function answerFor(error: CloudCapacityError) {
-  const body = { error: error.message, code: error.code };
+  const body = { error: error.message, code: error.code === "policy-conflict" ? "invalid-request" : error.code };
   switch (error.code) {
     case "invalid-request": return { status: 400, headers: noStore, body };
+    case "policy-missing":
+    case "policy-conflict":
     case "not-connected": return { status: 409, headers: noStore, body };
     case "already-connected": return { status: 409, headers: noStore, body };
     case "has-nodes": return { status: 409, headers: noStore, body };
@@ -59,8 +61,10 @@ export function createCloudRoutes(options: { readonly controller?: CloudCapacity
         if (!controller) return unavailable;
         if (!isObject(body) || typeof body.provider !== "string" || typeof body.token !== "string") return bad("provider and token are required.");
         if (body.label !== undefined && typeof body.label !== "string") return bad("label must be a string.");
+        if (body.endpoint !== undefined && typeof body.endpoint !== "string") return bad("endpoint must be a string.");
         return yield* controller.connect({
           provider: body.provider, token: body.token, principalId: principal?.id ?? "unknown",
+          ...(body.endpoint === undefined ? {} : { endpoint: body.endpoint as string }),
           ...(body.label === undefined ? {} : { label: body.label as string }),
         }).pipe(
           Effect.map((connection) => ({ status: 201, headers: noStore, body: { connection } })),
@@ -78,6 +82,27 @@ export function createCloudRoutes(options: { readonly controller?: CloudCapacity
         return yield* controller.disconnect(principal?.id ?? "unknown").pipe(
           Effect.map(() => ({ headers: noStore, body: { disconnected: true } })),
           Effect.catchTag("CloudCapacityError", (error) => Effect.succeed(answerFor(error))),
+        );
+      })),
+    },
+    {
+      id: "runtime.cloud.policy.read", method: "GET", path: "/cloud/policy",
+      access: { permissions: ["server.cloud.view"], scope: system },
+      spec: { operationId: "getCloudPolicy", summary: "Read the machine policy", tags: ["cloud"], responses: { 200: { description: "Machine policy or null" } } },
+      handler: () => present(Effect.gen(function* () {
+        if (!controller) return unavailable;
+        return yield* controller.policy().pipe(Effect.map(body => ({ headers: noStore, body })), Effect.catchTag("CloudCapacityError", error => Effect.succeed(answerFor(error))));
+      })),
+    },
+    {
+      id: "runtime.cloud.policy.set", method: "PUT", path: "/cloud/policy",
+      access: { permissions: ["server.cloud.connect"], scope: system },
+      spec: { operationId: "setCloudPolicy", summary: "Set the machine policy", tags: ["cloud"], responses: { 200: { description: "Saved" }, 400: { description: "Invalid policy" }, 409: { description: "Policy changed" } } },
+      handler: ({ body, principal }) => present(Effect.gen(function* () {
+        if (!controller) return unavailable;
+        if (!isObject(body) || (body.expectedUpdatedAt !== undefined && typeof body.expectedUpdatedAt !== "number")) return bad("policy and an optional numeric expectedUpdatedAt are required.");
+        return yield* controller.setPolicy(body.policy, principal?.id ?? "unknown", body.expectedUpdatedAt as number | undefined).pipe(
+          Effect.map(body => ({ headers: noStore, body })), Effect.catchTag("CloudCapacityError", error => Effect.succeed(answerFor(error))),
         );
       })),
     },
@@ -118,9 +143,9 @@ export function createCloudRoutes(options: { readonly controller?: CloudCapacity
       access: { permissions: ["server.cloud.view"], scope: system },
       spec: { operationId: "listCloudNodes", summary: "List machines this Platform created in its cloud", tags: ["cloud"],
         responses: { 200: { description: "Machines" }, 409: { description: "Not connected" } } },
-      handler: () => present(Effect.gen(function* () {
+      handler: ({ principal }) => present(Effect.gen(function* () {
         if (!controller) return unavailable;
-        return yield* controller.nodes().pipe(
+        return yield* controller.nodes(principal?.id ?? "unknown").pipe(
           Effect.map((nodes) => ({ headers: noStore, body: { nodes } })),
           Effect.catchTag("CloudCapacityError", (error) => Effect.succeed(answerFor(error))),
         );

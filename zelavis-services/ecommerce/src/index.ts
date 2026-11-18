@@ -13,3 +13,8 @@ export * from "./services/orders.js";
 export * from "./services/payments.js";
 export * from "./services/products.js";
 export * from "./client.js";
+
+export * from "./services/checkouts.js";
+
+export * from "./services/fulfillment.js";
+export * from "./errors.js";

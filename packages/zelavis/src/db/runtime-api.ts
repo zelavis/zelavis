@@ -15,7 +15,7 @@ import type { ExportPage, ExportPageInput } from "./export-stream.js";
 import { eventToWire, LEADER_LOG_LIMIT, LEADER_RECORDS_LIMIT, recordToWire, validFollowerName, type LeaderDeclarations, type LeaderFeed, type LeaderPartitions, type LeaderTransport } from "./leader.js";
 import { asSeq } from "./model.js";
 import type { EntityMessage, EntitySend, EntityServeOptions, EntityState, EntityStep } from "./entities.js";
-import { integration } from "../core/runtime/effect-boundary.js";
+import { integration, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { PART_SEPARATOR } from "./topology.js";
 import { InvalidFollowerRequest } from "./errors.js";
 import type { BranchTenantOptions, DatabaseApi, RecoveryWindow, TenantApi, TenantBranch, TenantRemoval } from "./database.js";
@@ -36,6 +36,7 @@ import type {
   RelatedDocuments,
   DocumentWrite,
   DocumentWritten,
+  DocumentTransactionOptions,
   OutboxEmit,
   Analyzer,
   SpatialIndex,
@@ -186,6 +187,21 @@ export interface TenantRuntimeApi {
        */
       idempotencyKey?: string;
     }) => Promise<ReadonlyArray<DocumentWritten>>;
+    /**
+     * Read, decide and write over this Tenant's documents as one serializable change; see
+     * `DocumentsApi.transaction`. The body may run more than once.
+     */
+    readonly transaction: <A>(
+      body: (tx: {
+        get(input: { collection: string; id: string }): Promise<Document | undefined>;
+        find(input: FindDocumentsInput & { limit: number }): Promise<ReadonlyArray<Document>>;
+        insert(input: { collection: string; id?: string; data: JsonObject; expiresAt?: string }): Promise<{ id: string }>;
+        update(input: { collection: string; id: string; data: JsonObject; mode?: "merge" | "replace" }): Promise<void>;
+        delete(input: { collection: string; id: string }): Promise<void>;
+        emit(message: OutboxEmit): Promise<void>;
+      }) => Promise<A>,
+      options?: DocumentTransactionOptions,
+    ) => Promise<A>;
     readonly rewrite: (input?: {
       collection?: string;
     }) => Promise<{ collections: number; documents: number }>;
@@ -485,6 +501,21 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     dropReference: (input) => run(tenant.documents.dropReference(input)),
     withRelated: (input) => run(tenant.documents.withRelated(input)),
     write: (input) => run(tenant.documents.write(input)),
+    // The caller's Promise body is adapted once per attempt, and each call it makes runs in the attempt's own context,
+    // so its reads stay in the attempt's snapshot. A rejection of the body reaches the caller as itself.
+    transaction: (body, options) => run(tenant.documents.transaction((tx) =>
+      Effect.gen(function* () {
+        const context = yield* Effect.context<never>();
+        const call = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect);
+        return yield* integration(() => body({
+          get: (input) => call(tx.get(input)),
+          find: (input) => call(tx.find(input)),
+          insert: (input) => call(tx.insert(input)),
+          update: (input) => call(tx.update(input)),
+          delete: (input) => call(tx.delete(input)),
+          emit: (message) => call(tx.emit(message)),
+        }), { interruptible: true }).pipe(Effect.mapError(unwrapFailure));
+      }), options)),
     rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
     dropCollection: (input) => run(tenant.documents.dropCollection(input)),
@@ -736,75 +767,87 @@ const followersRuntime = (database: DatabaseApi, leases: LeaseStore | undefined)
   };
 };
 
+/**
+ * The Effect database behind each Promise-facing API, for internal subsystems (Zelavis Auth runs its transactions on it).
+ * Kept here rather than on the object, so nothing public names it.
+ */
+const effectDatabases = new WeakMap<DatabaseRuntimeApi, DatabaseApi>();
+
+export const effectDatabaseOf = (api: DatabaseRuntimeApi): DatabaseApi | undefined => effectDatabases.get(api);
+
 export const runtimeApiFor = (
   database: DatabaseApi,
   options?: { readonly nodeId?: string; readonly leases?: LeaseStore; readonly images?: DatabaseImagesHost; readonly backups?: DatabaseBackupsHost; readonly storageChoice?: StorageChoiceHost; readonly storage?: { readonly engine: string; readonly durability: KvDurability } },
-): DatabaseRuntimeApi => ({
-  scatter: (input) => run(database.scatter.findMany(input)),
-  shards: {
-    list: () => run(Effect.gen(function* () {
-      return { shards: yield* database.shardPlacement.list, operation: (yield* database.shardPlacement.operation) ?? null };
-    })),
-    place: (input) => run(database.shardPlacement.place(input)),
-    release: (shardId, input) => run(database.shardPlacement.release({ shardId, into: input.into })),
-    replicate: (shardId, resources) => run(database.shardPlacement.replicate({ shardId, resources })),
-    unreplicate: (shardId) => run(database.shardPlacement.unreplicate({ shardId })),
-    operation: () => run(Effect.map(database.shardPlacement.operation, (operation) => operation ?? null)),
-  },
-  images: options?.images ?? noImages,
-  backups: options?.backups ?? noBackups,
-  ...(options?.storageChoice === undefined ? {} : { storageChoice: options.storageChoice }),
-  forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
-  shardOf: (tenant) => database.shardOf(tenant),
-  tenants: () => run(database.tenants),
-  partitions: () => run(database.partitions),
-  partsOf: (tenant) => database.topology.subdivision.partsOf(tenant),
-  forPart: (tenant, part) => tenantRuntime(database.forPart(tenant, part)),
-  exportPage: (tenant, input) => run(database.exportPage(tenant, input)),
-  dropTenant: (tenant) => run(database.dropTenant(tenant)),
-  backupTenant: (tenant) => run(exportWholeTenant(database, tenant)),
-  restoreTenantBackup: (tenant, backup, options) => run(restoreWholeTenant(database, tenant, backup, options)),
-  branchTenant: (tenant, into, options) => run(database.branchTenant(tenant, into, options)),
-  recoveryWindow: (tenant) => run(database.recoveryWindow(tenant)),
-  mergeBranch: (branch, options) => run(database.mergeBranch(branch, options)),
-  branchedFrom: (tenant) => run(database.branchedFrom(tenant)),
-  workflowExecutions: (limit) => run(database.workflowExecutions(limit)),
-  tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
-  context: { nodeId: options?.nodeId ?? "local", ...(options?.storage === undefined ? {} : { storage: options.storage }) },
-  followers: followersRuntime(database, options?.leases),
-  entities: {
-    serve: (handlers, options) => {
-      // A part key names one part of a divided Tenant; anything else is the Tenant itself.
-      const handleOf = (partition: TenantId) => {
-        const at = partition.indexOf(PART_SEPARATOR);
-        return at < 0 ? database.forTenant(partition) : database.forPart(partition.slice(0, at), partition.slice(at + PART_SEPARATOR.length));
-      };
-      const fiber = Effect.runFork(Effect.scoped(database.entities.serve({
-        ...options,
-        handlers: (type) => {
-          const handler = handlers(type);
-          return handler === undefined ? undefined : (message, context) =>
-            integration(() => handler(message, { tenant: context.tenant, state: context.state, documents: tenantRuntime(handleOf(context.tenant)).documents }));
-        },
-      })));
-      return {
-        stop: () => Effect.runPromise(Effect.asVoid(Fiber.interrupt(fiber))),
-        handlersChanged: () => Effect.runPromise(database.entities.handlersChanged),
-      };
+): DatabaseRuntimeApi => {
+  const api: DatabaseRuntimeApi = {
+    scatter: (input) => run(database.scatter.findMany(input)),
+    shards: {
+      list: () => run(Effect.gen(function* () {
+        return { shards: yield* database.shardPlacement.list, operation: (yield* database.shardPlacement.operation) ?? null };
+      })),
+      place: (input) => run(database.shardPlacement.place(input)),
+      release: (shardId, input) => run(database.shardPlacement.release({ shardId, into: input.into })),
+      replicate: (shardId, resources) => run(database.shardPlacement.replicate({ shardId, resources })),
+      unreplicate: (shardId) => run(database.shardPlacement.unreplicate({ shardId })),
+      operation: () => run(Effect.map(database.shardPlacement.operation, (operation) => operation ?? null)),
     },
-  },
-  outboxWatch: (listener) => database.outbox.watch(listener),
-  crossTenantIndexes: {
-    define: (definition) => run(database.crossTenantIndexes.define(definition)),
-    list: () => run(database.crossTenantIndexes.list),
-    get: (name) => run(database.crossTenantIndexes.get(name)),
-    drop: (name) => run(database.crossTenantIndexes.drop(name)),
-    refresh: (name) => run(database.crossTenantIndexes.refresh(name)),
-    query: (input) => run(database.crossTenantIndexes.query(input)),
-  },
-  topology: {
-    shards: shardsOf(database.partitionMap),
-    virtualRanges: database.partitionMap.virtualRanges,
-    partitionMapVersion: database.partitionMap.version,
-  },
-});
+    images: options?.images ?? noImages,
+    backups: options?.backups ?? noBackups,
+    ...(options?.storageChoice === undefined ? {} : { storageChoice: options.storageChoice }),
+    forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
+    shardOf: (tenant) => database.shardOf(tenant),
+    tenants: () => run(database.tenants),
+    partitions: () => run(database.partitions),
+    partsOf: (tenant) => database.topology.subdivision.partsOf(tenant),
+    forPart: (tenant, part) => tenantRuntime(database.forPart(tenant, part)),
+    exportPage: (tenant, input) => run(database.exportPage(tenant, input)),
+    dropTenant: (tenant) => run(database.dropTenant(tenant)),
+    backupTenant: (tenant) => run(exportWholeTenant(database, tenant)),
+    restoreTenantBackup: (tenant, backup, options) => run(restoreWholeTenant(database, tenant, backup, options)),
+    branchTenant: (tenant, into, options) => run(database.branchTenant(tenant, into, options)),
+    recoveryWindow: (tenant) => run(database.recoveryWindow(tenant)),
+    mergeBranch: (branch, options) => run(database.mergeBranch(branch, options)),
+    branchedFrom: (tenant) => run(database.branchedFrom(tenant)),
+    workflowExecutions: (limit) => run(database.workflowExecutions(limit)),
+    tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
+    context: { nodeId: options?.nodeId ?? "local", ...(options?.storage === undefined ? {} : { storage: options.storage }) },
+    followers: followersRuntime(database, options?.leases),
+    entities: {
+      serve: (handlers, options) => {
+        // A part key names one part of a divided Tenant; anything else is the Tenant itself.
+        const handleOf = (partition: TenantId) => {
+          const at = partition.indexOf(PART_SEPARATOR);
+          return at < 0 ? database.forTenant(partition) : database.forPart(partition.slice(0, at), partition.slice(at + PART_SEPARATOR.length));
+        };
+        const fiber = Effect.runFork(Effect.scoped(database.entities.serve({
+          ...options,
+          handlers: (type) => {
+            const handler = handlers(type);
+            return handler === undefined ? undefined : (message, context) =>
+              integration(() => handler(message, { tenant: context.tenant, state: context.state, documents: tenantRuntime(handleOf(context.tenant)).documents }));
+          },
+        })));
+        return {
+          stop: () => Effect.runPromise(Effect.asVoid(Fiber.interrupt(fiber))),
+          handlersChanged: () => Effect.runPromise(database.entities.handlersChanged),
+        };
+      },
+    },
+    outboxWatch: (listener) => database.outbox.watch(listener),
+    crossTenantIndexes: {
+      define: (definition) => run(database.crossTenantIndexes.define(definition)),
+      list: () => run(database.crossTenantIndexes.list),
+      get: (name) => run(database.crossTenantIndexes.get(name)),
+      drop: (name) => run(database.crossTenantIndexes.drop(name)),
+      refresh: (name) => run(database.crossTenantIndexes.refresh(name)),
+      query: (input) => run(database.crossTenantIndexes.query(input)),
+    },
+    topology: {
+      shards: shardsOf(database.partitionMap),
+      virtualRanges: database.partitionMap.virtualRanges,
+      partitionMapVersion: database.partitionMap.version,
+    },
+  };
+  effectDatabases.set(api, database);
+  return api;
+};

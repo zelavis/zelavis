@@ -13,7 +13,7 @@ const result = await build({
   build: {
     write: false, target: "es2022", modulePreload: false,
     rollupOptions: {
-      input: resolve(packageRoot, "app/identity-site.ts"),
+      input: resolve(packageRoot, "app/auth-site.ts"),
       output: { entryFileNames: "identity.js", inlineDynamicImports: true },
     },
   },
@@ -27,4 +27,4 @@ const out = resolve(packageRoot, "dist/identity-assets");
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 writeFileSync(resolve(out, script.fileName), script.code);
-copyFileSync(resolve(packageRoot, "app/identity-site.css"), resolve(out, "identity.css"));
+copyFileSync(resolve(packageRoot, "app/auth-site.css"), resolve(out, "identity.css"));

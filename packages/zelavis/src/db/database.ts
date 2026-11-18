@@ -993,11 +993,36 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   const outboxCommitted = (tenant: TenantId) => {
     for (const listener of outboxListeners) listener(tenant);
   };
+  /**
+   * A transaction told what its body staged, so what follows a commit follows only a transaction that wrote: a body
+   * that staged nothing commits nothing. A staging seen in an attempt that then conflicted is a spurious hint, never a
+   * missed one.
+   */
+  const transactingAfter = (
+    documents: DocumentsApi,
+    after: (staged: { readonly wrote: boolean; readonly emitted: boolean }) => Effect.Effect<void>,
+  ): DocumentsApi["transaction"] => (body, options) =>
+    Effect.suspend(() => {
+      const staged = { wrote: false, emitted: false };
+      return Effect.tap(
+        documents.transaction((tx) => body({
+          ...tx,
+          insert: (input) => { staged.wrote = true; return tx.insert(input); },
+          update: (input) => { staged.wrote = true; return tx.update(input); },
+          delete: (input) => { staged.wrote = true; return tx.delete(input); },
+          emit: (message) => { staged.emitted = true; return tx.emit(message); },
+        }), options),
+        () => after(staged),
+      );
+    });
+
   /** A write that emits is followed by a notice; the notice is a hint, never the only way to find a message. */
   const announcing = (documents: DocumentsApi, tenant: TenantId): DocumentsApi => ({
     ...documents,
     write: (input) => Effect.tap(documents.write(input), () =>
       Effect.sync(() => { if ((input.emit?.length ?? 0) > 0) outboxCommitted(tenant); })),
+    transaction: transactingAfter(documents, (staged) =>
+      Effect.sync(() => { if (staged.emitted) outboxCommitted(tenant); })),
   });
 
   const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId, sharedStore: ObjectStoreApi): TenantApi => {
@@ -1096,6 +1121,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     write: (input) => (input as CarrySnapshotInput)[CARRY_SNAPSHOT] !== undefined
       ? globalBase.documents.write(input)
       : propagating(globalBase.documents.write(input), writtenIdentities),
+
+    // A transaction names no change in advance, so what it wrote is found by re-levelling the replicas.
+    transaction: transactingAfter(globalBase.documents, (staged) =>
+      staged.wrote || staged.emitted ? Effect.orDie(replication.refresh) : Effect.void),
 
     // The collection itself changed, or every document in it did.
     rewrite: (input) => relevelling(globalBase.documents.rewrite(input)),

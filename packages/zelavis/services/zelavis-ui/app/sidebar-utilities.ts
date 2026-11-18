@@ -56,7 +56,7 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
     }
     if (name === "account") {
       const access = object(config?.access), principal = object(access.principal);
-      body.append(node("div", { class: "utility-account" }, node("small", {}, "Signed in"), node("strong", {}, typeof access.label === "string" ? `${access.label} dashboard` : "Runtime dashboard"), node("span", {}, typeof principal.id === "string" ? principal.id : "local project")), entry("Account overview", "/projects"),
+      body.append(node("div", { class: "utility-account" }, node("small", {}, "Signed in"), node("strong", {}, typeof access.label === "string" ? `${access.label} dashboard` : "Runtime dashboard"), node("span", {}, typeof principal.id === "string" ? principal.id : "local project")), entry("Account overview", "/account"),
         ...(allowed("system.settings.manage") ? [branch("Settings", "settings")] : []),
         button("Log out", onSignOut, { class: "utility-link" }));
     }
@@ -80,7 +80,7 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
       signature = next;
       const title = names[active];
       slides[0].replaceChildren(backRow(title, "navigation", () => change()), renderRoot(utility, config));
-      slides[1].replaceChildren(backRow("Settings", "Account", () => change("account")), node("nav", { class: "utility-menu", "aria-label": "Account settings" }, entry("Global settings", "/settings"), entry("Appearance", "/settings/appearance"), entry("Runtime services", "/services"), branch("Language", "language")));
+      slides[1].replaceChildren(backRow("Settings", "Account", () => change("account")), node("nav", { class: "utility-menu", "aria-label": "Account settings" }, entry("Global settings", "/settings"), entry("Email delivery", "/settings/email"), entry("Appearance", "/settings/appearance"), entry("Runtime services", "/services"), branch("Language", "language")));
       const languages = node("div", { class: "utility-menu", role: "group", "aria-label": "Language preference" });
       for (const [code, label] of [["en", "English (United States)"], ["de", "Deutsch (Deutschland)"], ["sr", "Serbian (Srbija)"], ["es", "Spanish (Espana)"]]) {
         const choice = button(label, () => { language = code; for (const control of languages.querySelectorAll("button")) control.setAttribute("aria-pressed", String(control.dataset.language === code)); }, { class: "utility-link", "data-language": code, "aria-pressed": String(language === code) });

@@ -85,13 +85,13 @@ test("the ordinary App runner keeps its listener and Gateway replay protection t
     const site = async (path, init) => toResponse(await forwardProjectSiteRequest({
       project: { ...project, runtime: started }, projects: { listOwned: async () => [] }, fetchSite: fetchNodeSite,
     }, new Request(`https://site.example${path}`, init)));
-    const signup = await site("/zelavis/api/v1/auth/sign-up/password", {
+    const signup = await site("/zelavis/api/v1/auth/username-password/sign-up", {
       method: "POST", headers: { origin: "https://site.example", "content-type": "application/json" },
-      body: JSON.stringify({ identifier: "after-handover", password: "my long unique App password" }),
+      body: JSON.stringify({ username: "after-handover", password: "my long unique App password" }),
     });
-    assert.equal(signup.status, 201);
-    const accountId = (await signup.json()).account.id;
-    const cookie = signup.headers.get("set-cookie").split(";", 1)[0];
+    assert.equal(signup.status, 200);
+    const accountId = (await signup.json()).userId;
+    const cookie = signup.headers.getSetCookie()[0].split(";", 1)[0];
     const root = join(directory, "one"), file = join(root, "project.json");
     const descriptor = JSON.parse(await readFile(file, "utf8"));
     const packageFile = join(root, ".zelavis", "recipe", "package", "package.json");
@@ -109,7 +109,7 @@ test("the ordinary App runner keeps its listener and Gateway replay protection t
       })]);
     assert.equal((await driver.status("one")).url, started.url);
     assert.equal((await (await site("/zelavis/api/v1/auth/registration")).json()).enabled, true);
-    assert.equal((await (await site("/zelavis/api/v1/auth/session", { headers: { cookie } })).json()).principal.id, accountId);
+    assert.equal((await (await site("/zelavis/api/v1/auth/session", { headers: { cookie } })).json()).account.id, accountId);
     assert.equal((await site("/zelavis/api/v1/auth/accounts", { headers: { cookie } })).status, 404);
     const replay = await fetch(path, { headers: captured });
     assert.equal(replay.status, 401); await replay.text();

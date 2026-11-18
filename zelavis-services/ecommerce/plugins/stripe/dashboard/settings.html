@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Stripe settings</title>
+<style>form,label{display:grid;gap:.5rem}form{gap:1rem}input{font:inherit;min-width:0;padding:.6rem} .error{color:var(--destructive)}</style></head>
+<body><main class="zv-stack"><section class="zv-card zv-stack">
+<p id="configured" role="status">Loading configuration…</p>
+<form id="settings" autocomplete="off">
+<label>Secret key<input id="secret-key" name="secretKey" type="password" autocomplete="new-password" maxlength="4096" placeholder="sk_test_… or sk_live_…"></label>
+<label>Webhook signing secret<input id="webhook-secret" name="webhookSecret" type="password" autocomplete="new-password" maxlength="4096" placeholder="whsec_…"></label>
+<p class="zv-muted">Leave a field blank to keep its stored value. Keys are sealed and never shown again.</p>
+<button id="save" class="zv-button" type="button" disabled>Save credentials</button>
+</form><p id="status" role="status"></p>
+</section></main>
+<script type="module">
+import { createPageApi, Effect } from "./api.js";
+const api = createPageApi("stripe"), el = id => document.getElementById(id);
+const configured = value => { el("configured").textContent = `Secret key: ${value.configured.secretKey ? `configured${value.secretKeyHint ? ` (${value.secretKeyHint})` : ""}` : "not configured"}. Webhook signing secret: ${value.configured.webhookSecret ? "configured" : "not configured"}.`; };
+const report = error => Effect.sync(() => { el("status").textContent = error.message || "Could not save credentials."; el("status").className = "error"; });
+Effect.runFork(api("settings").pipe(Effect.tap(value => Effect.sync(() => { configured(value); el("save").disabled = false; })), Effect.catch(report)));
+el("settings").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); el("save").click(); } });
+el("save").addEventListener("click", event => {
+  event.preventDefault(); const body = {};
+  if (el("secret-key").value) body.secretKey = el("secret-key").value;
+  if (el("webhook-secret").value) body.webhookSecret = el("webhook-secret").value;
+  el("save").disabled = true; el("status").textContent = "Saving…";
+  Effect.runFork(api("settings", { method:"PUT", body }).pipe(Effect.tap(value => Effect.sync(() => {
+    configured(value); el("secret-key").value = ""; el("webhook-secret").value = ""; el("status").className = ""; el("status").textContent = "Credentials saved.";
+  })), Effect.catch(report), Effect.ensuring(Effect.sync(() => { el("save").disabled = false; }))));
+});
+</script></body></html>

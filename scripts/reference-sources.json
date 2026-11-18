@@ -3,5 +3,9 @@
     "url": "https://github.com/Effect-TS/effect.git",
     "version": "4.0.0",
     "commit": "67ba4e46a11ccda0b6761578bfd22c04ae00167d"
+  },
+  "convex-auth": {
+    "url": "https://github.com/convex/convex-auth.git",
+    "commit": "a8b5d9a2ebc8b733b510b7c1f46558af6ef21fce"
   }
 }

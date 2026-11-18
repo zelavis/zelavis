@@ -1060,6 +1060,7 @@ export * from "./onboarding.js";
 export * from "./acme-crypto.js";
 export * from "./acme-client.js";
 export * from "./certificates.js";
+export * from "./dns-provider.js";
 export { createZelavisEdgePreviews } from "./previews.js";
 export type { ZelavisEdgePreviews, ZelavisEdgePreviewHost, ZelavisProjectPreview } from "./previews.js";
 
@@ -1067,3 +1068,5 @@ export type {
   AddProjectDomainInput, ProjectDomain, ProjectDomainIngress, ProjectDomainList, ProjectDomainState, ProjectDomainTlsMode,
   RemoveProjectDomainResult, VerifyProjectDomainInput,
 } from "./project-domains.js";
+
+export * from "./registrar-provider.js";

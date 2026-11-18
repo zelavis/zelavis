@@ -1,9 +1,9 @@
 import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { createZelavisClient } from "../sdk/fetch.js";
+import { createZelavisClient, ZelavisClientHttpError } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis marketplace <allowlist|refresh|updates|update NAME> [--url URL] [--token TOKEN] [--json]";
+  "zelavis marketplace <allowlist|refresh|updates|update NAME> [--approve-permission P]... [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis marketplace` — the allow-list routes through the JS SDK client.
@@ -18,6 +18,7 @@ export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
   let json = false;
+  const approvePermissions: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -29,11 +30,12 @@ export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token"].includes(flag)) {
+    if (!["--url", "--token", "--approve-permission"].includes(flag)) {
       throw new Error(`Unknown marketplace option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
     if (!value) throw new Error(`${flag} requires a value.`);
+    if (flag === "--approve-permission") approvePermissions.push(value);
     if (flag === "--url") url = value;
     if (flag === "--token") token = value;
   }
@@ -85,7 +87,13 @@ export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
       return;
     }
     case "update": {
-      const result = (yield* integrationValue(client.marketplace.update(rest[0]!)));
+      const result = yield* integrationValue(client.marketplace.update(rest[0]!, approvePermissions.length ? { approvePermissions } : undefined)).pipe(Effect.mapError(failure => {
+        const cause = failure.cause;
+        if (cause instanceof ZelavisClientHttpError && cause.body && typeof cause.body === "object" && "permissions" in cause.body && Array.isArray(cause.body.permissions)) {
+          return new Error(`${cause.message}: ${cause.body.permissions.join(", ")}. Approve each with --approve-permission.`);
+        }
+        return failure;
+      }), Effect.orDie);
       print(result, () => [
         `Updated ${result.service.name} from ${result.service.from ?? "?"} to ${result.service.version}.`,
         ...(result.activation?.message ? [result.activation.message] : []),

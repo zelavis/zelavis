@@ -96,8 +96,8 @@ test("every URL a service page builds actually resolves", async () => {
   assert.ok(apiRootExpr, "the page derives no API root");
 
   const apiRoot = new URL(apiRootExpr, base).pathname.replace(/\/$/, "");
-  const bootstrap = await get(`${apiRoot}/auth/bootstrap`, OWNER);
-  assert.equal(bootstrap.status, 200);
+  const methods = await get(`${apiRoot}/auth/methods`, OWNER);
+  assert.equal(methods.status, 200);
 
   const config = await get(`${apiRoot}/runtime/config`, OWNER);
   assert.equal(config.status, 200);
@@ -139,7 +139,7 @@ test("a service page drives the real API, not a mock", async () => {
   const { get, pageSrc } = await boot();
   const page = await get(pageSrc, OWNER);
 
-  assert.match(page.body, /\/auth\/bootstrap/);
+  assert.match(page.body, /\/auth\/methods/);
   assert.match(page.body, /\/runtime\/extensions/);
 });
 

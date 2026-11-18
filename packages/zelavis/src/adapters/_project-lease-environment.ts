@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { createHmac } from "node:crypto";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import { mintLeaseCapability } from "../platform/lease-capability.js";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
@@ -29,6 +30,8 @@ export interface ProjectLeaseConfiguration {
 
 /** Which of a Project's two processes is being started: the one that writes, or the one that follows it and takes over. */
 export type ProjectLeaseRole = "writer" | "standby";
+
+export const PROJECT_AUTH_SEALING_SECRET_ENV = "ZELAVIS_LEASE_AUTH_SEALING_SECRET";
 
 export const projectLeaseConfiguration = (environment: Readonly<Record<string, string | undefined>> = process.env): ProjectLeaseConfiguration | undefined => {
   const authority = environment.ZELAVIS_PROJECT_LEASES_URL?.trim();
@@ -67,11 +70,14 @@ export const projectLeaseEnvironmentAt = (configuration: ProjectLeaseConfigurati
       ZELAVIS_LEASE_ROLE: role,
       ZELAVIS_LEASE_TTL_MILLIS: String(configuration.ttlMillis),
       ZELAVIS_LEASE_ENDPOINT: configuration.authority.replace(/\/api\/v1\/?$/, ""),
+      // The writer and standby need the same key to open replicated Auth records. Bind it to this Project only.
+      [PROJECT_AUTH_SEALING_SECRET_ENV]: createHmac("sha256", secret).update(`zelavis.project.auth\u0000${projectId}`).digest("base64url"),
     };
   }));
 
 const PROJECT_LEASE_VARIABLES = Object.freeze([
   "ZELAVIS_LEASE_AUTHORITY", "ZELAVIS_LEASE_TOKEN", "ZELAVIS_LEASE_NODE", "ZELAVIS_LEASE_STANDBY", "ZELAVIS_LEASE_ROLE", "ZELAVIS_LEASE_TTL_MILLIS", "ZELAVIS_LEASE_ENDPOINT",
+  PROJECT_AUTH_SEALING_SECRET_ENV,
 ]);
 
 /**

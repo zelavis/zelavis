@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plans and settings</title><link rel="stylesheet" href="./hosting.css">
+</head>
+<body>
+<main class="zv-stack" data-hosting-page="plans">
+  <section class="zv-card zv-stack">
+    <h2>Hosting settings</h2>
+    <form id="settings" class="hosting-form">
+      <label>Public base URL<input name="publicBaseUrl" type="url" placeholder="https://hosting.example" maxlength="2048" required></label>
+      <label>Payment provider<select name="provider" required></select></label>
+      <label>Grace days<input name="graceDays" type="number" min="1" max="30" value="7" required></label>
+      <div class="hosting-actions"><button class="zv-button" type="submit">Save settings</button></div>
+      <p id="settings-status" class="hosting-status" role="status">Loading settings…</p>
+    </form>
+  </section>
+  <section class="zv-card zv-stack">
+    <div class="hosting-heading"><h2>Plans</h2><button id="new-plan" class="zv-button" type="button" disabled>New plan</button></div>
+    <p id="plans-status" class="hosting-status" role="status">Loading plans…</p>
+    <ul id="plans" class="hosting-list"></ul>
+    <form id="plan" class="hosting-form" hidden>
+      <h3 id="plan-heading" class="hosting-span">New plan</h3>
+      <label>Plan ID<input name="id" pattern="[a-z][a-z0-9\-]{1,31}" maxlength="32" required></label>
+      <label>Title<input name="title" maxlength="80" required></label>
+      <label class="hosting-span">Description<textarea name="description" rows="2" maxlength="500"></textarea></label>
+      <label>Price in minor units<input name="amount" type="number" min="1" max="99999999" required></label>
+      <label>Currency<input name="currency" value="usd" pattern="[a-zA-Z]{3}" maxlength="3" required></label>
+      <label>Billing interval<select name="interval"><option value="month">Monthly</option><option value="year">Yearly</option></select></label>
+      <label>Project limit<input name="projects" type="number" min="1" value="1" required></label>
+      <label class="hosting-span">Allowed recipes (comma-separated)<input name="recipes" maxlength="2600" placeholder="Any recipe when blank"></label>
+      <fieldset class="hosting-span"><legend>Project permissions</legend><div id="permissions" class="hosting-checkboxes"></div></fieldset>
+      <label class="hosting-check"><input name="active" type="checkbox" checked>Available to customers</label>
+      <div class="hosting-actions"><button class="zv-button" type="submit">Save plan</button><button id="close-plan" class="zv-button" type="button">Close</button></div>
+      <p id="plan-status" class="hosting-status" role="status"></p>
+    </form>
+  </section>
+</main>
+<script type="module" src="./hosting.js"></script>
+</body>
+</html>

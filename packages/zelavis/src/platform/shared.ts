@@ -88,11 +88,6 @@ import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
 } from "../core/index.js";
-import {
-  IdentityDomainError,
-  IdentityNotFoundError,
-  IdentityValidationError,
-} from "../app/identity/index.js";
 import type { ZelavisPrincipal } from "../core/index.js";
 import type { ZelavisSystemStoreValue } from "../system-store.js";
 
@@ -134,13 +129,11 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) =>
       error instanceof TypeError ||
-      error instanceof IdentityValidationError ||
       error instanceof ZelavisValidationError,
     status: 400,
   },
   {
     matches: (error) =>
-      error instanceof IdentityNotFoundError ||
       databaseFailureTag(error) === "DocumentNotFound" ||
       databaseFailureTag(error) === "CollectionNotFound",
     status: 404,
@@ -162,7 +155,7 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   },
   {
     matches: (error) =>
-      error instanceof IdentityDomainError || error instanceof ZelavisDomainError,
+      error instanceof ZelavisDomainError,
     status: 400,
   },
 ];

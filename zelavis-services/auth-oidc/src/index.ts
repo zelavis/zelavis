@@ -10,8 +10,8 @@ import {
  * issuer presents it, and the token is verified against the issuer's key set.
  * No sign-in happens here and no account is created.
  *
- * Browser sign-in is a different thing and lives in `@zelavis/auth`, which
- * runs the Authorization Code flow through core auth and creates real
+ * Browser sign-in is a different thing and lives in Zelavis Auth
+ * (`zelavis/auth`), which runs the Authorization Code flow and creates real
  * accounts. This package used to carry a second implementation of that flow;
  * two implementations of one exchange drift, and only one of them can be the
  * one an operator has configured.
@@ -34,7 +34,7 @@ export function oidcBearerService(options: OidcBearerPluginOptions) {
   return Object.freeze({
     name: "@zelavis/auth-oidc",
     kind: "plugin" as const,
-    capabilities: Object.freeze(["zelavis/identity:credentials"]),
+    capabilities: Object.freeze(["zelavis/auth:authenticator"]),
     authenticators: [
       createJwksAuthenticator({
         name: options.providerName ?? "oidc",
@@ -53,6 +53,5 @@ export function oidcBearerService(options: OidcBearerPluginOptions) {
         },
       }),
     ],
-    service: { name: options.providerName ?? "oidc", register() {} },
   });
 }

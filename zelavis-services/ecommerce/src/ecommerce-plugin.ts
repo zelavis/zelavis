@@ -1,3 +1,7 @@
+import { fulfillmentWorker } from "./services/fulfillment.js";
+import { receiveProviderEvents } from "./services/provider-events.js";
+import { Effect } from "effect";
+import type { CheckoutInput } from "./services/checkouts.js";
 import { zelavis } from "zelavis/sdk";
 import {
   createJsonErrorResponse,
@@ -24,6 +28,10 @@ import type { EcommerceService } from "./ecommerce-service.js";
 import type { EcommerceApi } from "./core/types.js";
 
 const commerceErrorRules: readonly ZelavisServerErrorStatusRule[] = [
+  { matches: error => !!error && typeof error === "object" && "_tag" in error && ["InvalidInput", "InvalidWebhook"].includes(String(error._tag)), status: 400 },
+  { matches: error => !!error && typeof error === "object" && "_tag" in error && ["CheckoutUnsupported", "ProviderNotConfigured"].includes(String(error._tag)), status: 409 },
+  { matches: error => !!error && typeof error === "object" && "_tag" in error && ["NotFound", "UnknownProvider"].includes(String(error._tag)), status: 404 },
+  { matches: error => !!error && typeof error === "object" && "_tag" in error && error._tag === "ProviderFailure", status: 502 },
   {
     matches: (error) => error instanceof TypeError,
     status: 400,
@@ -141,6 +149,17 @@ function slugify(value: string): string {
 }
 
 function createCommerceErrorResponse(error: unknown, fallback = 400) {
+  // Provider exceptions can contain credentials. Never pass them to the generic error logger.
+  if (error && typeof error === "object" && "_tag" in error) {
+    const codes: Record<string, readonly [number, string]> = {
+      ProviderFailure: [502, "provider_failure"], ProviderNotConfigured: [409, "provider_not_configured"],
+      CheckoutUnsupported: [409, "checkout_unsupported"], UnknownProvider: [404, "unknown_provider"],
+      StorageFailure: [500, "commerce_storage_failure"], NotFound: [404, "not_found"],
+      UnsupportedOperation: [409, "unsupported_operation"], InvalidWebhook: [400, "invalid_webhook"],
+    };
+    const mapped = Object.hasOwn(codes, String(error._tag)) ? codes[String(error._tag)] : undefined;
+    if (mapped) return { status: mapped[0], body: { error: mapped[1] } };
+  }
   return createMappedJsonErrorResponse(error, commerceErrorRules, fallback);
 }
 
@@ -179,6 +198,8 @@ function hasNoDatabase(value: unknown): boolean {
 }
 
 /** The capability a payment gateway declares to be discovered by this plugin. */
+export const ECOMMERCE_FULFILLMENT_CAPABILITY = "@zelavis/ecommerce:fulfillment";
+
 export const ECOMMERCE_PAYMENTS_CAPABILITY = "@zelavis/ecommerce:payments";
 
 function isEcommercePaymentService(
@@ -234,6 +255,7 @@ function parseCustomerInput(body: unknown): CreateCustomerInput {
   return {
     id: readOptionalString(input, "id") ?? crypto.randomUUID(),
     accountId: readOptionalString(input, "accountId"),
+    principalId: readOptionalString(input, "principalId"),
     email: readRequiredString(input, "email"),
     firstName: readOptionalString(input, "firstName"),
     lastName: readOptionalString(input, "lastName"),
@@ -521,10 +543,10 @@ zelavis.plugins.ui.menus.create({
 export const ECOMMERCE_PLUGIN_NAME = "@zelavis/ecommerce";
 
 export const ecommercePlugin = Object.freeze({
-  async setup(context: ZelavisServiceSetupContext) {
+  setup: (context: ZelavisServiceSetupContext) => Effect.runPromise(Effect.gen(function* () {
     // Dynamic provider discovery: discover payment providers by declared capability
     const paymentServices = context.registry
-      .filter((entry) => entry.status === "installed" && isEcommercePaymentService(entry.service))
+      .filter((entry) => entry.status === "installed" && (isEcommercePaymentService(entry.service) || entry.service.capabilities?.includes(ECOMMERCE_FULFILLMENT_CAPABILITY) && typeof (entry.service.service as EcommerceService | undefined)?.register === "function"))
       .map((entry) => entry.service.service as EcommerceService);
 
     const database = context.core.database;
@@ -539,19 +561,58 @@ export const ecommercePlugin = Object.freeze({
       );
     }
 
-    const commerce = await createEcommerce({
+    const commerce = yield* Effect.tryPromise({ try: () => createEcommerce({
       services: paymentServices,
+      runtimeScope: context.registry,
       repositories: isDatabaseRuntimeApi(database)
         ? createDatabaseEcommerceRepositories(database, {
             tenantId: `service:${context.service.name}`,
           })
         : undefined,
-    });
+    }), catch: error => error });
+
+    context.addRuntimePlugin(fulfillmentWorker(commerce.fulfillment));
 
     const routes: readonly ZelavisServerRoute<EcommerceApi>[] = [
+      { id: "commerce.fulfillment.failures", method: "GET", path: "/fulfillment/failures", access: { permissions: ["ecommerce.view"] },
+        meta: { pluginResource: "fulfillment", pluginAction: "failures" },
+        handler: ({ service, request }) => service.runPromise(service.fulfillment.failures(new URL(request.url).searchParams.get("after") ?? undefined).pipe(Effect.map(body => ({ status: 200, body })), Effect.catch(error => Effect.succeed(createCommerceErrorResponse(error, 500))))),
+      },
+      { id: "commerce.webhooks.receive", method: "POST", path: "/webhooks/:provider", maxRequestBodyBytes: 262144,
+        handler: ({ service, params, request }) => service.runPromise(Effect.gen(function* () {
+          const rawBody = yield* Effect.tryPromise(() => request.text());
+          return { status: 200, body: yield* receiveProviderEvents(service, params.provider, request.headers, rawBody) };
+        }).pipe(Effect.catch(error => Effect.succeed(error && typeof error === "object" && "_tag" in error && error._tag === "InvalidWebhook"
+          ? { status: 400, body: { error: "invalid_webhook" } } : createCommerceErrorResponse(error, 500))))),
+      },
+      { id: "commerce.checkouts.create", method: "POST", path: "/checkouts", access: { permissions: ["ecommerce.manage"] },
+        meta: { pluginResource: "checkouts", pluginAction: "create" },
+        handler: ({ service, body }) => service.runPromise(service.checkouts.create(body as CheckoutInput).pipe(
+          Effect.map(checkout => ({ status: 201, body: { checkout } })), Effect.catch(error => Effect.succeed(createCommerceErrorResponse(error))),
+        )),
+      },
+      { id: "commerce.checkouts.get", method: "GET", path: "/checkouts/:id", access: { permissions: ["ecommerce.view"] },
+        meta: { pluginResource: "checkouts", pluginAction: "get" },
+        handler: ({ service, params }) => service.runPromise(service.checkouts.get(params.id).pipe(
+          Effect.map(checkout => checkout ? { status: 200, body: { checkout } } : createNotFoundResponse("Checkout", params.id)),
+          Effect.catch(error => Effect.succeed(createCommerceErrorResponse(error))),
+        )),
+      },
+      { id: "commerce.customers.portal", method: "POST", path: "/customers/:id/portal", access: { permissions: ["ecommerce.manage"] },
+        meta: { pluginResource: "customers", pluginAction: "portal" },
+        handler: ({ service, params, body }) => service.runPromise(Effect.gen(function* () {
+          const input = yield* Effect.try({ try: () => {
+            const value = readBodyObject(body);
+            return { provider: readRequiredString(value, "provider"), returnUrl: readRequiredString(value, "returnUrl") };
+          }, catch: error => error });
+          const result = yield* service.customers.portal(params.id, input);
+          return { status: 200, body: result };
+        }).pipe(Effect.catch(error => Effect.succeed(createCommerceErrorResponse(error))))),
+      },
           {
             id: "commerce.health",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/health",
             meta: { pluginResource: "health", pluginAction: "get" },
             spec: {
@@ -578,6 +639,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.products.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/products",
             meta: { pluginResource: "products", pluginAction: "list" },
             spec: {
@@ -596,6 +658,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.products.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/products",
             meta: { pluginResource: "products", pluginAction: "create" },
             spec: {
@@ -643,6 +706,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.products.getById",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/products/:id",
             meta: { pluginResource: "products", pluginAction: "getById" },
             spec: {
@@ -670,6 +734,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.customers.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/customers",
             meta: { pluginResource: "customers", pluginAction: "list" },
             spec: {
@@ -688,6 +753,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.customers.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/customers",
             meta: { pluginResource: "customers", pluginAction: "create" },
             spec: {
@@ -728,6 +794,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.customers.getById",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/customers/:id",
             meta: { pluginResource: "customers", pluginAction: "getById" },
             spec: {
@@ -755,6 +822,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.coupons.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/coupons",
             meta: { pluginResource: "coupons", pluginAction: "list" },
             spec: {
@@ -773,6 +841,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.coupons.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/coupons",
             meta: { pluginResource: "coupons", pluginAction: "create" },
             spec: {
@@ -813,6 +882,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.coupons.getByCode",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/coupons/:code",
             meta: { pluginResource: "coupons", pluginAction: "getByCode" },
             spec: {
@@ -840,6 +910,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.orders.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/orders",
             meta: { pluginResource: "orders", pluginAction: "list" },
             spec: {
@@ -858,6 +929,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.orders.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/orders",
             meta: { pluginResource: "orders", pluginAction: "create" },
             spec: {
@@ -919,6 +991,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.orders.getById",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/orders/:id",
             meta: { pluginResource: "orders", pluginAction: "getById" },
             spec: {
@@ -946,6 +1019,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.payments.providers.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/payments/providers",
             meta: { pluginResource: "payments", pluginAction: "providers" },
             spec: {
@@ -956,23 +1030,20 @@ export const ecommercePlugin = Object.freeze({
                 200: { description: "List of payment providers" },
               },
             },
-            handler: async ({ service }) => ({
-              status: 200,
-              body: {
-                providers: (await service.runPromise(service.payments.listProviders())).map((name: string) => {
-                  return {
-                    name,
-                    plugin: service.context.providers.find(
-                      (provider: { name: string }) => provider.name === name,
-                    )?.name,
-                  };
-                }),
-              },
-            }),
+            handler: ({ service }) => service.runPromise(Effect.gen(function* () {
+              const names = yield* service.payments.listProviders();
+              const providers = yield* Effect.forEach(names, name => Effect.gen(function* () {
+                const provider = yield* service.payments.getProvider(name);
+                return { name, checkoutSupported: typeof provider?.createCheckout === "function", webhookPath: `${context.api.basePath}/plugins/ecommerce/webhooks/${encodeURIComponent(name)}` };
+              }), { concurrency: 4 });
+              const plugins = context.registry.filter(entry => entry.service.capabilities?.includes(ECOMMERCE_PAYMENTS_CAPABILITY)).map(entry => ({ name: entry.service.name, title: entry.service.marketplace?.title ?? entry.service.name, status: entry.status }));
+              return { status: 200, body: { providers, plugins } };
+            })),
           },
           {
             id: "commerce.payments.attempts.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/payments/attempts",
             meta: { pluginResource: "payments", pluginAction: "attempts" },
             spec: {
@@ -991,6 +1062,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.payments.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/orders/:id/payments",
             meta: { pluginResource: "payments", pluginAction: "create" },
             spec: {
@@ -1036,6 +1108,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.subscriptions.list",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/subscriptions",
             meta: { pluginResource: "subscriptions", pluginAction: "list" },
             spec: {
@@ -1054,6 +1127,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.subscriptions.create",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/subscriptions",
             meta: { pluginResource: "subscriptions", pluginAction: "create" },
             spec: {
@@ -1102,6 +1176,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.subscriptions.getById",
             method: "GET",
+            access: { permissions: ["ecommerce.view"] },
             path: "/subscriptions/:id",
             meta: { pluginResource: "subscriptions", pluginAction: "getById" },
             spec: {
@@ -1129,6 +1204,7 @@ export const ecommercePlugin = Object.freeze({
           {
             id: "commerce.subscriptions.cancel",
             method: "POST",
+            access: { permissions: ["ecommerce.manage"] },
             path: "/subscriptions/:id/cancel",
             meta: { pluginResource: "subscriptions", pluginAction: "cancel" },
             spec: {
@@ -1180,7 +1256,7 @@ export const ecommercePlugin = Object.freeze({
       api: { v1: routes },
       origin: { type: "service", serviceName: "@zelavis/ecommerce" },
     });
-  },
+  })),
 });
 
 export default ecommercePlugin;

@@ -48,12 +48,11 @@ for (const role of ["platform", "project"]) test(`the actual ${role} Zelavis com
     if (role === "platform") {
       const anonymous = createZelavisClient({ baseUrl: url });
       const bootstrap = await anonymous.json("/auth/bootstrap", { method: "POST", body: {
-        bootstrapToken: token, provider: "password", account: { email: "owner@example.com" },
-        credential: { identifier: "owner@example.com", password: "correct horse battery staple" },
+        bootstrapToken: token, username: "owner", password: "correct horse battery staple",
       } });
-      const signedIn = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-      assert.equal(bootstrap.account.id, signedIn.account.id);
-      owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${signedIn.session.token}` } });
+      const signedIn = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+      assert.equal(bootstrap.userId, signedIn.userId);
+      owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${signedIn.tokens.accessToken}` } });
     }
     const headers = async (projectId = "one") => ({ [ZELAVIS_GATEWAY_AUTHORITY_HEADER]: await signGatewayAuthority(gatewaySecret, {
       projectId, subject: "project-user", subjectType: "user", tenantId: "tenant", permissions: [], scopeId: "platform", generation: 1,

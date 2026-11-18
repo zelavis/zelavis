@@ -10,6 +10,7 @@ import type { ScreenContext } from "./screens.ts";
 const Domain = Schema.Struct({
   hostname: Schema.String,
   tlsMode: Schema.Literals(["external", "managed"]),
+  dns: Schema.Literals(["manual", "automatic"]),
   state: Schema.Literals(["pending_dns", "verified", "publishing", "active", "removing"]),
   revision: Schema.Natural,
   publicUrl: Schema.optionalKey(Schema.String),
@@ -51,6 +52,11 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
   const path = projectDomainPath(context, projectId);
   const read = readProjectDomains(context, projectId);
   const { domains } = yield* read;
+  // The operator zones this Project may take a subdomain under: offered as "Use <apex>" beside "My own domain".
+  const hostedZones = manage ? yield* request(`${path}/hosted-zones`).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ zones: Schema.Array(Schema.Struct({ apex: Schema.String })) }))),
+    Effect.map(({ zones }) => zones.map(zone => zone.apex)),
+    Effect.catch(() => Effect.succeed([] as string[]))) : [];
   const inventory = node("div", { class: "project-domain-inventory", "data-project-domains": "" });
   const feedback = node("div", { "aria-live": "polite" });
   const hostname = node("input", { name: "hostname", id: "domain-hostname", maxlength: "254", placeholder: "app.example.com", required: "", autocapitalize: "none", spellcheck: "false" });
@@ -58,8 +64,27 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
     { value: "external", label: "External TLS" }, { value: "managed", label: "Zelavis-managed HTTPS" },
   ]);
   const add = node("button", { type: "submit", class: "primary" }, "Add domain");
-  const form = node("form", { class: "form" }, node("label", {}, node("span", {}, "Hostname"), hostname),
-    node("label", {}, node("span", {}, "TLS mode"), tls), node("div", { class: "actions" }, add));
+  const mode = dropdown({ label: "Domain", value: "own" }, [
+    { value: "own", label: "My own domain" }, ...hostedZones.map(apex => ({ value: apex, label: `Use ${apex}` })),
+  ]);
+  const hostnameLabel = node("span", {}, "Hostname");
+  const suffix = node("span", { class: "muted", "data-hosted-suffix": "", "aria-hidden": "true" });
+  const tlsField = node("label", {}, node("span", {}, "TLS mode"), tls);
+  const syncMode = () => {
+    const hosted = mode.value && mode.value !== "own" ? mode.value : undefined;
+    const text = hosted ? "Subdomain" : "Hostname";
+    hostnameLabel.textContent = text;
+    hostname.setAttribute("aria-label", text);
+    hostname.placeholder = hosted ? "shop" : "app.example.com";
+    suffix.textContent = hosted ? `.${hosted}` : "";
+    tlsField.hidden = Boolean(hosted);
+  };
+  mode.addEventListener("change", syncMode);
+  const form = node("form", { class: "form" },
+    hostedZones.length ? node("label", {}, node("span", {}, "Domain"), mode) : undefined,
+    node("label", {}, hostnameLabel, hostname, suffix),
+    tlsField, node("div", { class: "actions" }, add));
+  syncMode();
   let busy = false;
 
   const mutate = <A>(operation: Effect.Effect<A, Error>, notice: (value: A) => string) => {
@@ -104,7 +129,7 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
       const expired = expiry !== undefined && expiry.getTime() <= Date.now();
       const check = () => {
         const operation = expired
-          ? request(path, "POST", { hostname: domain.hostname, tlsMode: domain.tlsMode })
+          ? request(path, "POST", { hostname: domain.hostname, tlsMode: domain.tlsMode, dns: domain.dns })
           : request(`${domainPath}/verify`, "POST", { expectedRevision: domain.revision });
         mutate(operation.pipe(Effect.flatMap(decodeDomain)), next => labels[next.state]);
       };
@@ -115,7 +140,8 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
       };
       return card(domain.hostname,
         node("div", { class: "actions" }, badge(labels[domain.state]),
-          node("span", { class: "muted" }, domain.tlsMode === "external" ? "External TLS" : "Zelavis-managed HTTPS")),
+          node("span", { class: "muted" }, domain.dns === "automatic" ? "Hosted subdomain · Zelavis-managed HTTPS"
+            : domain.tlsMode === "external" ? "External TLS" : "Zelavis-managed HTTPS")),
         domain.issue ? node("p", { class: "muted" }, issues[domain.issue]) : undefined,
         domain.challenge && expiry ? node("div", { class: "form" }, copy("TXT name", domain.challenge.name),
           copy("TXT value", domain.challenge.value), node("p", { class: "muted" }, `Expires ${expiry.toLocaleString()}`)) : undefined,
@@ -129,7 +155,11 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
   render(domains);
   form.addEventListener("submit", event => {
     event.preventDefault();
-    mutate(request(path, "POST", { hostname: hostname.value.trim(), tlsMode: tls.value || "external" }).pipe(Effect.flatMap(decodeDomain)), next => {
+    const hosted = mode.value && mode.value !== "own" ? mode.value : undefined;
+    const body = hosted
+      ? { hostname: `${hostname.value.trim().toLowerCase()}.${hosted}`, tlsMode: "managed", dns: "automatic" }
+      : { hostname: hostname.value.trim(), tlsMode: tls.value || "external" };
+    mutate(request(path, "POST", body).pipe(Effect.flatMap(decodeDomain)), next => {
       hostname.value = "";
       return next.challenge ? "TXT challenge created." : labels[next.state];
     });
@@ -138,5 +168,6 @@ export const projectDomainsScreen = Effect.fn("ui.projectDomains")(function* (co
   return page(card(manage ? "Connect a hostname" : undefined,
     node("p", {}, "Point an A or AAAA record, or a CNAME for a subdomain, at the ingress address from your server operator. Add the separate TXT record shown for each hostname."),
     manage ? node("p", {}, "With external TLS, your server operator provides the HTTPS certificate and proxy.") : undefined,
+    hostedZones.length ? node("p", {}, "Or use a subdomain of a zone this server offers: its DNS records and HTTPS certificate are managed for you.") : undefined,
     manage ? form : undefined, feedback), inventory);
 });

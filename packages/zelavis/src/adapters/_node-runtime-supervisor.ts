@@ -40,6 +40,8 @@ export const createNodeRuntimeSupervisor = Effect.fn("RuntimeSupervisor.create")
   readonly startupTimeoutMs?: number;
   readonly drainTimeoutMs?: number;
   readonly queueLimit?: number;
+  /** The installation's Edge proxy fronts this ingress, so its `x-forwarded-for` names the caller. */
+  readonly trustForwardedFor?: boolean;
   readonly headers?: Parameters<typeof createNodeRuntimeIngress>[0]["headers"];
   readonly admission?: Parameters<typeof createNodeRuntimeIngress>[0]["admission"];
   readonly output?: (stream: "stdout" | "stderr", line: string) => void;
@@ -52,7 +54,7 @@ export const createNodeRuntimeSupervisor = Effect.fn("RuntimeSupervisor.create")
   const failed = Deferred.makeUnsafe<never, TaggedFailure>();
   let cleanupFailures: string[] = [];
   let target = "";
-  const ingress = createNodeRuntimeIngress({ queueLimit: options.queueLimit, target: () => target, headers: options.headers, admission: options.admission });
+  const ingress = createNodeRuntimeIngress({ queueLimit: options.queueLimit, target: () => target, headers: options.headers, admission: options.admission, trustForwardedFor: options.trustForwardedFor === true });
   const engines = new Set<EngineProcess>();
   const prepare = Effect.fn("RuntimeSupervisor.prepare")(function* (release: RuntimeRelease) {
     const command = yield* options.resolve(release);

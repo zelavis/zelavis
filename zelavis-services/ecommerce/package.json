@@ -32,10 +32,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && esbuild src/dashboard-api.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dashboard/api.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run typecheck && node --test \"test/**/*.test.mjs\""
   },
@@ -62,7 +66,8 @@
   "devDependencies": {
     "effect": "4.0.0",
     "typescript": "^7.0.2",
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "esbuild": "^0.28.2"
   },
   "keywords": [
     "zelavis",

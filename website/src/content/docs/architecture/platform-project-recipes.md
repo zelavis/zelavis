@@ -23,6 +23,28 @@ The System Store is not a user project database. It must never appear as a
 table in a project's Database screen or be exposed through `zelavis/app/db`
 document APIs.
 
+Platform users' sign-in data (the Platform's [Zelavis Auth](/architecture/auth/)
+partition) lives in a separate **identity database** beside it
+(`.zelavis/identity-database/shards`), a private `zelavis/db` instance backed up
+with the System Store and restored only host-locally. No route or service
+reaches it.
+
+Services installed on the Node Platform share a separate private **services database**
+(`<data>/services-database/shards`). They receive it only as setup's `core.database`
+(the same documents API that Project services receive), and each uses its own
+`service:<package name>` Tenant by convention. Services share this database in one
+process; these Tenants are not a security sandbox. It has no database HTTP routes or
+dashboard, and Platform features do not use it. The Platform still reports no
+app-facing database capability.
+
+One backup host at `<data>/backups` captures `identity`, `system-store` and `database`.
+With the Platform stopped, `zelavis services-database restore <restored>/database
+--confirm restore [--data-dir DIR] [--json]` moves the restored services component
+into place and keeps the previous shards beside it. If a restore is interrupted
+between those moves, startup refuses to create an empty database; rerun the restore
+command to finish it. See [Platform backups](/api/database/#scheduled-encrypted-off-site-backups)
+for the backup operations and recovery commands. Bun does not open a services database.
+
 The Platform process does not mount an app-facing database service by default.
 In repository development through `pnpm dev`, its System Store lives at
 `packages/zelavis/.zelavis/system/zelavis.sqlite`.
@@ -173,8 +195,8 @@ Do not move existing project data into the System Store and do not use
 ## Project runtimes
 
 A Project runtime is the same composition as the Platform with `role: "project"`.
-It composes Identity, Database and Workloads as native subsystems; its accounts
-live in the Project's own database rather than the Platform System Store. The
+It composes Auth, Database and Workloads as native subsystems; its accounts
+live in the Project's own database rather than the Platform's identity database. The
 official `@zelavis/app` recipe supplies identity, menu and defaults but mounts no
 backend itself. Each Project also has its own services folder inside its
 `.zelavis` data root, discovered and loaded like the Platform's, so packages

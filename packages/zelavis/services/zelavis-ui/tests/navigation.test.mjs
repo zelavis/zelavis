@@ -24,7 +24,7 @@ test("authenticated customers can reach Projects with empty or exact scoped gran
 });
 
 test("a Project viewer gets inspection navigation and exact settings delegates get Auth", () => {
-  const runtime = { capabilities: { identity: { available: true }, database: { available: true } }, services: [] };
+  const runtime = { capabilities: { auth: { available: true }, database: { available: true } }, services: [] };
   const grant = permission => ({ permission, scope: { type: "project", projectId: project.id } });
   const principal = { type: "user", id: "customer", permissions: [], grants: [grant("project.view")] };
   const input = { control: { access: { principal }, services: [] }, project, runtime, content: [], tables: [], workloads: {} };

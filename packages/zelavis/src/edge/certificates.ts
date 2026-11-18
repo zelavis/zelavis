@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { evaluate, present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { X509Certificate } from "node:crypto";
+import { evaluate, present, integration, integrationValue, unwrapFailure, IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { createHash, X509Certificate } from "node:crypto";
 import type { ZelavisRuntimeService, ZelavisServerRoute } from "../core/index.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 import {
@@ -13,8 +13,12 @@ import {
 } from "./acme-crypto.js";
 import {
   createAcmeClient,
+  type AcmeAuthorization,
   type AcmeClient,
 } from "./acme-client.js";
+import type { DnsRecordRef, EdgeDnsAccess } from "./dns-connections.js";
+import type { DnsAuthoritativeTxt } from "./dns-provider.js";
+import { normalizeProjectDomainHostname } from "./project-domains.js";
 
 export const CERTIFICATES_NAMESPACE = "edge-certificates";
 export const ACME_NAMESPACE = "edge-acme";
@@ -76,6 +80,24 @@ export interface OrderCertificateOptions {
   forceRenew?: boolean;
   signal?: AbortSignal;
   projectDomainId?: string;
+  /** Default `http-01`; a `*.` hostname or SAN requires (and defaults to) `dns-01`. */
+  challenge?: "http-01" | "dns-01";
+}
+
+/** DNS-01 through the operator's adopted zones; TXT propagation is read at every authoritative server. */
+export interface AttachCertificateDnsOptions {
+  dns: EdgeDnsAccess;
+  authoritativeTxt?: DnsAuthoritativeTxt;
+  /** Default 5000. */
+  propagationIntervalMs?: number;
+  /** Default 120000. */
+  propagationTimeoutMs?: number;
+}
+
+/** `*.` followed by an exact public hostname: one leading wildcard label, nothing else. */
+export function isWildcardCertificateHostname(hostname: string): boolean {
+  const base = hostname.slice(2);
+  return hostname.startsWith("*.") && normalizeProjectDomainHostname(base) === base;
 }
 
 export interface CheckRenewalsOptions {
@@ -106,6 +128,11 @@ export interface ZelavisCertificateController {
     keyPem: string;
   }): Promise<ZelavisEdgeCertificateSummary>;
   checkRenewals(options?: CheckRenewalsOptions): Promise<RenewalsResult>;
+  /**
+   * Connects DNS-01 once the composition has built its DNS controller, and removes the challenge records an
+   * interrupted order left behind (named by their `edge-acme` checkpoints).
+   */
+  attachDns(options: AttachCertificateDnsOptions): Promise<{ readonly removed: number; readonly failed: number }>;
   challengeStore: AcmeChallengeStore;
 }
 
@@ -261,6 +288,82 @@ export function createZelavisCertificateController(
 
   const challengeStore =
     options.challengeStore ?? createMemoryAcmeChallengeStore();
+  let dnsAttachment: AttachCertificateDnsOptions | undefined;
+
+  interface Dns01Checkpoint {
+    readonly authorization: string; readonly provider: string; readonly zoneId: string; readonly apex: string;
+    readonly name: string; readonly value: string; readonly createdAt: string; readonly record?: DnsRecordRef;
+  }
+  const refused = (message: string) => new IntegrationFailure(new Error(message));
+  const asIntegration = (cause: unknown) => cause instanceof IntegrationFailure ? cause : new IntegrationFailure(cause);
+  const checkpointKey = (authzUrl: string) => `dns01:${createHash("sha256").update(authzUrl).digest("hex")}`;
+  const readCheckpoint = (value: unknown): Dns01Checkpoint | undefined => {
+    if (typeof value !== "object" || value === null) return undefined;
+    const row = value as Record<string, unknown>;
+    const text = (key: string) => typeof row[key] === "string" && (row[key] as string).length > 0 && (row[key] as string).length <= 512;
+    if (!["authorization", "provider", "zoneId", "apex", "name", "value", "createdAt"].every(text)) return undefined;
+    const record = row.record as Record<string, unknown> | undefined;
+    if (record !== undefined && !(typeof record === "object" && record !== null && typeof record.recordId === "string" &&
+        record.provider === row.provider && record.zoneId === row.zoneId && record.type === "TXT")) return undefined;
+    return value as unknown as Dns01Checkpoint;
+  };
+
+  /** Removes a challenge record by its id (or, if its id was never recorded, by its exact value), then its checkpoint. */
+  const removeChallenge = (key: string, checkpoint: Dns01Checkpoint) => Effect.gen(function* () {
+    const attached = dnsAttachment;
+    if (!attached) return yield* Effect.fail(refused("DNS-01 is not connected on this installation."));
+    if (checkpoint.record) yield* attached.dns.removeRecord(checkpoint.record, checkpoint.apex);
+    else yield* attached.dns.removeMatching(checkpoint, { name: checkpoint.name, type: "TXT", content: checkpoint.value });
+    yield* integration(() => store.delete(ACME_NAMESPACE, key));
+  }).pipe(Effect.mapError(asIntegration));
+
+  /** Waits until every authoritative server of the zone serves `value` at `name`, bounded. */
+  const awaitPropagation = Effect.fn("Certificates.awaitPropagation")(function* (name: string, value: string, signal?: AbortSignal) {
+    const attached = dnsAttachment!;
+    if (!attached.authoritativeTxt) return yield* Effect.fail(refused("DNS-01 needs an authoritative DNS resolver on this installation."));
+    const interval = attached.propagationIntervalMs ?? 5_000;
+    const deadline = Date.now() + (attached.propagationTimeoutMs ?? 120_000);
+    for (;;) {
+      yield* evaluate(() => signal?.throwIfAborted());
+      const answers = yield* Effect.result(integration((inner) => attached.authoritativeTxt!.txtAtEveryAuthority(
+        name, signal ? AbortSignal.any([signal, inner]) : inner), { interruptible: true }));
+      if (answers._tag === "Success" && answers.success.length > 0 &&
+          answers.success.every((server) => server.some((strings) => strings.join("") === value))) return;
+      if (Date.now() + interval > deadline) {
+        return yield* Effect.fail(refused(`The DNS-01 record ${name} was not served by every authoritative nameserver in time.`));
+      }
+      yield* Effect.sleep(interval);
+    }
+  });
+
+  const completeDns01 = Effect.fn("Certificates.completeDns01")(function* (
+    client: AcmeClient, authz: AcmeAuthorization, authzUrl: string, signal?: AbortSignal,
+  ) {
+    const attached = dnsAttachment;
+    if (!attached) return yield* Effect.fail(refused("DNS-01 needs a DNS provider connection on this installation."));
+    const challenge = authz.challenges.find((c) => c.type === "dns-01");
+    if (!challenge) return yield* Effect.fail(refused(`ACME server did not offer dns-01 challenge for ${authz.identifier.value}`));
+    const name = `_acme-challenge.${authz.identifier.value}`;
+    const zone = yield* attached.dns.zoneFor(name).pipe(Effect.mapError(asIntegration));
+    if (!zone) return yield* Effect.fail(refused(`No adopted DNS zone covers ${authz.identifier.value}.`));
+    const value = createHash("sha256").update(`${challenge.token}.${client.getAccountThumbprint()}`).digest("base64url");
+    const key = checkpointKey(authzUrl);
+    // The intent is durable before the record exists, so a crash between the two still leaves its cleanup.
+    const intent: Dns01Checkpoint = {
+      authorization: authzUrl, provider: zone.provider, zoneId: zone.zoneId, apex: zone.apex, name, value, createdAt: now().toISOString(),
+    };
+    yield* integration(() => store.set(ACME_NAMESPACE, key, intent as unknown as ZelavisSystemStoreValue));
+    const created = yield* Effect.result(attached.dns.createRecord(zone, { name, type: "TXT", content: value, ttl: 60 }));
+    const checkpoint = created._tag === "Success" ? { ...intent, record: created.success } : intent;
+    yield* Effect.gen(function* () {
+      if (created._tag === "Failure") return yield* Effect.fail(asIntegration(created.failure));
+      yield* integration(() => store.set(ACME_NAMESPACE, key, checkpoint as unknown as ZelavisSystemStoreValue));
+      yield* awaitPropagation(name, value, signal);
+      yield* integrationValue(client.notifyChallenge(challenge.url));
+      yield* integrationValue(client.pollAuthorization(authzUrl, { maxWaitMs: 30000 }));
+    }).pipe(Effect.ensuring(removeChallenge(key, checkpoint).pipe(Effect.catch((cause) =>
+      Effect.logWarning("edge.acme.dns01-cleanup-deferred", { name, apex: zone.apex, error: String(unwrapFailure(cause)) })))));
+  });
 
   function getStoredRecord(
     ref: string,
@@ -338,6 +441,29 @@ export function createZelavisCertificateController(
 
   return {
     challengeStore,
+
+    attachDns(attachOptions) {
+      return present(Effect.gen(function* () {
+        dnsAttachment = attachOptions;
+        const records = yield* integration(() => store.list(ACME_NAMESPACE));
+        let removed = 0, failed = 0;
+        for (const record of records.filter((row) => row.key.startsWith("dns01:")).slice(0, 64)) {
+          const checkpoint = readCheckpoint(record.value);
+          if (!checkpoint) {
+            yield* Effect.logWarning("edge.acme.dns01-checkpoint-unreadable", { key: record.key });
+            failed++;
+            continue;
+          }
+          const result = yield* Effect.result(removeChallenge(record.key, checkpoint));
+          if (result._tag === "Success") removed++;
+          else {
+            failed++;
+            yield* Effect.logWarning("edge.acme.dns01-cleanup-deferred", { name: checkpoint.name, apex: checkpoint.apex, error: String(unwrapFailure(result.failure)) });
+          }
+        }
+        return { removed, failed };
+      }));
+    },
 
     getCertificate(
       ref: string,
@@ -429,14 +555,25 @@ export function createZelavisCertificateController(
           hostname,
           ...sanHostnames.filter((s) => s !== hostname),
         ];
+        const wildcard = allIdentifiers.some((name) => name.startsWith("*"));
+        if (allIdentifiers.some((name) => name.includes("*") && !isWildcardCertificateHostname(name))) {
+          throw new Error("A wildcard certificate name is `*.` followed by an exact public hostname.");
+        }
+        const challengeType = orderOptions.challenge ?? (wildcard ? "dns-01" : "http-01");
+        if (wildcard && challengeType !== "dns-01") throw new Error("A wildcard certificate can only be issued through dns-01.");
         const order = yield* integrationValue(client.createOrder(allIdentifiers));
 
-        // 5. Complete HTTP-01 Challenges
+        // 5. Complete the challenges: HTTP-01 through the challenge store, DNS-01 through an adopted zone.
         for (const authzUrl of order.authorizations) {
           const authz = yield* integrationValue(client.getAuthorization(authzUrl));
           if (authz.status === "valid") continue;
 
-          if (!allIdentifiers.includes(authz.identifier.value)) throw new Error("ACME returned an unexpected hostname.");
+          const requested = authz.wildcard ? `*.${authz.identifier.value}` : authz.identifier.value;
+          if (!allIdentifiers.includes(requested)) throw new Error("ACME returned an unexpected hostname.");
+          if (challengeType === "dns-01") {
+            yield* completeDns01(client, authz, authzUrl, orderOptions.signal);
+            continue;
+          }
           const httpChallenge = authz.challenges.find((c) => c.type === "http-01");
           if (!httpChallenge) {
             throw new Error(

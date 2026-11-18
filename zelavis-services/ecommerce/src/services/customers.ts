@@ -7,6 +7,8 @@ import { Repositories } from "./repositories.js";
 export interface CreateCustomerInput {
   id: string;
   accountId?: string;
+  principalId?: string;
+  providerReferences?: Record<string, string>;
   email: string;
   firstName?: string;
   lastName?: string;

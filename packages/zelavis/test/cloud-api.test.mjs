@@ -6,6 +6,7 @@ import { runCloudCommand } from "../dist/cli/cloud.js";
 import { createCloudCapacityController } from "../dist/platform/cloud-capacity.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 
+const POLICY = { location: "nbg1", image: "ubuntu-24.04", maxNodes: 2, machineClasses: [{ name: "cpx11", cpuCores: 2, memoryBytes: 2 * 1024 ** 3, diskBytes: 40 * 1024 ** 3 }] };
 const TOKEN = "hcloud_token_0123456789abcdef";
 const OWNER = { id: "owner", type: "user", permissions: ["*"] };
 
@@ -21,6 +22,7 @@ function fakeProvider() {
 
 async function platform(t, { controller = true } = {}) {
   const store = createMemorySystemStore();
+  await store.set("fabric.cloud-policy.v1", "default", { schemaVersion: 1, policy: POLICY, updatedAt: 1, updatedBy: "owner" });
   const provider = fakeProvider();
   const cloudCapacity = controller ? createCloudCapacityController({
     store, masterSecret: "secret", platformId: "p1",
@@ -132,4 +134,49 @@ test("scaling consent is the same on HTTP, the SDK and the CLI, and needs the st
   assert.equal((await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 1, cooldownMinutes: 5 })).status, 403);
   as({ id: "manager", type: "user", permissions: ["server.cloud.manage"] });
   assert.equal((await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 1, cooldownMinutes: 5 })).status, 403, "managing machines is not consenting to spend");
+});
+
+
+test("stored policy enforces authority, validates bounds and rejects stale revisions", async t => {
+  const { send, as } = await platform(t);
+  as({ id: "viewer", type: "user", permissions: ["server.cloud.view"] });
+  assert.equal((await send("PUT", "/runtime/cloud/policy", { policy: POLICY })).status, 403);
+  as(OWNER);
+  const first = await json(await send("GET", "/runtime/cloud/policy"));
+  const saved = await json(await send("PUT", "/runtime/cloud/policy", { policy: { ...POLICY, maxNodes: 3 }, expectedUpdatedAt: first.body.updatedAt }));
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.policy.maxNodes, 3);
+  const stale = await json(await send("PUT", "/runtime/cloud/policy", { policy: POLICY, expectedUpdatedAt: first.body.updatedAt }));
+  assert.deepEqual([stale.status, stale.body.code], [409, "invalid-request"]);
+  assert.match(stale.body.error, /reload/);
+  const bad = await json(await send("PUT", "/runtime/cloud/policy", { policy: { ...POLICY, maxNodes: 101 } }));
+  assert.equal(bad.status, 400); assert.match(bad.body.error, /100/);
+});
+
+
+test("webhook connections need an HTTPS endpoint and a long signing secret; other providers refuse endpoints", async t => {
+  const { send } = await platform(t);
+  const signing = "signing-secret-012345678901234567890123";
+  for (const body of [{ provider: "webhook", token: signing }, { provider: "webhook", token: signing, endpoint: "http://webhook.test" }, { provider: "webhook", token: TOKEN, endpoint: "https://webhook.test" }, { provider: "hetzner", token: TOKEN, endpoint: "https://webhook.test" }]) {
+    assert.equal((await send("POST", "/runtime/cloud/connection", body)).status, 400);
+  }
+  const connected = await json(await send("POST", "/runtime/cloud/connection", { provider: "webhook", token: signing, endpoint: "https://webhook.test/capacity" }));
+  assert.equal(connected.status, 201); assert.equal(connected.body.connection.endpoint, "https://webhook.test/capacity");
+});
+
+
+test("policy and webhook fields have SDK and CLI parity", async t => {
+  const { client, cli } = await platform(t);
+  const initial = await client.cloud.policy();
+  const saved = await client.cloud.setPolicy({ ...POLICY, maxNodes: 4 }, { expectedUpdatedAt: initial.updatedAt });
+  assert.deepEqual(await cli("policy"), saved);
+  const changed = await cli("set-policy", "--data", JSON.stringify(POLICY), "--expected-updated-at", String(saved.updatedAt));
+  assert.deepEqual(await client.cloud.policy(), changed);
+  await assert.rejects(client.cloud.setPolicy(POLICY, { expectedUpdatedAt: saved.updatedAt }), error => error.status === 409);
+  process.env.ZELAVIS_CLOUD_TOKEN = "signing-secret-01234567890123456789";
+  // cli fixture supplies its existing test token; use SDK for the longer webhook signing secret.
+  const connected = await client.cloud.connect({ provider: "webhook", token: "signing-secret-01234567890123456789", endpoint: "https://webhook.test/capacity" });
+  assert.equal(connected.endpoint, "https://webhook.test/capacity");
+  assert.deepEqual((await cli("status")).connection, connected);
+  delete process.env.ZELAVIS_CLOUD_TOKEN;
 });

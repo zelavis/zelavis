@@ -19,7 +19,7 @@ import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 import { makeRocksdbJsStore } from "./engines/rocksdb-js.js";
 import { imagesHost } from "./node-images.js";
-import { backupsHost, databaseComponent, type BackupComponent } from "./node-backups.js";
+import { backupsHost, databaseComponent, type BackupComponent, type DatabaseBackupsHost } from "./node-backups.js";
 import { runtimeApiFor, type DatabaseRuntimeApi, type StorageChoiceHost } from "./runtime-api.js";
 import type { KvDurability } from "./kv.js";
 import type { ShardStoreApi } from "./store.js";
@@ -64,6 +64,13 @@ export interface OpenNodeDatabaseOptions {
   readonly nodeId?: string;
   /** What scheduled backups capture besides the database: the host adds a Project's runtime store and media. */
   readonly backupComponents?: ReadonlyArray<BackupComponent>;
+  /**
+   * Where scheduled backups live and what this database's component is called. Defaults: `../backups` beside the shards,
+   * component `database`, schedules running while the database is open. A host that already owns a backups directory
+   * (the Platform's) names it here, so one host holds every component and one set of schedules covers them.
+   * `false` opens no backups host; another database's host may capture this one as a component.
+   */
+  readonly backups?: false | { readonly directory?: string; readonly componentName?: string; readonly scope?: Scope.Scope };
   /** Where writer leases are kept, so the runtime API can show, take over and give up a partition's lease (`followers.lease|promote|demote`). */
   readonly leases?: LeaseStore;
   /**
@@ -87,6 +94,8 @@ export interface OpenNodeDatabase {
   readonly api: DatabaseRuntimeApi;
   readonly partitionMap: PartitionMap;
   readonly engine: EngineName;
+  /** The backups host this database's component belongs to. */
+  readonly backups: DatabaseBackupsHost | undefined;
   /** Closes every shard. Registered with the host runtime's shutdown. */
   readonly close: () => Promise<void>;
 }
@@ -255,7 +264,7 @@ export const openNodeDatabase = (
         ...(shardPlacement === undefined ? {} : { shardPlacement }),
       }),
       scope,
-    ),
+    ).pipe(Effect.onError(() => Scope.close(scope, Exit.void))),
   )));
 
   // The lease is taken before anything is handed out: a node that cannot hold it opens nothing, and the scope it was
@@ -275,15 +284,15 @@ export const openNodeDatabase = (
   }
 
   // Beside the shards and the images, so a database moved with its directory takes its schedules along.
-  const backups = (yield* integrationValue(Effect.runPromise(backupsHost({
-    directory: join(options.directory, "..", "backups"),
-    components: [databaseComponent(database, engine), ...(options.backupComponents ?? [])],
-    scope,
-  }))));
+  const backups = options.backups === false ? undefined : (yield* integrationValue(Effect.runPromise(backupsHost({
+    directory: options.backups?.directory ?? join(options.directory, "..", "backups"),
+    components: [databaseComponent(database, engine, options.backups?.componentName), ...(options.backupComponents ?? [])],
+    scope: options.backups?.scope ?? scope,
+  }).pipe(Effect.onError(() => Scope.close(scope, Exit.void))))));
   return {
     database,
     api: runtimeApiFor(database, {
-      backups,
+      ...(backups === undefined ? {} : { backups }),
       ...(options.leases === undefined ? {} : { leases: options.leases }),
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       storage: { engine, durability: effectiveDurability },
@@ -293,6 +302,7 @@ export const openNodeDatabase = (
     }),
     partitionMap: database.partitionMap,
     engine,
+    backups,
     close: () => Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))),
   };
 }));

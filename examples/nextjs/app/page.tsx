@@ -51,7 +51,7 @@ export default function Home() {
               <div>GET /zelavis</div>
               <div>GET /zelavis/settings</div>
               <div>GET /zelavis/api/v1/runtime/config</div>
-              <div>GET /zelavis/api/v1/auth/providers</div>
+              <div>GET /zelavis/api/v1/auth/methods</div>
             </div>
           </div>
         </div>

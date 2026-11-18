@@ -28,7 +28,7 @@ test("the settings page is a product service, not part of auth", async () => {
   // that configures it and can be removed without anyone losing the ability to
   // sign in.
   assert.ok(runtime.auth);
-  assert.ok(!names.includes("zelavis/identity"));
+  assert.ok(!names.includes("zelavis/auth"));
   assert.ok(names.includes("@zelavis/auth"));
 });
 
@@ -58,7 +58,7 @@ test("the page reads the endpoints anyone else could", async () => {
   const html = String((await runtime.plain({ url: entry.menu.page.src })).body);
 
   // Nothing privileged: the same versioned endpoints the CLI uses.
-  assert.match(html, /\/auth\/bootstrap/u);
+  assert.match(html, /\/auth\/methods/u);
   assert.match(html, /\/auth\/oauth\/connections/u);
   assert.match(html, /runtime\/extensions\?owner=/u);
 });
@@ -68,10 +68,10 @@ test("the catalogue points at the Identity subsystem, not this package", async (
   const [entry] = await authMenuEntries(runtime);
   const html = String((await runtime.plain({ url: entry.menu.page.src })).body);
 
-  // Extensions declare `zelavis/identity:oauth`, so a catalogue asking for
+  // Extensions declare `zelavis/auth:oauth`, so a catalogue asking for
   // `@zelavis/auth` would list nothing while looking like it worked. The two
   // names are close enough that this is worth pinning.
-  assert.match(html, /const OWNER = "zelavis\/identity"/u);
+  assert.match(html, /const OWNER = "zelavis\/auth"/u);
 });
 
 test("removing the settings page leaves sign-in working", async () => {

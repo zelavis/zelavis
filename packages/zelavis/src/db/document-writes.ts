@@ -1,5 +1,5 @@
 /** The documents API's writes for one tenant: documents, collections and their declarations changed, checked inside the transaction that writes them. */
-import { Effect, Stream } from "effect";
+import { Clock, Effect, Exit, Random, Stream } from "effect";
 import type { JsonObject } from "./json.js";
 import {
   CollectionExists,
@@ -17,7 +17,7 @@ import {
   UnembeddedCollection,
   VectorShapeMismatch,
 } from "./errors.js";
-import type { DbError } from "./errors.js";
+import { type DbError, DocumentConflict as TxConflictCheck, TransactionConflict, TransactionTooLarge, dieUnlessMoving } from "./errors.js";
 import { decodeOrderedTuple } from "./keys.js";
 import { isUsableVector, normalized } from "./vectors.js";
 import { type Seq } from "./model.js";
@@ -26,8 +26,8 @@ import type { OrderedCursor, Txn } from "./store.js";
 
 import { describeFields, describeFilter, describeVector, edgeTypeFor, hasValue, normalizeAnalyzer, normalizeCheck, normalizeColumns, normalizeEdge, normalizeEmbedding, normalizeIndex, normalizeMeasure, normalizeReference, normalizeSpatial, sameFields, satisfiesCheck } from "./document-definitions.js";
 import { covers, indexTuple, validateDocumentData } from "./document-indexing.js";
-import { type Analyzer, type CheckConstraint, type DerivedDeclarationSet, type Document, type DocumentFilter, type DocumentWritten, type EdgeDefinition, type EmbeddingIndex, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
-import { matches } from "./document-planner.js";
+import { type Analyzer, type CheckConstraint, type DerivedDeclarationSet, type Document, type DocumentFilter, type DocumentTransaction, type DocumentWrite, type DocumentWritten, type FindDocumentsInput, type OutboxEmit, type WriteFailure, type EdgeDefinition, type EmbeddingIndex, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
+import { compareDocuments, matches } from "./document-planner.js";
 import { COLLECTION_MARKER, type Pending, RECEIPT_MARKER, type StoredCollection, type StoredIndex, claimOf, collectionColumn, collectionNs, collectionRecord, columnFor, decode, documentNs, documentRecord, encode, fingerprintOf, idempotencyColumn, indexColumnFor, nameOf, nothingPending, publicCollection, publicIndex, readPath, receiptRecord, setPath, validateName } from "./document-records.js";
 import type { DocumentCore } from "./document-core.js";
 import type { DocumentReads } from "./document-reads.js";
@@ -155,6 +155,21 @@ export interface WriteAlongInput {
 }
 
 /**
+ * What a `documents.transaction` commit re-checks inside the writer's transaction, before anything is written: the
+ * reads its body made, as they stand now. Keyed by a symbol, like `WRITE_ALONG`, so nothing that arrives as JSON can
+ * carry it. A failure refuses the whole batch and reaches the caller of `write` untyped.
+ */
+export const VALIDATE_READS: unique symbol = Symbol("zelavis.db.validateReads");
+export interface ValidateReadsInput {
+  readonly [VALIDATE_READS]?: (txn: Txn) => Effect.Effect<void, unknown>;
+}
+
+/** The commit found something the transaction's body read had changed. */
+class ReadSetChanged {
+  readonly _tag = "ReadSetChanged";
+}
+
+/**
  * Documents recreated as they were in another database, for this package's own use: the data-layout migration inserts
  * each document with the version and times the earlier engine held, so a client holding a version read before the
  * migration is judged against the same number afterwards. Restarting at one would let a stale `expectedVersion` match
@@ -277,6 +292,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     manifestFor, currentAt, currentNamed, remember, forget,
   } = core;
   const { orderedPage, rebuildIndex, findDocuments } = reads;
+  const tenantName = String(core.tenant);
   const reserveSnapshot = Effect.fnUntraced(function* (
     documents: ReadonlyArray<{ readonly collection: string; readonly id: string }>,
     assigned: Map<string, Seq>,
@@ -858,6 +874,208 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     Effect.gen(function* () {
       const at = yield* lookup(REDERIVING_NAMESPACE, collection);
       return at === undefined || (yield* readObject(at)) === undefined ? undefined : at;
+    });
+
+
+  // --- documents.transaction ---------------------------------------------------------------------------------
+
+  const TX_POINT_READS = 256;
+  const TX_QUERY_READS = 256;
+  const TX_QUERY_LIMIT = 1000;
+  const TX_MESSAGE_LIMIT = 1000;
+  const TX_OVERLAY_OPERATORS = new Set(["eq", "ne", "gt", "gte", "lt", "lte", "in"]);
+
+  interface PointRead { readonly collection: string; readonly id: string; readonly seq: Seq | undefined; readonly document: Document | undefined }
+  interface QueryRead { readonly input: FindDocumentsInput; readonly found: ReadonlyArray<{ readonly document: Document; readonly seq: Seq | undefined }> }
+  /** What one attempt of a body read and staged. */
+  interface Attempt {
+    readonly operations: Array<DocumentWrite>;
+    readonly emits: Array<OutboxEmit>;
+    /** Documents as the body's own writes leave them; null is deleted. */
+    readonly written: Map<string, Document | null>;
+    /** Documents whose first staged change already carries its version check. */
+    readonly touched: Set<string>;
+    readonly points: Map<string, PointRead>;
+    readonly queries: Array<QueryRead>;
+  }
+
+  const tooLarge = (what: TransactionTooLarge["what"], limit: number) =>
+    new TransactionTooLarge({ tenant: tenantName, what, limit });
+
+  const transactionFor = (attempt: Attempt): DocumentTransaction => {
+    const readCommitted = (collection: string, id: string) =>
+      Effect.gen(function* () {
+        const name = nameOf(collection, id);
+        const seen = attempt.points.get(name);
+        if (seen !== undefined) return seen.document;
+        if (attempt.points.size >= TX_POINT_READS) return yield* tooLarge("point-reads", TX_POINT_READS);
+        const seq = yield* lookup(documentNs(collection), id);
+        const document = seq === undefined ? undefined : yield* readDocument(seq);
+        attempt.points.set(name, { collection, id, seq, document });
+        return document;
+      }).pipe(Effect.catch((failure) =>
+        failure instanceof TransactionTooLarge ? Effect.fail(failure) : Effect.die(failure)));
+    const stage = (operation: DocumentWrite) =>
+      attempt.operations.length >= MAX_BATCH ? Effect.fail(tooLarge("writes", MAX_BATCH)) : Effect.sync(() => { attempt.operations.push(operation); });
+    const now = () => new Date().toISOString();
+    return {
+      get: ({ collection, id }) =>
+        Effect.gen(function* () {
+          const name = nameOf(collection, id);
+          if (attempt.written.has(name)) return attempt.written.get(name) ?? undefined;
+          return yield* readCommitted(collection, id);
+        }),
+      find: (input) =>
+        Effect.gen(function* () {
+          const unsupported = input.search !== undefined || input.geometry !== undefined || input.linked !== undefined
+            || input.similar !== undefined || input.related !== undefined || input.hybrid !== undefined
+            || input.statistics !== undefined || input.offset !== undefined
+            || (input.where ?? []).some((filter) => !TX_OVERLAY_OPERATORS.has(filter.op ?? "eq"));
+          if (unsupported) return yield* tooLarge("query", 0);
+          if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > TX_QUERY_LIMIT) {
+            return yield* tooLarge("query-limit", TX_QUERY_LIMIT);
+          }
+          if (attempt.queries.length >= TX_QUERY_READS) return yield* tooLarge("query-reads", TX_QUERY_READS);
+          const readInput: FindDocumentsInput = { ...input, limit: input.limit + attempt.written.size };
+          // Only the plain filters reach here, so only an unindexed field is the caller's to hear about.
+          const found = yield* findDocuments(readInput).pipe(Effect.catch((failure) =>
+            failure._tag === "UnindexedField" ? Effect.fail(failure) : Effect.die(failure)));
+          const revisions = yield* Effect.forEach(found, (document) =>
+            lookup(documentNs(document.collection), document.id).pipe(Effect.map((seq) => ({ document, seq }))));
+          attempt.queries.push({ input: readInput, found: revisions });
+          const where = input.where ?? [];
+          const fits = (document: Document) => where.every((filter) => matches(document.data, filter));
+          const seen = new Set<string>();
+          const merged: Array<Document> = [];
+          for (const document of found) {
+            const name = nameOf(document.collection, document.id);
+            seen.add(name);
+            if (!attempt.written.has(name)) { merged.push(document); continue; }
+            const current = attempt.written.get(name);
+            if (current !== null && current !== undefined && fits(current)) merged.push(current);
+          }
+          for (const [name, document] of attempt.written) {
+            if (seen.has(name) || document === null || document.collection !== input.collection || !fits(document)) continue;
+            merged.push(document);
+          }
+          const ordered = input.orderBy === undefined || input.orderBy.length === 0
+            ? merged : [...merged].sort(compareDocuments(input.orderBy));
+          return ordered.slice(0, input.limit);
+        }),
+      insert: ({ collection, id, data, expiresAt }) =>
+        Effect.gen(function* () {
+          const settled = id ?? crypto.randomUUID();
+          yield* stage({ _tag: "Insert", collection, id: settled, data, ...(expiresAt === undefined ? {} : { expiresAt }) });
+          const name = nameOf(collection, settled);
+          const at = now();
+          attempt.written.set(name, {
+            id: settled, collection, data, createdAt: at, updatedAt: at, version: 1,
+            ...(expiresAt === undefined ? {} : { expiresAt }),
+          });
+          attempt.touched.add(name);
+          return { id: settled };
+        }),
+      update: ({ collection, id, data, mode }) =>
+        Effect.gen(function* () {
+          const name = nameOf(collection, id);
+          const current = attempt.written.has(name) ? attempt.written.get(name) ?? undefined : yield* readCommitted(collection, id);
+          const expectedVersion = attempt.touched.has(name) || current === undefined ? undefined : attempt.points.get(name)?.document?.version;
+          yield* stage({
+            _tag: "Update", collection, id, data, ...(mode === undefined ? {} : { mode }),
+            ...(expectedVersion === undefined ? {} : { expectedVersion }),
+          });
+          attempt.touched.add(name);
+          if (current === undefined) return;
+          attempt.written.set(name, {
+            ...current, data: (mode ?? "merge") === "replace" ? data : { ...current.data, ...data },
+            updatedAt: now(), version: current.version + 1,
+          });
+        }),
+      delete: ({ collection, id }) =>
+        Effect.gen(function* () {
+          const name = nameOf(collection, id);
+          const current = attempt.written.has(name) ? attempt.written.get(name) ?? undefined : yield* readCommitted(collection, id);
+          const expectedVersion = attempt.touched.has(name) || current === undefined ? undefined : attempt.points.get(name)?.document?.version;
+          yield* stage({ _tag: "Delete", collection, id, ...(expectedVersion === undefined ? {} : { expectedVersion }) });
+          attempt.touched.add(name);
+          attempt.written.set(name, null);
+        }),
+      emit: (message) =>
+        attempt.emits.length >= TX_MESSAGE_LIMIT
+          ? Effect.fail(tooLarge("emits", TX_MESSAGE_LIMIT))
+          : Effect.sync(() => { attempt.emits.push(message); }),
+    };
+  };
+
+  /** Every read the body made, as committed state stands now: the first difference refuses the batch. */
+  const validateReads = (attempt: Attempt) => (_txn: Txn) =>
+    Effect.gen(function* () {
+      for (const read of attempt.points.values()) {
+        const seq = yield* lookup(documentNs(read.collection), read.id);
+        // An explicit id can be deleted and reinserted at the same version.
+        // Its storage sequence distinguishes the two document incarnations.
+        if (seq !== read.seq) return yield* Effect.fail(new ReadSetChanged());
+        const document = seq === undefined ? undefined : yield* readDocument(seq);
+        if (document?.version !== read.document?.version) return yield* Effect.fail(new ReadSetChanged());
+      }
+      for (const read of attempt.queries) {
+        const found = yield* findDocuments(read.input);
+        if (found.length !== read.found.length) return yield* Effect.fail(new ReadSetChanged());
+        for (const [at, document] of found.entries()) {
+          const previous = read.found[at]!;
+          if (document.id !== previous.document.id || document.version !== previous.document.version) {
+            return yield* Effect.fail(new ReadSetChanged());
+          }
+          const seq = yield* lookup(documentNs(document.collection), document.id);
+          if (seq !== previous.seq) return yield* Effect.fail(new ReadSetChanged());
+        }
+      }
+    });
+
+  const transaction: DocumentsApi["transaction"] = (body, options) =>
+    Effect.gen(function* () {
+      const attempts = options?.attempts ?? 8;
+      const deadlineMs = options?.deadlineMs ?? 5000;
+      if (!Number.isInteger(attempts) || attempts < 1 || attempts > 8) {
+        return yield* Effect.die(new RangeError(`A transaction makes 1 to 8 attempts, not ${attempts}.`));
+      }
+      if (!Number.isInteger(deadlineMs) || deadlineMs < 100 || deadlineMs > 30_000) {
+        return yield* Effect.die(new RangeError(`A transaction's deadline is 100 to 30000 milliseconds, not ${deadlineMs}.`));
+      }
+      const started = yield* Clock.currentTimeMillis;
+      let reason: "read-set" | "version" = "read-set";
+      for (let number = 1; number <= attempts; number += 1) {
+        const attempt: Attempt = {
+          operations: [], emits: [], written: new Map(), touched: new Set(), points: new Map(), queries: [],
+        };
+        // The body runs outside the writer, reading one snapshot; a failure ends the transaction as itself.
+        const ran = yield* dieUnlessMoving(store.reading(Effect.exit(body(transactionFor(attempt)))));
+        if (Exit.isFailure(ran)) return yield* (Effect.failCause(ran.cause) as Effect.Effect<never, never>);
+        if (attempt.operations.length === 0 && attempt.emits.length === 0) return ran.value;
+        const input = {
+          operations: attempt.operations,
+          ...(attempt.emits.length === 0 ? {} : { emit: attempt.emits }),
+          [VALIDATE_READS]: validateReads(attempt),
+        } satisfies Parameters<DocumentsApi["write"]>[0] & ValidateReadsInput;
+        const outcome = yield* (operations.write(input) as Effect.Effect<unknown, WriteFailure | ReadSetChanged>).pipe(
+          Effect.map(() => "committed" as const),
+          Effect.catch((failure) =>
+            failure instanceof ReadSetChanged ? Effect.succeed("read-set" as const)
+              : failure._tag === "DocumentConflict" ? Effect.succeed("version" as const)
+              : Effect.fail(failure as Exclude<WriteFailure, TxConflictCheck>)));
+        if (outcome === "committed") return ran.value;
+        reason = outcome;
+        if (number === attempts) break;
+        if ((yield* Clock.currentTimeMillis) - started >= deadlineMs) {
+          return yield* new TransactionConflict({ tenant: tenantName, attempts: number, reason: "deadline" });
+        }
+        // Full jitter over a window that doubles: racers that conflicted together do not retry together.
+        yield* Effect.sleep(1 + (yield* Random.nextIntBetween(0, Math.min(400, 16 * 2 ** number))));
+        if ((yield* Clock.currentTimeMillis) - started >= deadlineMs) {
+          return yield* new TransactionConflict({ tenant: tenantName, attempts: number, reason: "deadline" });
+        }
+      }
+      return yield* new TransactionConflict({ tenant: tenantName, attempts, reason });
     });
 
   const operations = {
@@ -1483,6 +1701,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         const operations = input.operations;
         const emit = input.emit ?? [];
         const along = (input as WriteAlongInput)[WRITE_ALONG];
+        const validate = (input as ValidateReadsInput)[VALIDATE_READS];
         const carry = (input as CarryDocumentsInput)[CARRY_DOCUMENTS];
         const replay = (input as ReplayHistoryInput)[REPLAY_HISTORY];
         const snapshot = (input as CarrySnapshotInput)[CARRY_SNAPSHOT];
@@ -1544,6 +1763,8 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           Effect.gen(function* () {
             // One overlay for the batch: each change sees what the ones before
             // it wrote, which is what makes them one change rather than several.
+            // A transaction's reads are checked before anything is written, against what is committed.
+            if (validate !== undefined) yield* (validate(txn) as Effect.Effect<void, never>);
             const pending = nothingPending();
             const written: Array<DocumentWritten> = [];
             for (const [at, operation] of operations.entries()) {
@@ -1600,6 +1821,8 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           }));
       }),
 
+    transaction,
+
     rewrite: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
@@ -1638,6 +1861,6 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         return forgotten;
       }),
   // A new DocumentsApi operation is also named in the list below, or this half of the API is not checked against it.
-  } satisfies Pick<DocumentsApi, "createCollection" | "insert" | "update" | "delete" | "dropCollection" | "createIndex" | "dropIndex" | "addCheck" | "analyze" | "setColumns" | "locate" | "embed" | "declareFromSchema" | "rebuildVectorIndex" | "dropVectorIndex" | "addReference" | "dropReference" | "dropCheck" | "write" | "rewrite" | "forgetIdempotencyKeys">;
+  } satisfies Pick<DocumentsApi, "createCollection" | "insert" | "update" | "delete" | "dropCollection" | "createIndex" | "dropIndex" | "addCheck" | "analyze" | "setColumns" | "locate" | "embed" | "declareFromSchema" | "rebuildVectorIndex" | "dropVectorIndex" | "addReference" | "dropReference" | "dropCheck" | "write" | "transaction" | "rewrite" | "forgetIdempotencyKeys">;
   return { operations };
 };

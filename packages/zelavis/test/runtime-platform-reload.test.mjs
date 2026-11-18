@@ -28,10 +28,9 @@ test("a plugin installed into a running Platform serves its route after a same-r
     const port = await Effect.runPromise(host.listen({ host: "127.0.0.1", port: 0 }));
     const url = `http://127.0.0.1:${port}`;
     const anonymous = createZelavisClient({ baseUrl: url });
-    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, provider: "password",
-      account: { email: "owner@example.com" }, credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
-    const { session } = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-    const headers = { authorization: `Bearer ${session.token}`, "content-type": "application/json" };
+    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, username: "owner", password: "correct horse battery staple" } });
+    const { tokens: session } = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+    const headers = { authorization: `Bearer ${session.accessToken}`, "content-type": "application/json" };
     const probe = () => fetch(`${url}/zelavis/api/v1/plugins/reloaded/probe`, { headers });
 
     // Only the engine, holding the host's token, may ask for a reload.

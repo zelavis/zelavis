@@ -7,6 +7,7 @@ import {
   publicErrorMessage,
 } from "./error-policy.js";
 import { stringifyJsonRequest } from "./json-request.js";
+import { requestClientAddress } from "./client-address.js";
 import type {
   ZelavisAccessDecision,
   ZelavisAccessRequirement,
@@ -220,6 +221,7 @@ function notFoundResponse(): ZelavisRouteResponse {
 
 function unauthorizedResponse(
   challenge?: ZelavisAuthenticationError["challenge"],
+  code?: ZelavisAuthenticationError["code"],
 ): ZelavisRouteResponse {
   return {
     status: 401,
@@ -228,6 +230,7 @@ function unauthorizedResponse(
       : undefined,
     body: {
       error: "Unauthorized",
+      ...(code === undefined ? {} : { code }),
     },
   };
 }
@@ -790,7 +793,7 @@ const checkRouteAccess = <TService = unknown>(
     if ("unauthorized" in resolved) {
       return {
         allowed: false as const,
-        response: toResponse(unauthorizedResponse(resolved.unauthorized.challenge)),
+        response: toResponse(unauthorizedResponse(resolved.unauthorized.challenge, resolved.unauthorized.code)),
       };
     }
     principal = resolved.value;
@@ -895,6 +898,7 @@ const executeResolvedRoute = <TService = unknown>(
       request,
       principal: access.principal,
       platform: context?.platform,
+      client: (() => { const address = requestClientAddress(request); return address === undefined ? {} : { address }; })(),
     }));
 
     return {

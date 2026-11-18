@@ -27,10 +27,10 @@ test("the auth settings page is a complete document that styles itself from the 
   assert.match(page, /^<!doctype html>/i);
   assert.match(page, /<title>Auth<\/title>/i);
   assert.match(page, /service-page\.css/);
-  assert.match(page, /const OWNER = "zelavis\/identity"/);
+  assert.match(page, /const OWNER = "zelavis\/auth"/);
 });
 
-test("the registration form uses the mounted Identity settings endpoint and its revision", async () => {
+test("the registration form uses the mounted Auth settings endpoint and its revision", async () => {
   const page = await readFile(new URL("../dashboard/auth.html", import.meta.url), "utf8");
   assert.match(page, /Allow public registration/);
   assert.match(page, /const registrationPath = "\/auth\/registration\/settings"/);

@@ -30,6 +30,7 @@ import { Effect } from "effect";
 const REQUEST_KIND = "service-page-request";
 const RESPONSE_KIND = "service-page-response";
 const DEFAULT_TIMEOUT_MS = 30_000;
+let nextRequestId = 0;
 
 interface BrokerResponse {
   zelavis?: unknown;
@@ -55,6 +56,8 @@ export function isSandboxedServicePage(): boolean {
 export interface ServicePageFetchOptions {
   /** How long to wait for the dashboard to answer. */
   readonly timeoutMs?: number;
+  /** Offer the URL of a successful POST in a dashboard dialog for the viewer to open. */
+  readonly offerExternalLink?: boolean;
 }
 
 /**
@@ -68,7 +71,6 @@ export function createServicePageFetch(
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  let nextId = 0;
 
   return function brokeredFetch(input, init) { return presentProtocol(Effect.gen(function* () {
     let rawPath =
@@ -91,7 +93,7 @@ export function createServicePageFetch(
     }
     const path = rawPath;
 
-    const id = `${Date.now()}-${(nextId += 1)}`;
+    const id = `${Date.now()}-${(nextRequestId += 1)}`;
     const body =
       init?.body === undefined || init.body === null
         ? undefined
@@ -124,6 +126,7 @@ export function createServicePageFetch(
           path,
           method: init?.method ?? "GET",
           body,
+          ...(options.offerExternalLink ? { offerExternalLink: true } : {}),
         },
         // The parent's origin is not readable from a sandboxed document, so it
         // cannot be named here. The dashboard identifies this frame by the

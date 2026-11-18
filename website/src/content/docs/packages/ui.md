@@ -27,6 +27,28 @@ The dashboard is a client of Zelavis endpoints. Privileged behavior should live
 behind runtime capabilities and versioned endpoints, not only inside React route
 modules or component callbacks.
 
+## Your account
+
+In the Platform dashboard, open **Account → Account overview**. On an App site,
+open its sign-in page while signed in and choose **Manage account**. App
+frontends can also link directly to `/zelavis/account` on their own origin.
+
+- **Passkeys** lists your passkeys and lets you rename them. Adding a passkey
+  requires an existing passkey, and removal requires a different one. Use a
+  browser that supports WebAuthn on the configured relying-party origin.
+- **Two-factor authentication** lets you scan the setup QR code or enter the
+  setup key, then confirm with a code from your authenticator. Save the backup
+  codes when they appear. Each code works once. Generating new codes replaces
+  the previous set.
+- **Email addresses** lists verified addresses and marks the primary one. When
+  you add an address or change the primary one, open the verification link in
+  the tab that requested it. Changing the primary address requires your
+  current password.
+- **Password** changes your password after you enter your current one. The
+  change signs out your other sessions.
+- **Sessions** marks your current session. You can revoke an individual
+  session, revoke all other sessions, or sign out of the current one.
+
 ## Database navigation
 
 Project **Backend → Database** lists registered tables across Tenants. Each link

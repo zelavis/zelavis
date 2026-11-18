@@ -1,3 +1,5 @@
+import type { ZelavisServerPlugin } from "./core/runtime/lifecycle.js";
+import type { ZelavisServiceSecrets } from "./platform/service-secrets.js";
 import { parseRecipeManifest, type RecipeManifest } from "./core/recipe/index.js";
 import { Effect } from "effect";
 import { IntegrationFailure, present, integrationValue } from "./core/runtime/effect-boundary.js";
@@ -128,6 +130,7 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
     marketplace?: ZelavisServiceMarketplaceMetadata;
     project?: ZelavisProjectRecipeDefinition;
     capabilities?: readonly ZelavisServiceCapability[];
+    principal?: { readonly permissions: readonly string[] };
     setup?: (
       context: TContext,
     ) =>
@@ -217,7 +220,7 @@ export interface ZelavisServiceSetupPlatformContext {
 export interface ZelavisServiceSetupCoreContext {
   database?: unknown;
   /** Native Project APIs. Using them is reflected in the existing dashboard. */
-  auth?: import("./app/identity/index.js").IdentityApi;
+  auth?: import("./auth/subsystem.js").AuthServiceApi;
   storage?: import("./index.js").ZelavisFileStorage;
   workloads?: import("./app/workloads/workloads-service.js").WorkloadsApi;
   /**
@@ -227,6 +230,9 @@ export interface ZelavisServiceSetupCoreContext {
    * service that received it, so a plugin cannot reach another one's records.
    */
   store?: ZelavisServiceStore;
+  secrets?: ZelavisServiceSecrets;
+  /** Platform API requests as this service's approved account, or anonymously. */
+  fetch?: (input: Request) => Promise<Response>;
   /**
    * Present when the manifest names host operations (`zelavis.hostOperations`) and the host has an operation
    * Agent. A plugin asks for the operations it was allowed to name, on behalf of the caller whose request it is
@@ -250,6 +256,8 @@ export interface ZelavisServiceSetupContext {
   platform: ZelavisServiceSetupPlatformContext;
   core: ZelavisServiceSetupCoreContext;
   endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
+  /** Contributes a worker through the existing runtime lifecycle; start and cleanup belong to that runtime. */
+  addRuntimePlugin: (plugin: ZelavisServerPlugin) => void;
   addEndpointGroup: (endpointGroup: ZelavisEndpointGroupInput<any>) => void;
   addEndpointGroups: (endpointGroups: readonly ZelavisEndpointGroupInput<any>[]) => void;
 }
@@ -369,6 +377,7 @@ export function resolveServiceModule<TContext = unknown>(
       marketplace: (manifest.zelavis as any)?.marketplace,
       project: manifestProjectRecipe(manifest),
       capabilities: (manifest.zelavis?.capabilities as any) ?? [],
+      principal: manifest.zelavis?.principal,
       setup: module as any,
       ...frontendServiceFields(manifest),
     }) as any;
@@ -411,6 +420,7 @@ export function resolveServiceModule<TContext = unknown>(
       marketplace: (raw.marketplace as any) ?? (manifest?.zelavis as any)?.marketplace,
       project: (raw.project as any) ?? (manifest ? manifestProjectRecipe(manifest) : undefined),
       capabilities: ((raw.capabilities ?? manifest?.zelavis?.capabilities) as any) ?? [],
+      principal: manifest?.zelavis?.principal,
       app: raw.app as any,
       setup: setupFn,
       ...(manifest ? frontendServiceFields(manifest) : {}),
@@ -578,7 +588,7 @@ export function loadPluginPackage(options: {
     return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`));
   }
 
-  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "hostOperations", "marketplace", "project", "packageDir"]) {
+  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "principal", "hostOperations", "marketplace", "project", "packageDir"]) {
     if (exportObj?.[field] !== undefined) {
       return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" must declare ${field} through its manifest or host loading options, not a module export.`));
     }
@@ -611,6 +621,7 @@ export function loadPluginPackage(options: {
     kind: manifest.zelavis?.kind ?? "plugin",
     packageDir,
     capabilities,
+    principal: manifest.zelavis?.principal,
     ...(manifest.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
     marketplace,
     basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
@@ -858,6 +869,8 @@ export interface ActivateServiceRegistryOptions {
   domainBindings?: DomainBindingStore;
   /** Builds the durable store a named service is given. */
   serviceStore?: (serviceName: string) => ZelavisServiceStore;
+  serviceSecrets?: (serviceName: string) => ZelavisServiceSecrets;
+  serviceFetch?: (serviceName: string) => (input: Request) => Promise<Response>;
   /** Builds the host-operation handle a service whose manifest names operations is given. */
   hostOperations?: (serviceName: string, allowed: readonly string[]) => ZelavisServiceHostOperations | undefined;
   /**
@@ -879,18 +892,22 @@ export function activateServiceRegistry<
     | "endpointGroups"
     | "addEndpointGroup"
     | "addEndpointGroups"
+    | "addRuntimePlugin"
   >,
   options: ActivateServiceRegistryOptions = {},
 ): Promise<{
   registry: readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[];
   services: readonly ZelavisAnyRuntimeServiceInput[];
   endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
+  plugins: readonly ZelavisServerPlugin[];
 }> {
   return present(Effect.gen(function* (): Effect.fn.Return<{
     registry: readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[];
     services: readonly ZelavisAnyRuntimeServiceInput[];
     endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
+    plugins: readonly ZelavisServerPlugin[];
   }, IntegrationFailure | ZelavisPluginAdmissionError> {
+  const runtimePlugins: ZelavisServerPlugin[] = [];
   const activatedServices: ZelavisAnyRuntimeServiceInput[] = [];
   const activatedEndpointGroups: ZelavisEndpointGroupInput<any>[] = [];
   const installedServices = [...registry]
@@ -956,6 +973,8 @@ export function activateServiceRegistry<
       // registry knows, rather than by a plugin naming one for itself.
       core: {
         ...((context as unknown as ZelavisServiceSetupContext).core ?? {}),
+        ...(options.serviceSecrets ? { secrets: options.serviceSecrets(entry.service.name) } : {}),
+        ...(options.serviceFetch ? { fetch: options.serviceFetch(entry.service.name) } : {}),
         ...(options.serviceStore
           ? { store: options.serviceStore(entry.service.name) }
           : {}),
@@ -971,6 +990,11 @@ export function activateServiceRegistry<
       endpointGroups: activatedEndpointGroups,
       addEndpointGroup,
       addEndpointGroups,
+      addRuntimePlugin: (plugin: ZelavisServerPlugin) => {
+        if (setupAbandoned) throw admissionRefusal(`Service "${entry.service.name}" setup exceeded its deadline.`);
+        if (typeof plugin !== "function" || runtimePlugins.length >= 128) throw admissionRefusal("Invalid or excessive runtime plugin contribution.");
+        runtimePlugins.push(plugin);
+      },
     } as TContext));
     // An abandoned setup may still settle later; its rejection is handled here
     // and nothing waits for it once the deadline passes.
@@ -996,6 +1020,7 @@ export function activateServiceRegistry<
 
   return {
     registry,
+    plugins: Object.freeze([...runtimePlugins]),
     services: Object.freeze([...activatedServices]),
     endpointGroups: Object.freeze([...activatedEndpointGroups]),
   };

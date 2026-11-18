@@ -48,7 +48,7 @@ export function runSetupWizard(
   return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return yield* Effect.fail(new IntegrationFailure(new Error(
-      "zelavis setup is interactive and requires a terminal. For automation, use zelavis bootstrap with --email or --username and --password-stdin.",
+      "zelavis setup is interactive and requires a terminal. For automation, use zelavis bootstrap with --username and --password-stdin.",
     )));
   }
 
@@ -74,33 +74,15 @@ export function runSetupWizard(
     prompts.outro(colors.yellow("Setup is waiting for secure bootstrap configuration."));
     return;
   }
-  if (status.enrollmentProviders.length === 0) {
-    prompts.note(
-      "Install a credential-enrollment auth provider and restart Zelavis before creating the first owner.",
-      "No enrollment provider",
-    );
-    prompts.outro(colors.yellow("Setup cannot continue yet."));
-    return;
-  }
-
   prompts.note(
     `${colors.dim("Platform")}  ${dashboardUrl(options.url)}\n${colors.dim("Purpose")}   Create the first Platform owner`,
     "First-run setup",
   );
 
-  const provider = status.enrollmentProviders.length === 1
-    ? status.enrollmentProviders[0]!
-    : yield* integration(() => prompts.select({
-        message: "Choose the owner credential provider",
-        options: status.enrollmentProviders.map((value) => ({ value, label: value })),
-      }));
-  if (cancelled(provider)) return;
-
-  const acceptsUsername = provider === "password";
   const identifier = yield* integration(() => prompts.text({
-    message: acceptsUsername ? "Owner email or username" : "Owner email",
-    placeholder: "owner@example.com",
-    validate: (value) => required(value, acceptsUsername ? "An email or username" : "An email"),
+    message: "Owner username",
+    placeholder: "owner",
+    validate: (value) => required(value, "A username"),
   }));
   if (cancelled(identifier)) return;
 
@@ -146,14 +128,10 @@ export function runSetupWizard(
   createSpinner.start("Creating the Platform owner");
   const ownerToken = bootstrapToken;
   yield* Effect.gen(function* () {
-    const identity = String(identifier).trim();
     const result = yield* integration(() => bootstrapPlatformOwner(
       {
         bootstrapToken: ownerToken,
-        provider: String(provider),
-        ...(acceptsUsername && !identity.includes("@")
-          ? { username: identity }
-          : { email: identity }),
+        username: String(identifier).trim(),
         ...(String(displayName).trim() ? { displayName: String(displayName).trim() } : {}),
         password: String(password),
       },
@@ -170,7 +148,7 @@ export function runSetupWizard(
         return createZelavisClient({
           baseUrl: root.origin,
           rootPath: root.pathname,
-          headers: { authorization: `Bearer ${result.session.token}` },
+          headers: { authorization: `Bearer ${result.tokens.accessToken}` },
         });
       });
       edgeClient = client.edge;
@@ -244,7 +222,7 @@ export function runSetupWizard(
       }
     }
     prompts.note(
-      `${result.account.displayName ?? result.account.email ?? result.account.username ?? result.account.id}\n${dashboardUrl(options.url)}`,
+      `${result.account.displayName ?? result.account.username ?? result.account.id}\n${dashboardUrl(options.url)}`,
       "Ready",
     );
     prompts.outro(colors.green(colors.bold("✓ Zelavis is ready.")));

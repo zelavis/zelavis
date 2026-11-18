@@ -5,7 +5,7 @@ import test from "node:test";
 
 // A Project's persistent host (`_node-project-runner.js`, one per running Project and one per managed app's
 // integration runtime) only supervises its engine and holds the handover. Everything it imports stays resident
-// for the Project's lifetime, so its module graph must not grow the Project driver, service loading, identity,
+// for the Project's lifetime, so its module graph must not grow the Project driver, service loading, Auth,
 // the database or Effect's barrel (`effect` rather than `effect/<Module>`), which together more than doubled it.
 const runner = fileURLToPath(new URL("../dist/adapters/_node-project-runner.js", import.meta.url));
 const hook = `
@@ -24,10 +24,10 @@ test("a Project's persistent host loads only what supervising its engine needs",
   assert.ok(line, `runner reported no modules: ${result.stderr}`);
   const loaded = JSON.parse(line.slice("LOADED ".length));
   const own = loaded.filter(url => url.includes("/dist/") && !url.includes("/node_modules/")).map(url => url.slice(url.lastIndexOf("/dist/") + 6));
-  const forbidden = own.filter(path => /^(app|db|platform\/(shared|settings)|cli)\//.test(path) && path !== "db/format.js"
+  const forbidden = own.filter(path => /^(app|auth|db|platform\/(shared|settings)|cli)\//.test(path) && path !== "db/format.js"
     || ["service.js", "project.js", "core/index.js", "adapters/_local-runtime.js", "adapters/_node-project-runtime.js", "adapters/_package-acquisition.js",
       "adapters/_node-runtime-artifact.js", "adapters/_node-runtime-catalog.js"].includes(path));
-  assert.deepEqual(forbidden, [], "the host must not load the Project driver, service loading, identity or the database");
+  assert.deepEqual(forbidden, [], "the host must not load the Project driver, service loading, Auth or the database");
   assert.ok(!loaded.some(url => /\/node_modules\/effect\/dist\/index\.js$/.test(url)), "host files import effect/<Module>, never the effect barrel");
   assert.ok(!loaded.some(url => /\/node_modules\/(effect\/dist\/(Schema|Stream)\.js|jose\/)/.test(url)), "the host needs neither Schema, Stream nor jose");
   assert.ok(own.length <= 60, `the host loads ${own.length} Zelavis modules`);

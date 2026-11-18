@@ -219,8 +219,8 @@ export interface DatabaseBackupsHost {
 }
 
 /** A database's component: an image of every shard in `engine`, which is what a restore opens. */
-export const databaseComponent = (database: DatabaseApi, engine: string): BackupComponent => ({
-  name: "database",
+export const databaseComponent = (database: DatabaseApi, engine: string, name = "database"): BackupComponent => ({
+  name,
   stage: (into) => Effect.asVoid(database.maintenance.image(destinationEngine(
     (engine === "lmdb" || engine === "rocksdb" ? engine : "sqlite") as "sqlite" | "lmdb" | "rocksdb", into)).pipe(Effect.mapError(failed("backup.image")))),
 });

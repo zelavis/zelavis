@@ -9,6 +9,7 @@ export interface ZelavisManifestConfig {
   kind: string;
   namespace?: string;
   capabilities?: readonly string[];
+  principal?: { readonly permissions: readonly string[] };
   /**
    * Fixed host operations this plugin may ask the Platform to run for its callers, by id. The caller's own
    * permissions still decide each request; this only says which operations the plugin can name.
@@ -152,6 +153,17 @@ export function validatePluginPackageManifest(
           `Invalid Zelavis service "${name}":\n"${String(capability)}" is not a valid capability.\nUse "<package or namespace>:<name>", as in "@zelavis/auth:credentials".`,
         );
       }
+    }
+  }
+
+  const principal = (zelavis as Record<string, unknown>).principal;
+  if (principal !== undefined) {
+    const permissions = principal && typeof principal === "object" && !Array.isArray(principal)
+      ? (principal as Record<string, unknown>).permissions : undefined;
+    if (!Array.isArray(permissions) || permissions.length < 1 || permissions.length > 30 ||
+        new Set(permissions).size !== permissions.length || permissions.some((permission) =>
+          typeof permission !== "string" || permission.length > 128 || !/^[a-z][a-z0-9.\-:/]*$/.test(permission))) {
+      throw new TypeError(`Invalid Zelavis service "${name}": "zelavis.principal.permissions" must list 1–30 distinct concrete permission names.`);
     }
   }
 

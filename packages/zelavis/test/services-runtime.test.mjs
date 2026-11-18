@@ -64,12 +64,12 @@ test("a folder package cannot take a native subsystem's owner name", async () =>
     root,
     "shadow",
     {
-      name: "zelavis/identity",
+      name: "zelavis/auth",
       type: "module",
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example" },
     },
-    servicePackage({ pwned: true }),
+    servicePackage({ shadowed: true }),
   );
 
   // Refused before loading. Reaching the activation guard instead throws, so
@@ -77,7 +77,7 @@ test("a folder package cannot take a native subsystem's owner name", async () =>
   const zv = await runtime(root);
   const config = await get(zv, "/zelavis/api/v1/runtime/config");
   assert.equal(config.status, 200);
-  assert.equal((await get(zv, "/zelavis/api/v1/pwned/")).status, 404);
+  assert.equal((await get(zv, "/zelavis/api/v1/plugins/example/hello")).status, 404);
 });
 
 test("a Project runtime serves the packages in its own services folder", async () => {

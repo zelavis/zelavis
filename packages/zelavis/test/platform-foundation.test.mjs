@@ -927,12 +927,12 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     // runtime: advertised as capabilities, never listed as services. The
     // Platform dashboard owns the menus that render them.
     assert.equal(projectConfig.capabilities.database.available, true);
-    assert.equal(projectConfig.capabilities.identity.available, true);
+    assert.equal(projectConfig.capabilities.auth.available, true);
     assert.equal(projectConfig.capabilities.appPublicAuth.available, true);
     assert.equal(projectConfig.capabilities.workloads.available, true);
     assert.ok(
       !projectConfig.services.some((service) =>
-        ["@zelavis/db", "@zelavis/workloads", "zelavis/identity"].includes(service.name)
+        ["@zelavis/db", "@zelavis/workloads", "zelavis/auth"].includes(service.name)
       ),
     );
 

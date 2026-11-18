@@ -231,11 +231,7 @@ export const serverNavigationMenu = {
       "path": "/server/domains",
       "pageLabel": "Domains",
       "panelLabel": "Domains",
-      "access": {
-        "permissions": [
-          "server.edge.view"
-        ]
-      }
+      "access": [{ "permissions": ["server.edge.view"], "scope": { "type": "system" } }, { "permissions": ["server.domains.view"], "scope": { "type": "system" } }]
     },
     {
       "title": "Access",
@@ -260,6 +256,11 @@ export const serverNavigationMenu = {
           "title": "Users",
           "path": "/server/access/users",
           "pageLabel": "Users"
+        },
+        {
+          "title": "Roles",
+          "path": "/server/access/roles",
+          "pageLabel": "Roles"
         },
         {
           "title": "Permissions",

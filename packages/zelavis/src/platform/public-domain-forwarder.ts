@@ -2,7 +2,7 @@ import { respondToAcmeChallenge, type AcmeChallengeStore } from "../edge/certifi
 import { normalizeProjectDomainHostname, PROJECT_DOMAIN_PROBE_PATH } from "../edge/project-domains.js";
 import type { ZelavisEdgeRouteStore } from "../edge/routes.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol, present, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { Effect } from "effect";
+import { Effect, Option, Schema } from "effect";
 /**
  * Forwards public traffic on a verified domain to the Project that owns it.
  *
@@ -28,8 +28,25 @@ import type { DomainBinding, DomainBindingStore } from "../domain-binding.js";
 import type { ZelavisProjectManager } from "../project.js";
 import { readAuthorizationCredential, type ZelavisRouteResponse } from "../core/index.js";
 import { toResponse } from "../core/runtime/request-dispatcher.js";
-import { projectSessionAudience, projectSessionCookieName, projectSessionTokenPrefix } from "../app/identity/core/project-session-audience.js";
-import { classifyProjectPublicAuthRequest, isSiteControlPlanePath, privateProjectAuthPath, PROJECT_AUTH_API, PROJECT_AUTH_BODY_BYTES, PROJECT_AUTH_ROOT } from "./project-public-auth.js";
+import { projectAuthAudience, projectAuthIssuer } from "../auth/core/audience.js";
+import { PLATFORM_ACCESS_COOKIE, PLATFORM_REFRESH_COOKIE, projectAuthCookieNames } from "../auth/core/cookies.js";
+import { isServiceToken } from "../auth/serviceAccounts/tokens.js";
+import { classifyProjectPublicAuthIngress, isSiteControlPlanePath, privateProjectAuthPath, PROJECT_AUTH_API, PROJECT_AUTH_BODY_BYTES, PROJECT_AUTH_ROOT } from "./project-public-auth.js";
+
+const IssuerClaim = Schema.fromJsonString(Schema.Struct({ iss: Schema.String }));
+
+/**
+ * The unverified `iss` of a compact JWT, or undefined. Only a filter: the App verifies every token it is given, and this
+ * keeps a Platform or sibling App access token from being handed to it at all.
+ */
+function accessTokenIssuer(token: string): string | undefined {
+  if (token.length > 4096 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(token)) return undefined;
+  const payload = token.split(".")[1] ?? "";
+  if (payload.length % 4 === 1) return undefined;
+  const binary = atob(payload.replace(/-/gu, "+").replace(/_/gu, "/"));
+  const text = new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+  return Option.getOrUndefined(Option.map(Schema.decodeUnknownOption(IssuerClaim)(text), (claims) => claims.iss));
+}
 
 /** Ceiling on a forwarded body, matching the Gateway's. */
 const MAX_PUBLIC_BODY_BYTES = 32 * 1024 * 1024;
@@ -207,10 +224,10 @@ export function forwardProjectSiteRequest(
 ): Promise<ZelavisRouteResponse> { return presentProtocol(Effect.gen(function* () {
   const { projects, project } = options;
   const url = new URL(request.url);
-  const protectedCookies = new Set(["zelavis_session", ...(options.protectedCookieNames ?? [])]);
+  const protectedCookies = new Set([PLATFORM_ACCESS_COOKIE, PLATFORM_REFRESH_COOKIE, ...(options.protectedCookieNames ?? [])]);
   const isProtectedCookie = (name: string) => protectedCookies.has(name) || name.toLowerCase().startsWith("zelavis_app_");
   const auth = options.canonicalPath !== false && project.recipe?.name === "@zelavis/app" && !project.recipe.managed
-    ? classifyProjectPublicAuthRequest(request.method, url.pathname, PROJECT_AUTH_ROOT, PROJECT_AUTH_API)
+    ? classifyProjectPublicAuthIngress(request.method, url.pathname)
     : undefined;
 
   // Reserve the child and parent control-plane mounts even if a separate frontend serves the site.
@@ -243,12 +260,19 @@ export function forwardProjectSiteRequest(
   // No authority envelope: a visitor has no Platform identity, and the target
   // may be third-party frontend code.
   const headers = gatewayRequestHeaders(request.headers);
-  const audience = auth ? yield* integration(() => projectSessionAudience(project.id)) : undefined;
-  const audienceCookie = audience === undefined ? undefined : projectSessionCookieName(audience);
-  const appCookie = audienceCookie && !protectedCookies.has(audienceCookie) ? audienceCookie : undefined;
-  const tokenPrefix = audience === undefined ? undefined : projectSessionTokenPrefix(audience);
-  const matchesToken = (token: string) => tokenPrefix !== undefined && token.startsWith(tokenPrefix) &&
-    /^[A-Za-z0-9_-]{43}$/u.test(token.slice(tokenPrefix.length));
+  // Only this exact App's credentials reach its Auth: its two cookies, its access tokens (by issuer) and its service
+  // tokens (by audience). A Platform or sibling App credential is dropped here, and the App refuses it anyway.
+  const audience = auth ? yield* projectAuthAudience(project.id) : undefined;
+  const appCookies = audience === undefined ? undefined : projectAuthCookieNames(audience);
+  const issuer = projectAuthIssuer(project.id);
+  const isAppAccessToken = (token: string) => accessTokenIssuer(token) === issuer;
+  const isAppOpaqueToken = (token: string) => audience !== undefined &&
+    token.startsWith(`zvs_app_${audience}_`) && isServiceToken(token, audience);
+  const matchesCookie = (name: string, value: string) => appCookies !== undefined && !protectedCookies.has(name) && (
+    (name === appCookies.accessName && (isAppAccessToken(value) || isAppOpaqueToken(value))) ||
+    (name === appCookies.refreshName && /^[A-Za-z0-9_-]{43}$/u.test(value)));
+  const matchesBearer = (token: string) => audience !== undefined &&
+    (isAppAccessToken(token) || isAppOpaqueToken(token));
   // Site cookies must return to the site for login to work. Platform cookies
   // never travel into Project code, even when previews share its IP address.
   const cookies = (request.headers.get("cookie") ?? "").split(";")
@@ -256,12 +280,14 @@ export function forwardProjectSiteRequest(
       const separator = cookie.indexOf("=");
       if (separator <= 0) return false;
       const name = cookie.slice(0, separator).trim();
-      return auth ? name === appCookie && matchesToken(cookie.slice(separator + 1).trim()) : !isProtectedCookie(name);
+      return auth ? matchesCookie(name, cookie.slice(separator + 1).trim()) : !isProtectedCookie(name);
     }).join("; ");
   if (cookies) headers.set("cookie", cookies);
   if (auth === "api") {
+    // This selects a response representation. It carries no Platform authority.
+    if (request.headers.get("x-zelavis-auth-mode") === "bearer") headers.set("x-zelavis-auth-mode", "bearer");
     const bearer = readAuthorizationCredential(request, "Bearer");
-    if (bearer && matchesToken(bearer)) headers.set("authorization", `Bearer ${bearer}`);
+    if (bearer && matchesBearer(bearer)) headers.set("authorization", `Bearer ${bearer}`);
   }
   for (const name of [...headers.keys()]) {
     if (name.startsWith("x-forwarded-") || name === "forwarded") headers.delete(name);
@@ -270,10 +296,14 @@ export function forwardProjectSiteRequest(
   headers.set("x-forwarded-host", url.host);
   headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
 
+  const largerAuthBody = auth === "api" && (
+    path.startsWith(`${PROJECT_AUTH_API}/auth/username-passkey/`) || path.startsWith(`${PROJECT_AUTH_API}/auth/passkeys/`) ||
+    (path.startsWith(`${PROJECT_AUTH_API}/auth/oauth/`) && path.endsWith("/callback")));
+  const bodyLimit = auth === "webhook" ? 256 * 1024 : largerAuthBody ? 16 * 1024 : auth ? PROJECT_AUTH_BODY_BYTES : MAX_PUBLIC_BODY_BYTES;
   let body: Uint8Array | undefined;
   try {
     if (request.method !== "GET" && request.method !== "HEAD") {
-      body = unwrapIntegrationResult(yield* Effect.result(integrationValue(boundedBody(request.body, auth ? PROJECT_AUTH_BODY_BYTES : MAX_PUBLIC_BODY_BYTES))));
+      body = unwrapIntegrationResult(yield* Effect.result(integrationValue(boundedBody(request.body, bodyLimit))));
     }
   } catch (error) {
     if (error instanceof RangeError) return { status: 413, headers: { "cache-control": "no-store" }, body: { error: "Request body is too large." } };
@@ -323,7 +353,7 @@ export function forwardProjectSiteRequest(
   responseHeaders.delete("set-cookie");
   for (const cookie of response.headers.getSetCookie()) {
     const name = cookie.split("=", 1)[0]?.trim();
-    if (name && (auth ? auth === "api" && name === appCookie : !isProtectedCookie(name))) responseHeaders.append("set-cookie", cookie);
+    if (name && (auth ? auth === "api" && appCookies !== undefined && (name === appCookies.accessName || name === appCookies.refreshName) : !isProtectedCookie(name))) responseHeaders.append("set-cookie", cookie);
   }
   const location = responseHeaders.get("location");
   if (location) {
@@ -381,7 +411,7 @@ export function guardControlPlaneHost(
   const binding = (yield* integrationValue(resolveVerifiedBinding(domainBindings, url.host)));
   if (!binding?.projectId) return undefined;
 
-  if (canonicalPath && classifyProjectPublicAuthRequest(request.method, path, PROJECT_AUTH_ROOT, PROJECT_AUTH_API)) {
+  if (canonicalPath && classifyProjectPublicAuthIngress(request.method, path)) {
     return toResponse(yield* forwardBoundProject(options, binding.projectId, request));
   }
   if (rootPath === "/" && !isSiteControlPlanePath(decoded, PROJECT_AUTH_ROOT)) {

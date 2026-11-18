@@ -44,24 +44,28 @@ With none of those words, `zelavis agent` runs the Agent itself.
 
 ## Authentication
 
-Accounts, sessions and security events need the auth manage permission; the sign-in ceremonies are open. Service accounts keep their own commands (`zelavis auth service-accounts …`, `client.auth.admin.serviceAccounts…`).
+Auth operations use the `/auth` namespace. Interactive sign-in is public.
+Account administration requires the runtime's users-manage permission.
 
 | What | HTTP (`auth/…`) | SDK (`client.auth.…`) | CLI (`zelavis auth …`) |
 |---|---|---|---|
-| Providers | `GET providers`, `GET oauth/providers`, `GET recovery/providers` | `providers()`, `oauthProviders()`, `recoveryProviders()` | `providers`, `oauth-providers`, `recovery-providers` |
-| Registration availability | `GET registration` | `registrationStatus()` | `registration-status --json` |
-| Runtime registration settings | `GET registration/settings`, `PUT registration/settings` | `admin.registrationSettings()`, `admin.setRegistrationSettings(input)` | `registration-settings --json`, `set-registration-settings --data JSON --json` |
-| Sign up, sign in | `POST sign-up/:provider`, `POST authenticate/:provider` | `signUp(provider, body)`, `signIn(provider, body)` | `sign-up PROVIDER --data`, `sign-in PROVIDER --data` |
-| Start an OAuth sign-in or link | `POST oauth/:provider/start`, `POST oauth/:provider/link/start` | `signInWithOAuth(p)`, `linkIdentity(p)` | `oauth-start P`, `link-start P` |
-| The current session | `GET session`, `POST session/rotate`, `DELETE session` | `getSession()`, `refreshSession()`, `signOut()` | `session`, `refresh`, `sign-out` |
-| The account's own sessions | `GET sessions`, `DELETE sessions/:sessionId` | `sessions()`, `revokeSession(id)` | `sessions`, `revoke-session ID` |
-| Credential recovery | `POST recovery/:provider`, `POST recovery/:provider/complete` | `beginRecovery(p, body)`, `completeRecovery(p, body)` | `recover P --data`, `complete-recovery P --data` |
-| Accounts | `GET accounts[?accountId=]`, `POST accounts` (`{ id, email \| username, … }`), `POST credentials` | `admin.accounts(accountId?)`, `admin.createAccount(body)`, `admin.createCredentials(body)` | `accounts [ACCOUNT]`, `create-account --data`, `create-credentials --data` |
-| Human account access | `PUT accounts/:accountId/access` | `admin.setAccountAccess(accountId, input)` | `set-account-access ACCOUNT --data JSON --json` |
-| An account's sessions | `GET accounts/:id/sessions`, `DELETE accounts/:id/sessions[/:sessionId]` | `admin.accountSessions(id)`, `admin.revokeAccountSessions(id)`, `admin.revokeAccountSession(id, sessionId)` | `account-sessions ID`, `revoke-account-sessions ID`, `revoke-account-session ID SESSION` |
-| Security events | `GET security/events` | `admin.securityEvents()` | `security-events` |
-| OAuth connections | `GET oauth/connections`, `PUT\|DELETE oauth/connections/:provider` | `admin.oauthConnections()`, `admin.configureOAuth(p, body)`, `admin.removeOAuth(p)` | `oauth-connections`, `configure-oauth P --data`, `remove-oauth P` |
-| First owner | `GET bootstrap`, `POST bootstrap` (needs the bootstrap token) | `bootstrapStatus()`, `bootstrap(body)` | `bootstrap-status`, `bootstrap --data`; the interactive `zelavis bootstrap` and `zelavis setup` remain |
+| First owner | `GET bootstrap`, `POST bootstrap` | `bootstrap.status`, `bootstrap.claim` | `bootstrap status\|claim` |
+| Username and password | `POST username-password/{sign-up,sign-in,change-password}` | `usernamePassword.signUp\|signIn\|changePassword` | `username-password sign-up\|sign-in\|change-password` |
+| Email and password | `POST email-password/{sign-up,complete-sign-up,sign-in,change-password}` | `emailPassword.signUp\|completeSignUp\|signIn\|changePassword` | `email-password sign-up\|complete-sign-up\|sign-in\|change-password` |
+| Password recovery | `POST email-password/recovery/{start,check,complete}` | `emailPassword.startRecovery\|checkRecovery\|completeRecovery` | `email-password start-recovery\|check-recovery\|complete-recovery` |
+| Passkeys | `POST username-passkey/{sign-up,sign-in}/{start,finish}`, `POST username-passkey/sign-in/autofill`, `/passkeys` | `usernamePasskey`, `passkeys` | `username-passkey`, `passkeys` |
+| OAuth | `GET oauth/providers`, `POST oauth/:provider/{start,redeem}`, `GET oauth/connections`, `PUT\|DELETE oauth/connections/:provider` | `oauth.providers\|start\|redeem\|connections\|configure\|remove` | `oauth providers\|start\|redeem\|connections\|configure\|remove` |
+| Session | `GET\|DELETE session`, `POST session/refresh` | `session.current\|signOut\|refresh` | `session current\|sign-out\|refresh` |
+| Active sessions | `GET sessions`, `DELETE sessions/:id`, `POST sessions/revoke-others` | `sessions.list\|revoke\|revokeOthers` | `sessions list\|revoke\|revoke-others` |
+| MFA | `GET mfa`, `POST mfa/verify`, `POST mfa/totp[/confirm]`, `GET\|PUT mfa/policy` | `mfa.status\|verify\|startTotp\|confirmTotp\|policy\|setPolicy` | `mfa status\|verify\|start-totp\|confirm-totp\|policy\|set-policy` |
+| Public methods and registration | `GET methods`, `GET\|PUT methods/settings`, `GET registration`, `GET\|PUT registration/settings` | `methods`, `registration` | `methods`, `registration` |
+| Accounts and grants | `GET\|POST accounts`, `PUT accounts/:id/access`, `POST accounts/import` | `admin.accounts\|createAccount\|setAccess\|importAccounts` | `admin accounts\|create-account\|set-access\|import-accounts` |
+| Custom roles | `GET\|POST roles`, `PUT\|DELETE roles/:roleId` | `admin.roles\|createRole\|updateRole\|deleteRole` | `roles\|create-role\|update-role\|delete-role` |
+| Admin sessions | `GET accounts/:id/sessions`, `DELETE accounts/:id/sessions[/:sessionId]` | `admin.accountSessions\|revokeAccountSessions\|revokeAccountSession` | `admin account-sessions\|revoke-account-sessions\|revoke-account-session` |
+| Signing keys | `GET jwks`, `POST keys/rotate` | `keys.jwks\|rotate` | `keys jwks\|rotate` |
+| Service accounts | `/service-accounts` | `serviceAccounts` | `service-accounts` |
+
+Use `--data JSON` for CLI request bodies and `--json` for machine-readable output.
 
 Registration settings return `{ enabled, revision }`. A write takes
 `{ enabled, expectedRevision }` and returns 409 for a stale revision.
@@ -74,8 +78,10 @@ Platform settings require `system.settings.manage`. For a running App, use
 These routes require `project.settings.manage` scoped to that Project.
 
 Account access replacement takes
-`{ expectedRevision, role, permissions, grants }` and returns
-`{ accountId, accessRevision, role, permissions, grants }`.
+`{ expectedRevision, role, permissions, grants, roleAssignments }` and returns
+`{ accountId, accessRevision, role, permissions, grants, roleAssignments }`.
+Each assignment is `{ roleId, projectIds? }` and names a
+[custom role](/packages/auth/#custom-roles); send `[]` for none.
 Administrative account reads include `accessRevision`, initially zero.
 Platform edits require `system.users.manage` in system scope and use the
 `customer`, `operator` or `reseller` label. Each existing and proposed capability
@@ -101,19 +107,36 @@ Project view includes backend inspection, database reads and storage reads.
 
 Public signup starts closed and returns `registration_closed` (403) until
 enabled and, on the Platform, until first-owner bootstrap finishes. Returning
-users can still sign in. A successful signup returns HTTP 201 with a session
-and either the Platform `customer` role or the App `user` role, with no implicit grants.
+users can still sign in. Username signup returns HTTP 200 and issues a session when any required MFA completes. Email signup issues a session after email verification. New accounts receive the Platform `customer` role or the App `user` role, with no implicit grants.
+
+## Email delivery
+
+Each runtime sends its own mail over SMTP. The Platform's needs `system.settings.manage` (system scope); an App's
+needs `project.settings.manage` on that exact Project. The SMTP password is never returned (`smtp.hasPassword`), and
+the deliveries listing never carries message content. See [Email Delivery](/guides/email-delivery) for the fields,
+retries and limits.
+
+| What | HTTP | SDK | CLI |
+| --- | --- | --- | --- |
+| Settings | `GET email/settings`, `PUT email/settings` | `client.email.settings()`, `client.email.setSettings(input)` | `zelavis email settings`, `zelavis email set-settings --data JSON` |
+| Test send (202) | `POST email/test` | `client.email.sendTest(to)` | `zelavis email test ADDRESS` |
+| Deliveries | `GET email/deliveries?limit&after` | `client.email.deliveries({ limit, after })` | `zelavis email deliveries [--limit N] [--after CURSOR]` |
+| An App's settings | `GET\|PUT runtime/projects/:projectId/email/settings` | `client.projects.emailSettings(id)`, `client.projects.setEmailSettings(id, input)` | `zelavis projects email-settings PROJECT`, `zelavis projects set-email-settings PROJECT --data JSON` |
+| An App's test send | `POST runtime/projects/:projectId/email/test` | `client.projects.sendTestEmail(id, to)` | `zelavis projects send-test-email PROJECT ADDRESS` |
+| An App's deliveries | `GET runtime/projects/:projectId/email/deliveries` | `client.projects.emailDeliveries(id, { limit, after })` | `zelavis projects email-deliveries PROJECT [--limit N] [--after CURSOR]` |
 
 ## Project domains
 
 Paths below are relative to the configured API base. Reads accept
 `project.domains.view` or `project.domains.manage` on the exact Project.
-Mutations require `project.domains.manage` on that Project.
+Mutations, and the list of hosted zones a subdomain can be taken under
+([DNS automation](../guides/dns-automation.md)), require `project.domains.manage` on that Project.
 
 | HTTP | SDK | CLI |
 | --- | --- | --- |
 | `GET /runtime/projects/:projectId/domains` | `client.projects.domains(projectId)` | `zelavis projects domains PROJECT --json` |
-| `POST /runtime/projects/:projectId/domains` | `client.projects.addDomain(projectId, { hostname, tlsMode })` | `zelavis projects add-domain PROJECT HOSTNAME --tls external\|managed --json` |
+| `POST /runtime/projects/:projectId/domains` | `client.projects.addDomain(projectId, { hostname, tlsMode, dns? })` | `zelavis projects add-domain PROJECT HOSTNAME --tls external\|managed [--dns manual\|automatic] --json` |
+| `GET /runtime/projects/:projectId/domains/hosted-zones` | `client.projects.hostedZones(projectId)` | `zelavis projects hosted-zones PROJECT --json` |
 | `POST /runtime/projects/:projectId/domains/:hostname/verify` | `client.projects.verifyDomain(projectId, hostname, { expectedRevision })` | `zelavis projects verify-domain PROJECT HOSTNAME --revision N --json` |
 | `DELETE /runtime/projects/:projectId/domains/:hostname?revision=N` | `client.projects.removeDomain(projectId, hostname, revision)` | `zelavis projects remove-domain PROJECT HOSTNAME --revision N --json` |
 
@@ -131,6 +154,47 @@ TXT proof returns `dns_not_verified`. Check the `Retry-After` header after a
 `429` with `domain_verification_busy`. A verified hostname can return
 `domain_ingress_unavailable` until the operator configures the selected TLS
 mode. See [Project hostname setup](../architecture/edge.md#connect-a-project-hostname).
+
+
+
+## Registrar
+
+Platform-only, using the operator's own account. Inventory and order reads need
+system-scoped `server.domains.view`; all other operations need
+`server.domains.purchase`. See [Domain registration](../guides/domain-registration.md)
+for contacts, sandbox mode, price confirmation and uncertain-order recovery.
+
+| HTTP (`runtime/registrar/…`) | SDK (`client.registrar.…`) | CLI (`zelavis registrar …`) |
+|---|---|---|
+| `GET providers` | `providers()` | `providers` |
+| `GET connection` | `connection()` | `connection` |
+| `PUT connection` `{ provider, sandbox, credentials, expectedRevision? }` | `connect(input)` | `connect --data JSON` |
+| `DELETE connection` | `disconnect()` | `disconnect` |
+| `GET contact` | `contact()` | `contact` |
+| `PUT contact` `{ contact, expectedRevision? }` | `setContact(input)` | `set-contact --data JSON` |
+| `POST availability` `{ domains }` (1–20) | `check(domains)` | `check DOMAIN...` |
+| `POST quote` `{ domain, kind, years }` | `quote(input)` | `quote --data JSON` |
+| `POST orders` `{ kind, domain, years, authCode?, confirm, idempotencyKey }` | `order(input)` | `order --data JSON` |
+| `GET orders?limit&after` (at most 50) | `orders(page?)` | `orders [--limit N --after CURSOR]` |
+| `GET orders/:id` | `getOrder(id)` | `order-status ID` |
+| `GET domains?cursor` | `domains(cursor?)` | `domains [--cursor CURSOR]` |
+| `PUT domains/:domain/nameservers` `{ nameservers }` (2–12) | `setNameservers(domain, ns)` | `set-nameservers DOMAIN NS...` |
+
+`confirm` is `{ amount, currency, years }`, with the total amount as a decimal
+string. A new order returns 201; replaying its key returns 200 and the same
+order. Keys use 8–128 letters, digits, `.`, `_`, `:` or `-`. Requests cannot
+change an existing key's intent. A changed quote returns 409 `price_changed`
+with the current `price`. Orders report their provider, sandbox flag and state;
+their contact, transfer code and credentials are never included. Connection
+reads return only status, provider, sandbox and revision. Contact reads require
+purchase permission and return the private profile. Nameserver changes and
+disconnection return 204. All responses use `Cache-Control: no-store`.
+
+Failed/uncertain submissions are never retried automatically. An unresolved
+order prevents another order for the domain or changing the original registrar
+connection. Renewals need a recorded previous expiry; after an ambiguous call,
+only a later registrar expiry proves completion. Unconfirmed outcomes remain
+`unknown` after 24 hours. There is no manual resolution operation yet.
 
 
 ## Runtime, services and extensions

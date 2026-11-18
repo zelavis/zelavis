@@ -7,7 +7,7 @@ service and not a package. It gives the Platform runtime its privileged
 control-plane routes — projects, domains, backups, logs, host operations,
 settings, and the Assistant — under `/zelavis/api/v1/runtime/*`.
 
-Native subsystems (the Server Control Plane, Identity, the Database engine, and
+Native subsystems (the Server Control Plane, Auth, the Database engine, and
 Fabric) are composed directly by `zelavis(...)` and mounted as **endpoint
 groups**: an internal HTTP composition primitive that carries routes, an
 access-checked handler context, and authenticators, but never a package

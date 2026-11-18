@@ -1,7 +1,7 @@
 import { runAuthOperations } from "./auth-operations.js";
 import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
+import { createZelavisClient, type ZelavisServiceAccountView } from "../sdk/fetch.js";
 
 const usage =
   "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID --project-permission PERMISSION] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
@@ -13,7 +13,7 @@ const usage =
  */
 export function runAuthCommand(args: readonly string[]): Promise<void> {
   // Everything but service accounts is the table of operations beside them.
-  if (args[0] !== undefined && args[0] !== "service-accounts" && !args[0].startsWith("-")) return runAuthOperations(args);
+  if (args[0] !== "service-accounts") return runAuthOperations(args);
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const permissions: string[] = [];
@@ -70,19 +70,19 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
   });
   const print = (value: unknown, text: () => string) =>
     console.log(json ? JSON.stringify(value, null, 2) : text());
-  const line = (account: ZelavisAuthAccount) =>
-    `${account.id}\t${account.displayName ?? account.username ?? account.email ?? "service"}\t${account.permissions?.join(",") ?? ""}`;
+  const line = (account: ZelavisServiceAccountView) =>
+    `${account.id}\t${account.displayName ?? "service"}\t${account.permissions.join(",")}`;
 
   switch (action) {
     case "list": {
-      const serviceAccounts = (yield* integrationValue(client.auth.admin.serviceAccounts()));
+      const { serviceAccounts } = (yield* integrationValue(client.auth.serviceAccounts.list()));
       print({ serviceAccounts }, () => serviceAccounts.map(line).join("\n") || "No service accounts.");
       return;
     }
     case "set-tenant": {
       if (!accountId) throw new Error("auth service-accounts set-tenant requires an account id.");
       if (!tenantId?.trim()) throw new Error("auth service-accounts set-tenant requires --tenant.");
-      const serviceAccount = (yield* integrationValue(client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim())));
+      const { serviceAccount } = (yield* integrationValue(client.auth.serviceAccounts.setTenant(accountId, tenantId.trim())));
       print({ serviceAccount }, () =>
         `${serviceAccount.id} now acts in Tenant ${String(serviceAccount.metadata?.tenantId ?? tenantId)}.`);
       return;
@@ -92,7 +92,7 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
       if (Boolean(projectId) !== (projectPermissions.length > 0)) {
         throw new Error("Use --project with at least one explicit --project-permission; each requires the other.");
       }
-      const result = (yield* integrationValue(client.auth.admin.createServiceAccount({
+      const result = (yield* integrationValue(client.auth.serviceAccounts.create({
         name: name.trim(),
         permissions,
         ...(tenantId ? { tenantId } : {}),
@@ -115,13 +115,13 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
     }
     case "rotate": {
       if (!accountId) throw new Error("auth service-accounts rotate requires an account id.");
-      const result = (yield* integrationValue(client.auth.admin.rotateServiceAccountToken(accountId, expiresInDays)));
+      const result = (yield* integrationValue(client.auth.serviceAccounts.rotateToken(accountId, expiresInDays === undefined ? {} : { expiresInDays })));
       print(result, () => ["Rotated token (shown once):", result.token].join("\n"));
       return;
     }
     case "revoke": {
       if (!accountId) throw new Error("auth service-accounts revoke requires an account id.");
-      (yield* integrationValue(client.auth.admin.revokeServiceAccount(accountId)));
+      (yield* integrationValue(client.auth.serviceAccounts.revoke(accountId)));
       print({ revoked: accountId }, () => `Revoked ${accountId}.`);
       return;
     }

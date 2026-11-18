@@ -16,15 +16,14 @@ async function platformWithOwner() {
     headers: { origin: "http://localhost" },
     body: {
       bootstrapToken: TOKEN,
-      provider: "password",
-      account: { email: "owner@example.com" },
-      credential: { identifier: "owner@example.com", password: PASSWORD },
+      username: "owner",
+      password: PASSWORD,
     },
   });
   return runtime;
 }
 
-const STALE = { cookie: "zelavis_session=zvs_from_another_installation" };
+const STALE = { cookie: "zelavis_access=zvs_from_another_installation" };
 
 test("a stale session cookie does not lock someone out of signing in", async () => {
   const runtime = await platformWithOwner();
@@ -33,10 +32,10 @@ test("a stale session cookie does not lock someone out of signing in", async () 
   // authenticate. Rejecting on a stale one made the public sign-in endpoint
   // answer 401, and the only way through was clearing cookies by hand.
   const signIn = await runtime.plain({
-    url: "/zelavis/api/v1/auth/authenticate/password",
+    url: "/zelavis/api/v1/auth/username-password/sign-in",
     method: "POST",
     headers: STALE,
-    body: { identifier: "owner@example.com", password: PASSWORD },
+    body: { username: "owner", password: PASSWORD },
   });
   assert.equal(signIn.status, 200);
 });
@@ -80,12 +79,12 @@ test("an invalid bearer token is still an error", async () => {
 test("a valid cookie still authenticates", async () => {
   const runtime = await platformWithOwner();
   const signIn = await runtime.plain({
-    url: "/zelavis/api/v1/auth/authenticate/password",
+    url: "/zelavis/api/v1/auth/username-password/sign-in",
     method: "POST",
     headers: { origin: "http://localhost" },
-    body: { identifier: "owner@example.com", password: PASSWORD },
+    body: { username: "owner", password: PASSWORD },
   });
-  const cookie = signIn.headers["set-cookie"].split(";", 1)[0];
+  const cookie = String(signIn.headers["set-cookie"]).split(";", 1)[0];
 
   const access = await runtime.plain({
     url: "/zelavis/api/v1/runtime/access",

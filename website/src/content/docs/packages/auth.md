@@ -2,284 +2,185 @@
 title: Auth
 ---
 
-Zelavis Auth serves two separate identity boundaries:
+Zelavis Auth is available as `zelavis/auth`. Each runtime owns its accounts,
+credentials, settings, sessions, and signing keys. Platform Auth serves the
+dashboard, CLI and Platform operators. App Auth serves the users of one App
+from that App's database. Platform operators manage an App through the Project
+Gateway using permissions scoped to that Project.
 
-- **Platform identity** is for owners, DevOps users, CI, agents, and software
-  such as Fluxgent that operates the Zelavis Platform.
-- **Project identity** belongs to an App's users. Accounts, credentials,
-  sessions, and provider credentials are stored in that Project's database and
-  are not shared with the Platform or another Project.
+## First owner and registration
 
-Use a Platform service account for software. Owner browser sessions are for
-people and should not be copied into applications.
+Complete the Platform's setup wizard or run `zelavis setup` to claim the first
+owner with a username, password and the installation's bootstrap token.
+Bootstrap closes after the claim succeeds.
 
-## Public registration
+Public registration starts closed for the Platform and each App. In the
+dashboard, enable it on **Auth** for the Platform or **Backend → Auth** for an
+App. You can also use `GET` and `PUT /auth/registration/settings`. A write
+takes `{ enabled, expectedRevision }` and a stale revision returns 409. Closing
+registration stops new accounts, including first-time OAuth sign-in. Existing
+users can still sign in. New Platform accounts start as `customer` and new App
+accounts as `user`, with no grants or permissions.
 
-The Platform and every App start with registration closed. The Platform also
-requires its first owner to finish bootstrap before anyone can sign up. You can
-enable signup for one runtime without changing any other runtime or restarting
-it. In an embedded runtime, `subsystems.auth.registration` supplies an initial
-setting. A saved setting takes precedence.
+## Invitations
 
-An enabled runtime accepts password signup and first-time OAuth account
-creation. Existing users can sign in and link identities while signup is closed.
-Signup issues a regular session and gives new Platform accounts the `customer`
-role and App accounts the `user` role. These accounts have no implicit grants.
-Email ownership verification for password accounts remains planned.
+Open **Server → Access → Users** for the Platform or **Users** in a Project.
+Choose **Invite user**, enter an email address, and choose the role and any
+Project grants. Set up [email delivery](/guides/email-delivery/) on that runtime
+before sending. The email opens `/invitation` under the configured link base.
+Use the link in any browser. It expires seven days after issue and works once.
+Resending replaces the link and keeps the original expiry. Revoking an
+invitation makes its link unusable.
 
-In the dashboard, open **Auth** in the Platform navigation, select
-**Allow public registration**, and save. To change one App, open its
-**Backend → Auth** page and save that Project's registration setting.
-A settings delegate can also visit the Project's Auth URL directly.
-Each control reads the saved revision and reloads it after a conflicting edit.
-A stopped App displays its unavailable setting until its runtime starts.
+An invitation can create an account while public registration is closed. New
+users choose a username and password, and acceptance verifies the invited
+address. When an account already owns the address, sign in as that account
+before accepting. Acceptance adds the preset permissions and grants to the
+account's existing access. A Platform `customer` can be promoted to the invited
+role. An access change ends the account's existing sessions. Acceptance
+follows the runtime's MFA policy.
 
-When password signup is available, **Login → Create account** opens the
-Platform signup form. A completed signup opens Projects with a normal browser
-session. A customer begins with **No projects assigned**. Closing registration
-keeps existing sessions active and existing accounts can still sign in.
-A direct closed signup URL returns to Login with a registration-closed notice.
-First-run visits continue to the owner setup wizard until bootstrap completes.
+The routes are relative to the runtime's versioned API. Platform and App
+clients use the same Auth API at their respective origins.
 
-Use `client.auth.registrationStatus()` or `zelavis auth registration-status --json`
-to read availability. Operators can read the current revision with
-`client.auth.admin.registrationSettings()` or `zelavis auth registration-settings --json`.
-Pass that revision as `expectedRevision` when updating:
+| HTTP | JavaScript SDK | CLI |
+| --- | --- | --- |
+| `GET /auth/invitations?limit&after` | `client.auth.admin.invitations(options?)` | `zelavis auth invitations [--limit N] [--after CURSOR]` |
+| `POST /auth/invitations` | `client.auth.admin.invite(input)` | `zelavis auth invite --data JSON` |
+| `POST /auth/invitations/:id/resend` | `client.auth.admin.resendInvitation(id)` | `zelavis auth resend-invitation ID` |
+| `DELETE /auth/invitations/:id` | `client.auth.admin.revokeInvitation(id)` | `zelavis auth revoke-invitation ID` |
+| `POST /auth/invitations/accept` | `client.auth.acceptInvitation(input)` | `zelavis auth accept-invitation --data JSON` |
 
-```bash
-zelavis auth set-registration-settings --data '{"enabled":true,"expectedRevision":0}' --json
-zelavis projects set-registration-settings PROJECT --data '{"enabled":true,"expectedRevision":0}' --json
-```
+From the Platform, use the exact Gateway management paths at
+`/runtime/projects/:projectId/auth/invitations` with the same methods and
+suffixes as the first four rows. The equivalent SDK methods are
+`client.projects.invitations(projectId, options?)`, `invite(projectId, input)`,
+`resendInvitation(projectId, id)`, and `revokeInvitation(projectId, id)`.
+Their CLI commands are `zelavis projects invitations PROJECT`,
+`invite PROJECT --data JSON`, `resend-invitation PROJECT ID`, and
+`revoke-invitation PROJECT ID`. Use `--json` to print the API result. Invitees
+accept at the App's own origin.
 
-The Project command targets the named running App through the Platform. Read
-its revision with `zelavis projects registration-settings PROJECT --json` or
-`client.projects.registrationSettings(projectId)`. Use
-`client.projects.setRegistrationSettings(projectId, input)` to update it.
-A stale revision returns HTTP 409. Platform settings require
-`system.settings.manage`. Project settings require `project.settings.manage`
-for the named Project.
+Creation takes `{ email, access: { role, permissions, grants, roleAssignments } }`.
+App invitations use `role: "user"`, an empty `permissions` array, grants scoped
+to that App's Project and role assignments without `projectIds`. Listing returns `{ invitations, next? }` with up to 100 rows per page.
+Pass `next` as the next page's `after`. Acceptance takes
+`{ token, username?, password? }`. Supply credentials for a new account or
+authenticate as the existing account with a browser session or bearer token.
 
-## Native App login and signup
+Unknown, revoked, expired and used links return `invalid_invitation` (400).
+An existing account must sign in to accept (`invitation_requires_sign_in`,
+409). The inviter needs permission to administer users and delegate the preset
+access (`account_access_forbidden`, 403). Creation and resend require email
+delivery (`email_unavailable`, 409).
+A runtime can hold at most 500 pending invitations (`invitation_limit`, 429).
+Multiple invitations to the same address count separately.
 
-Open `/zelavis/login` on the native App's verified site hostname or Edge
-preview. **Backend → Auth** links to a running App's published preview when its
-engine supports these pages. Login links to `/zelavis/sign-up` while password
-registration is open. A closed signup page returns HTTP 404 and the server
-refuses submissions from previously loaded forms. Login and signup send the
-visitor to the App's site root. Signed-in visitors can revisit the login page
-to sign out.
+## Custom roles
 
-Use HTTPS for public password traffic. HTTP previews are suitable for local
-testing. App cookies are HttpOnly, scoped to the App mount, and Secure on
-HTTPS. The cookie name and bearer audience are unique to each Project, even
-when preview ports share a hostname. Users with older App browser cookies
-sign in again on the public origin.
+Open **Server → Access → Roles** for the Platform or **Roles** in a Project.
+A role has an id (lowercase letters, digits and hyphens), a title, an optional
+description and its permissions. A Platform role can also hold concrete grants,
+such as `project.view` on one Project, and Project permissions. Those are given
+on each Project an assignment names. Assign roles in an account's
+**Edit access** drawer, and choose the Projects a Platform assignment covers.
+A runtime holds at most 50 roles of at most 100 entries each.
 
-Point the SDK at the App's site origin and use the existing Auth methods.
-The CLI `--url` includes the App mount.
+| HTTP | JavaScript SDK | CLI |
+| --- | --- | --- |
+| `GET /auth/roles` | `client.auth.admin.roles()` | `zelavis auth roles` |
+| `POST /auth/roles` | `client.auth.admin.createRole(input)` | `zelavis auth create-role --data JSON` |
+| `PUT /auth/roles/:roleId` | `client.auth.admin.updateRole(roleId, input)` | `zelavis auth update-role ROLE --data JSON` |
+| `DELETE /auth/roles/:roleId?revision=N` | `client.auth.admin.deleteRole(roleId, expectedRevision)` | `zelavis auth delete-role ROLE --revision N` |
 
-```ts
-import { createZelavisClient } from "zelavis/sdk";
+From the Platform, the exact Gateway paths are
+`/runtime/projects/:projectId/auth/roles` with the same methods and suffixes.
+Their SDK methods are `client.projects.roles(projectId)`,
+`createRole(projectId, input)`, `updateRole(projectId, roleId, input)` and
+`deleteRole(projectId, roleId, expectedRevision)`. Their CLI commands are
+`zelavis projects roles PROJECT`, `create-role PROJECT --data JSON`,
+`update-role PROJECT ROLE --data JSON` and
+`delete-role PROJECT ROLE --revision N`.
 
-const app = createZelavisClient({ baseUrl: "https://app.example.com" });
-const status = await app.auth.registrationStatus();
-```
+A change takes
+`{ id, title, description?, permissions, grants, projectPermissions, expectedRevision }`
+and every route answers the catalogue `{ revision, roles }`. App roles keep
+`grants` and `projectPermissions` empty. Account access edits and invitation
+access carry `roleAssignments: [{ roleId, projectIds? }]`; send `[]` for none.
+App assignments omit `projectIds`.
 
-```bash
-zelavis auth registration-status --url https://app.example.com/zelavis --json
-zelavis auth session --url https://app.example.com/zelavis --token "$APP_SESSION_TOKEN" --json
-```
+Refusals: `invalid_role` (400) for an invalid or reserved id (`owner`,
+`customer`, `operator`, `reseller`, `user`, `service`, `system`) or content;
+`account_access_forbidden` (403) when the caller could not give the role's
+content; `role_not_found` (404); `role_exists` and `role_revision_conflict`
+(409); `role_limit` (429) at 50 roles; and `roles_unavailable` (503) while a
+stored role cannot be read. An access edit that assigns an unknown role answers
+`role_not_found`. One that would expand past 2000 permissions and grants
+answers `role_expansion_limit` (400). See
+[custom roles](/architecture/access-control/#custom-roles) for how roles reach
+principals.
 
-`signUpWithPassword` and `signInWithPassword` return the App's session token.
-Send it as `Authorization: Bearer …` for SDK or CLI self-session reads,
-rotation and logout. Browser requests on the App origin can use its cookie.
-Account administration and registration settings remain on the authenticated
-Platform Project routes. Managed third-party apps serve their own login pages.
+## Sign-in methods
 
-## Human account access
+- Username and password issue a session after a successful password check and
+  any required MFA. New passwords need at least 15 characters.
+- Email and password require an emailed verification link and the proof held by
+  the initiating tab. Configured email delivery enables signup and recovery.
+  Open verification and recovery links in the tab that requested them.
+- Username and passkey use WebAuthn at a configured origin. Set the relying
+  party ID and allowed origins in Auth settings. The browser can offer a
+  passkey through autocomplete or a sign-in button.
+- Connect Google, GitHub, Apple or an OpenID Connect issuer in Auth settings.
+  Register the callback URL shown for the runtime with the provider. The
+  browser stores the flow's state in its own tab and redeems the callback
+  ticket with that state. Client secrets are write-only.
 
-Platform administrators with `system.users.manage` in system scope can replace
-another human account's access. App administrators require
-`project.users.manage` for that exact App. The caller must hold every existing
-and requested permission at its scope. A top-level Platform permission requires
-the same top-level authority in the caller.
+An installed plugin can declare named OpenID Connect issuers with
+`defineOAuthProviders` from `zelavis/auth` and the `zelavis/auth:oauth`
+capability. Auth discovers the issuer's endpoints when the operator configures
+its client credentials. A bearer authenticator plugin declares
+`zelavis/auth:authenticator`.
 
-Platform roles are `customer`, `operator` and `reseller`. App accounts use
-`user`. Role labels carry only the authority an endpoint explicitly requires.
-Setting an operator or reseller label also requires that label in the caller,
-or the caller's global wildcard authority. Owner, service, pending and the
-caller's own account are protected from this operation.
+`GET /auth/methods` reports which methods can sign in, create accounts and
+recover credentials. The runtime's method settings control availability.
+Auth applies rate limits to interactive attempts and returns 429 with
+`Retry-After` when a client must wait. Auth may return 503 with
+`auth_importing` during a legacy account import.
 
-Read `accessRevision` from `client.auth.admin.accounts(accountId)` or
-`zelavis auth accounts ACCOUNT --json`. Accounts with no prior edit start at
-revision zero. Pass it to the conditional replacement.
+## Manage your account
 
-```ts
-await client.auth.admin.setAccountAccess(accountId, {
-  expectedRevision: 0,
-  role: "customer",
-  permissions: [],
-  grants: [
-    { permission: "project.view", scope: { type: "project", projectId: "my-app" } },
-  ],
-});
-```
+Open **Account** in the dashboard or **Manage account** on the signed-in App
+login page to manage your passkeys, two-factor authentication, email addresses,
+password and sessions. [Account pages](/packages/ui/#your-account)
 
-```bash
-zelavis auth set-account-access ACCOUNT --data '{"expectedRevision":0,"role":"customer","permissions":[],"grants":[{"permission":"project.view","scope":{"type":"project","projectId":"my-app"}}]}' --json
-zelavis projects set-account-access PROJECT ACCOUNT --data '{"expectedRevision":0,"role":"user","permissions":[],"grants":[]}' --json
-```
+## Sessions and tokens
 
-The equivalent HTTP operations are `PUT /auth/accounts/:accountId/access`
-and `PUT /runtime/projects/:projectId/auth/accounts/:accountId/access`,
-relative to the configured API base. The exact Project SDK method is
-`client.projects.setAccountAccess(projectId, accountId, input)`.
-The named App must be running. Its account edit accepts an empty
-`permissions` array and concrete grants scoped to that App.
+On Zelavis pages, access and refresh tokens are HttpOnly cookies. The
+Platform's access cookie covers the dashboard mount so server-rendered views
+can authenticate. App access cookies cover the App's API. Refresh cookies
+cover only the runtime's `/auth/session` path. Cookies use SameSite=Lax and
+are Secure on HTTPS.
 
-Access input is a strict object with at most 100 permissions and grants
-combined. Wildcards and route-parameter scopes are refused. A change increments
-`accessRevision` and invalidates every previously issued account session in
-one write. The user signs in again to use the new access. A matching no-op
-preserves the revision and sessions. Stale input returns
-`account_access_conflict` (409), invalid input returns `invalid_account_access`
-(400), and refused delegation returns `account_access_forbidden` (403).
-New Platform grants must name existing Projects or installed services.
+Bearer clients send the access token in `Authorization: Bearer <token>`.
+The ES256 access JWT expires after five minutes by default. The public keys
+are available at `GET /auth/jwks`. Use `POST /auth/session/refresh` to exchange
+a refresh token for a new bundle. Store the replacement immediately. Refresh
+tokens are single-use and a replay revokes the session. A `noSession` result
+means sign-in is required. `DELETE /auth/session` signs out.
 
-Use **Server → Access → Users → Edit access** for a Platform human account.
-For App accounts, use that Project's **Users → Edit access**. The drawer URL
-retains the selected account, filters and sidebar position across a refresh.
-Choose a Platform role and a visible Project, then add **View project and
-inspect backend** to assign that Project's view grant. An App editor keeps
-the User role and fixes grant scope to the current Project.
-Existing advanced permissions and grants stay visible and are retained
-unless explicitly removed. A stale save reloads current access for review.
-Changing access signs that account out of its existing sessions.
+Use service-account tokens for automation. Give each token the permissions and
+Project grants needed for its job. Service accounts are independent of human
+sessions and can be rotated or revoked by an authorized operator.
 
-The security event records the actor ID, target ID and committed revision.
-If its append fails after the access write, HTTP 503 returns
-`account_access_audit_failed` with that `accessRevision`. Read the account
-before deciding the next edit.
+## Multi-factor authentication
 
-Signed-in customers initially receive an empty `client.projects.list()`.
-An exact `project.view` grant adds that Project to their inventory.
-Project view includes workload visibility, database inspection and reads,
-and storage reads. Each mutation still requires its own permission.
-Global inventory requires `projects.list`, a top-level `project.view`, or
-the corresponding wildcard authority. Scoped inventory accepts at most
-100 distinct Project IDs and omits deleted Projects.
+An operator can require TOTP for privileged accounts or all accounts. If a
+sign-in needs MFA, Auth supplies a challenge instead of a session. Submit an
+authenticator code or a one-time backup code with that challenge. When
+enrollment is required, start TOTP setup with the challenge, save the new
+secret to an authenticator, and confirm with the authenticator ID and code.
+Save the backup codes after successful enrollment. Passkeys already provide
+user verification.
 
-Grant-bearing account creation, credential administration and service-token
-operations enforce the same delegation rule. General account creation and
-imports refuse identity metadata such as `principalType`, `serviceAccount`
-and `tenantId`. Imports retain their verification and password-import contract.
-
-## SDK
-
-The official client exposes a typed `auth` surface:
-
-```ts
-import { createZelavisClient } from "zelavis/sdk";
-
-const app = createZelavisClient({ baseUrl: "http://127.0.0.1:3000" });
-
-// Use the App runtime's own API address. Signup requires its registration policy to be open.
-
-const signedUp = await app.auth.signUpWithPassword({
-  identifier: "person@example.com",
-  password: "a long unique password",
-  displayName: "Person",
-});
-
-const signedIn = await app.auth.signInWithPassword({
-  identifier: "person@example.com",
-  password: "a long unique password",
-});
-
-await app.auth.getSession();
-await app.auth.refreshSession();
-await app.auth.signOut();
-```
-
-OAuth sign-in uses `auth.signInWithOAuth(provider)`, which returns the
-authorization URL for the provider-neutral Authorization Code ceremony.
-`auth.linkIdentity(provider)` starts the explicit account-linking variant.
-
-## Importing accounts
-
-`POST /auth/accounts/import` (account management), `client.auth.admin.importAccounts({ accounts, dryRun?, hashConfig? })`
-and `zelavis auth import-accounts --data JSON` create accounts from another system's export. Each entry is
-`{ email?, username?, displayName?, verified?, metadata?, passwordHash?, passwordSalt? }` and needs an email or a
-username.
-
-- A password carries over whenever its hash can be verified here:
-  - PBKDF2-SHA256 in Zelavis's format (`pbkdf2-sha256$iterations$salt$hash`) or Django's (`pbkdf2_sha256$…`), with
-    at least 100,000 iterations, converted without loss;
-  - bcrypt (`$2a$`, `$2b$`, `$2y$`: Supabase's `auth.users`, Laravel, Devise), at cost 4 to 14, and Django's
-    `bcrypt_sha256$…`;
-  - scrypt as Django stores it (`scrypt$n$salt$r$p$hash`), up to 64 MiB;
-  - Firebase Authentication's modified scrypt: each account's `passwordHash` and `passwordSalt` as `firebase
-    auth:export` writes them, and the project's parameters once for the file as
-    `hashConfig: { algorithm: "firebase-scrypt", signerKey, saltSeparator, rounds, memCost }`, copied from the
-    Firebase console (Authentication → Password hash parameters). An unknown `hashConfig` is refused.
-
-  bcrypt and scrypt are verified in plain JavaScript over Web Crypto's PBKDF2 and AES-CTR, so nothing native is
-  needed on any runtime, and the work yields to the scheduler as it runs. Those hashes are kept as they came and
-  replaced by Zelavis's own PBKDF2 hash the first time their owner signs in; the answer lists the accounts in
-  `rehashOnSignIn`. Until then an imported hash is as sensitive as it was in its source (a Firebase hash carries the
-  source project's signer key). Any other hash cannot be verified here, so the account gets a password credential
-  without one and its owner sets a password through recovery; those accounts are listed in `needsReset`, and an
-  unverifiable hash is never stored where sign-in would trust it.
-- An account whose email or username is already held is skipped, so a repeated import creates only what is
-  missing. With any problem in the file, or with `dryRun`, nothing is written and the answer lists the problems by
-  row. Imported accounts carry `metadata["zelavis.import"]` saying when and whether their password carried over
-(`carried`, `rehash-on-sign-in` or `needs-reset`).
-
-## Project provider settings
-
-Every Zelavis App Project ships password sign-in and can enable registration.
-Its Auth dashboard page can configure GitHub, Google, or another OpenID Connect issuer.
-The client ID, redirect URI, enabled state, and write-only client secret are
-Project-owned settings. Changing one Project never changes Platform login or
-another Project.
-
-The same capability is available to automation through
-`client.auth.admin.oauthConnections()`, `configureOAuth()`, and
-`removeOAuth()`. Provider settings require the Project-scoped
-`project.settings.manage` grant.
-
-## Platform service accounts
-
-Create a revocable machine identity from **Access → Users**, through
-`client.auth.admin.createServiceAccount()`, or from the CLI:
-
-```bash
-zelavis auth service-accounts create \
-  --name Fluxgent \
-  --permission projects.list \
-  --permission projects.create \
-  --expires-days 365 \
-  --token "$OWNER_SESSION_TOKEN"
-```
-
-The token is returned once. Store it in the client's credential vault. Rotate
-it with `auth service-accounts rotate ACCOUNT_ID` and revoke the entire machine
-identity with `auth service-accounts revoke ACCOUNT_ID`.
-
-`--permission` names Platform-wide authority. For a Project-scoped client, use
-`--project PROJECT_ID` with explicit, repeatable `--project-permission` flags:
-
-```bash
-zelavis auth service-accounts create --name "App reader" \
-  --project PROJECT_ID --project-permission project.data.read \
-  --token "$OWNER_SESSION_TOKEN"
-```
-
-Naming a Project adds no implicit operator grants. Use `project.data.write` for
-record writes and `project.data.define` for schema/collection/index changes;
-neither is needed by a reader. The CLI requires Project identity and scoped
-permissions together. SDK/HTTP clients express the same grants explicitly in
-`grants: [{ permission, scope: { type: 'project', projectId } }]`.
-
-Service tokens authenticate as principal type `service`, not as a user, so
-audit and policy code can distinguish software from people.
+See the [HTTP, SDK and CLI operations](/api/platform-operations/#authentication)
+and [upgrade behavior](/architecture/updates/).

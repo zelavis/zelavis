@@ -10,12 +10,12 @@
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "zelavis/identity:credentials"
+      "zelavis/auth:authenticator"
     ],
     "namespace": "oidc",
     "marketplace": {
-      "title": "OpenID Connect Sign-in",
-      "summary": "Let people sign in with any OpenID Connect provider, or verify bearer tokens from one.",
+      "title": "OpenID Connect Bearer Tokens",
+      "summary": "Accept bearer tokens issued by any OpenID Connect provider.",
       "categories": [
         "auth",
         "identity",

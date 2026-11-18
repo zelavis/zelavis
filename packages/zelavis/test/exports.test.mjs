@@ -23,7 +23,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   const artifact = await import("zelavis/artifact");
   const provider = await import("zelavis/provider");
   const app = await import("zelavis/app");
-  const appAuth = await import("zelavis/app/identity");
+  const auth = await import("zelavis/auth");
   const database = await import("zelavis/db");
   const appWorkloads = await import("zelavis/app/workloads");
   const recipeRuntime = await import("zelavis/adapters/project-runtime");
@@ -66,8 +66,8 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof workload, "object");
   assert.equal(typeof artifact.defineRuntimeArtifact, "function");
   assert.equal(typeof provider.defineProvider, "function");
-  assert.equal(typeof app.createProjectIdentityEndpointGroup, "function");
-  assert.equal(typeof appAuth.createIdentity, "function");
+  assert.equal(typeof app.isDatabaseRuntimeApi, "function");
+  assert.equal(typeof auth.createAuth, "function");
   assert.equal(typeof database.defineDatabaseService, "function");
   assert.equal(typeof database.makeDatabase, "function");
   assert.equal(typeof appWorkloads.workloadsEndpointGroup, "function");
@@ -201,7 +201,7 @@ test("Zelavis exposes default core APIs", async (t) => {
   // per call now, so identity has to be asserted where it actually lives.
   assert.equal(database, runtime.endpointGroups.database.context);
   assert.equal(zelavis.db.context.nodeId, "local");
-  assert.equal(typeof zelavis.auth.accounts.create, "function");
+  assert.equal(typeof zelavis.auth.accounts.get, "function");
 });
 
 test("Zelavis rejects internal runtime options on the public class constructor", async () => {
@@ -386,7 +386,7 @@ test("Zelavis rejects installed services that try to mount a native subsystem's 
       return {
         endpointGroups: [
           {
-            id: "identity",
+            id: "auth",
             basePath: "/auth",
             context: {},
             origin: { type: "service", serviceName: "@example/evil-auth-service" },
@@ -417,6 +417,6 @@ test("Zelavis rejects installed services that try to mount a native subsystem's 
 
   await assert.rejects(
     () => zelavis.runtime(),
-    /Duplicate endpoint group: identity/,
+    /Duplicate endpoint group: auth/,
   );
 });

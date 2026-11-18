@@ -1,3 +1,9 @@
+import { Effect } from "effect";
+import { zelavis } from "zelavis/sdk";
+import type { ZelavisServiceSetupContext } from "zelavis/service";
+import type { ZelavisServiceSecrets } from "zelavis";
+import { InvalidWebhook, ProviderNotConfigured } from "@zelavis/ecommerce/errors";
+import type { CreateCheckoutInput, CreatePortalInput, ProviderEvent } from "@zelavis/ecommerce";
 import {
   type BillingSubscription,
   type CancelSubscriptionInput,
@@ -30,6 +36,9 @@ export interface StripeRuntimeConfig {
 
 export interface StripeServiceOptions {
   secretKey?: string;
+  webhookSecret?: string;
+  /** Provider-port credential lookup; a runtime setup supplies its own sealed store. */
+  credentials?: () => Promise<{ secretKey?: string; webhookSecret?: string }>;
   client?: Stripe;
   apiVersion?: StripeClientConfig["apiVersion"];
   runtime?: StripeRuntimeConfig;
@@ -59,7 +68,7 @@ export function createStripeClient(options: StripeServiceOptions): Stripe {
   }
 
   if (!options.secretKey) {
-    throw new TypeError("Stripe service requires either a configured client or a secretKey.");
+    throw new ProviderNotConfigured({ provider: "stripe" });
   }
 
   return new Stripe(options.secretKey, {
@@ -291,10 +300,76 @@ function toRefundPaymentAttempt(
   };
 }
 
+function referenceOf(value: string | { id: string } | null | undefined): string | undefined { return typeof value === "string" ? value : value?.id; }
+
+function mapStripeEvent(event: Stripe.Event): readonly ProviderEvent[] {
+  const common = { eventId: event.id, occurredAt: new Date(event.created * 1000) };
+  switch (event.type) {
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
+      const session = event.data.object;
+      // Delayed payment methods fulfill only after the session is paid.
+      if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") return [];
+      return [{ ...common, type: "checkout.completed", checkoutReference: session.id, customerReference: referenceOf(session.customer), subscriptionReference: referenceOf(session.subscription), paymentReference: referenceOf(session.payment_intent) }];
+    }
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted": {
+      const subscription = event.data.object;
+      const first = subscription.items.data[0];
+      return [{ ...common, type: "subscription.updated", subscriptionReference: subscription.id, status: mapStripeSubscriptionStatus(subscription.status), cancelAtPeriodEnd: subscription.cancel_at_period_end,
+        currentPeriodStart: first ? new Date(first.current_period_start * 1000) : undefined, currentPeriodEnd: first ? new Date(first.current_period_end * 1000) : undefined }];
+    }
+    case "invoice.paid":
+    case "invoice.payment_failed": {
+      const invoice = event.data.object;
+      return [{ ...common, type: event.type === "invoice.paid" ? "payment.succeeded" : "payment.failed", paymentReference: invoice.id, amount: event.type === "invoice.paid" ? invoice.amount_paid : invoice.amount_due, currency: invoice.currency.toUpperCase(), subscriptionReference: referenceOf(invoice.parent?.subscription_details?.subscription) }];
+    }
+    default: return [];
+  }
+}
+
 export function createStripePaymentProvider(options: StripeServiceOptions = {}): PaymentProvider {
-  const stripe = createStripeClient(options);
+  let cached: Stripe | undefined;
+  let cachedKey: string | undefined;
+  const credentials = () => options.credentials?.() ?? Promise.resolve({ secretKey: options.secretKey, webhookSecret: options.webhookSecret });
+  const client = () => Effect.runPromise(Effect.gen(function* () {
+    if (options.client) return options.client;
+    const secretKey = options.secretKey ?? (yield* Effect.tryPromise(credentials)).secretKey;
+    if (!secretKey) return yield* new ProviderNotConfigured({ provider: "stripe" });
+    if (!cached || secretKey !== cachedKey) { cached = createStripeClient({ ...options, secretKey }); cachedKey = secretKey; }
+    return cached;
+  }));
 
   return {
+    createCheckout: (input: CreateCheckoutInput) => Effect.runPromise(Effect.gen(function* () {
+      const stripe = yield* Effect.tryPromise({ try: client, catch: cause => cause });
+      const customer = input.customer.providerReferences?.stripe;
+      const metadata = { ...input.metadata, checkoutId: input.checkoutId, customerId: input.customer.id };
+      const session = yield* Effect.tryPromise(() => stripe.checkout.sessions.create({
+        mode: input.mode, line_items: input.lines.map(line => ({ quantity: line.quantity, price_data: {
+          currency: line.currency.toLowerCase(), unit_amount: line.amount, product_data: { name: line.name },
+          ...(line.interval ? { recurring: { interval: line.interval, interval_count: line.intervalCount ?? 1 } } : {}),
+        } })),
+        ...(customer ? { customer } : { customer_email: input.customer.email }),
+        client_reference_id: input.checkoutId, metadata,
+        ...(input.mode === "subscription" ? { subscription_data: { metadata } } : { payment_intent_data: { metadata } }),
+        success_url: input.successUrl, cancel_url: input.cancelUrl,
+      }, { idempotencyKey: `checkout:${input.checkoutId}` }));
+      if (!session.url) return yield* new ProviderNotConfigured({ provider: "stripe" });
+      return { reference: session.id, url: session.url, expiresAt: new Date(session.expires_at * 1000), customerReference: referenceOf(session.customer) };
+    })),
+    createPortal: (input: CreatePortalInput) => Effect.runPromise(Effect.gen(function* () {
+      const stripe = yield* Effect.tryPromise({ try: client, catch: cause => cause });
+      const session = yield* Effect.tryPromise(() => stripe.billingPortal.sessions.create({ customer: input.customerReference, return_url: input.returnUrl }));
+      return { url: session.url };
+    })),
+    parseWebhook: ({ headers, rawBody }) => Effect.runPromise(Effect.gen(function* () {
+      const secret = options.webhookSecret ?? (yield* Effect.tryPromise(credentials)).webhookSecret;
+      if (!secret) return yield* new ProviderNotConfigured({ provider: "stripe" });
+      const stripe = options.client ?? new Stripe("webhook-verification", { telemetry: false });
+      const event = yield* Effect.tryPromise({ try: () => stripe.webhooks.constructEventAsync(rawBody, headers.get("stripe-signature") ?? "", secret, undefined, createStripeWebhookCryptoProvider()), catch: () => new InvalidWebhook({}) });
+      return mapStripeEvent(event);
+    })),
     async createPayment(input: CreatePaymentInput): Promise<PaymentAttempt> {
       const extraParams = (await options.getPaymentIntentParams?.(input)) ?? {};
       const createParams: Stripe.PaymentIntentCreateParams = {
@@ -308,7 +383,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
         createParams.automatic_payment_methods = { enabled: true };
       }
 
-      const paymentIntent = await stripe.paymentIntents.create(
+      const paymentIntent = await (await client()).paymentIntents.create(
         createParams,
         {
           idempotencyKey:
@@ -323,7 +398,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
     },
 
     async capturePayment(input: CapturePaymentInput): Promise<PaymentAttempt> {
-      const paymentIntent = await stripe.paymentIntents.capture(input.paymentAttempt.reference ?? input.paymentAttempt.id, {
+      const paymentIntent = await (await client()).paymentIntents.capture(input.paymentAttempt.reference ?? input.paymentAttempt.id, {
         metadata: Object.fromEntries(
           Object.entries(input.metadata ?? {}).map(([key, value]) => [key, String(value)]),
         ),
@@ -341,7 +416,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
 
     async refundPayment(input: RefundPaymentInput): Promise<PaymentAttempt> {
       const paymentIntentId = input.paymentAttempt.reference ?? input.paymentAttempt.id;
-      const refund = await stripe.refunds.create(
+      const refund = await (await client()).refunds.create(
         {
           payment_intent: paymentIntentId,
           ...(input.amount ? { amount: input.amount } : {}),
@@ -385,7 +460,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
             ];
           })();
 
-      const subscription = await stripe.subscriptions.create(
+      const subscription = await (await client()).subscriptions.create(
         {
           customer,
           items,
@@ -415,7 +490,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
 
     async cancelSubscription(input: CancelSubscriptionInput): Promise<BillingSubscription> {
       const subscriptionId = input.subscription.reference ?? input.subscription.id;
-      const cancelled = await stripe.subscriptions.cancel(
+      const cancelled = await (await client()).subscriptions.cancel(
         subscriptionId,
         {},
         {
@@ -437,28 +512,58 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
 }
 
 export function stripeService(options: StripeServiceOptions = {}) {
+  const stores = new WeakMap<object, ZelavisServiceSecrets>();
+  const setup = (context: ZelavisServiceSetupContext) => Effect.runPromise(Effect.gen(function* () {
+    if (context.core.secrets) stores.set(context.registry, context.core.secrets);
+    const status = () => Effect.gen(function* () {
+      const secretKey = options.secretKey ?? (context.core.secrets ? yield* Effect.tryPromise(() => context.core.secrets!.get("stripe.secret-key")) : undefined);
+      const webhookSecret = options.webhookSecret ?? (context.core.secrets ? yield* Effect.tryPromise(() => context.core.secrets!.get("stripe.webhook-secret")) : undefined);
+      return { configured: { secretKey: !!secretKey || !!options.client, webhookSecret: !!webhookSecret }, ...(secretKey ? { secretKeyHint: `…${secretKey.slice(-4)}` } : {}) };
+    });
+    context.addEndpointGroup({ id: "@zelavis/ecommerce-stripe:settings", basePath: "/plugins/stripe", context: {}, origin: { type: "service", serviceName: context.service.name }, api: { v1: [
+      { id: "stripe.settings.get", method: "GET", path: "/settings", access: { permissions: ["ecommerce.manage"] }, meta: { pluginResource: "settings", pluginAction: "get" }, handler: () => Effect.runPromise(status().pipe(Effect.map(body => ({ status: 200, body })))) },
+      { id: "stripe.settings.set", method: "PUT", path: "/settings", access: { permissions: ["ecommerce.manage"] }, meta: { pluginResource: "settings", pluginAction: "set" }, handler: ({ body }) => Effect.runPromise(Effect.gen(function* () {
+        if (!context.core.secrets) return { status: 409, body: { error: "secrets_unavailable" } };
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["secretKey", "webhookSecret"].includes(key))) return { status: 400, body: { error: "invalid_settings" } };
+        const input = body as Record<string, unknown>;
+        for (const key of ["secretKey", "webhookSecret"]) {
+          const value = input[key];
+          if (value !== undefined && (typeof value !== "string" || value.length > 4096 || value !== "" && !(key === "secretKey" ? /^sk_(test|live)_[A-Za-z0-9]+$/.test(value) : /^whsec_[A-Za-z0-9]+$/.test(value)))) return { status: 400, body: { error: "invalid_settings" } };
+        }
+        for (const [key, name] of [["secretKey", "stripe.secret-key"], ["webhookSecret", "stripe.webhook-secret"]] as const) {
+          const value = input[key];
+          if (typeof value === "string") {
+            if (value === "") yield* Effect.tryPromise(() => context.core.secrets!.delete(name));
+            else yield* Effect.tryPromise(() => context.core.secrets!.set(name, value));
+          }
+        }
+        return { status: 200, body: yield* status() };
+      }).pipe(Effect.catch(() => Effect.succeed({ status: 500, body: { error: "settings_unavailable" } })))) },
+    ] } });
+  }));
   return Object.freeze({
-    name: "@zelavis/ecommerce-stripe",
-    kind: "plugin",
-    // Names the plugin this extends rather than the bare `provider:payments`
-    // domain. A domain says what a plugin implements, never whose contract it
-    // satisfies, so two commerce plugins scanning for it collect each other's
-    // gateways and neither can tell.
-    capabilities: Object.freeze(["@zelavis/ecommerce:payments"]),
-    // Named for a catalogue: a list showing package names tells an operator
-    // less than the gateway they are actually choosing between.
-    marketplace: Object.freeze({
-      title: "Stripe",
-      summary: "Take card payments and manage subscriptions through Stripe.",
-      categories: Object.freeze(["payments"]),
-    }),
-    service: {
-      name: "stripe",
-      register(api: EcommerceApi) {
-        return api.runPromise(
-          api.payments.registerProvider("stripe", createStripePaymentProvider(options)),
-        );
-      },
-    },
+    name: "@zelavis/ecommerce-stripe", namespace: "stripe", kind: "plugin",
+    capabilities: Object.freeze(["@zelavis/ecommerce:payments", "api:routes", "dashboard:menu"]),
+    marketplace: Object.freeze({ title: "Stripe", summary: "Take card payments and manage subscriptions through Stripe.", categories: Object.freeze(["payments"]) }),
+    setup,
+    service: { name: "stripe", register(api: EcommerceApi) {
+      const provider = createStripePaymentProvider({ ...options, credentials: () => Effect.runPromise(Effect.gen(function* () {
+        const secrets = api.context.runtimeScope ? stores.get(api.context.runtimeScope) : undefined;
+        return { secretKey: secrets ? yield* Effect.tryPromise(() => secrets.get("stripe.secret-key")) : undefined, webhookSecret: secrets ? yield* Effect.tryPromise(() => secrets.get("stripe.webhook-secret")) : undefined };
+      })) });
+      return api.runPromise(api.payments.registerProvider("stripe", provider));
+    } },
   });
 }
+
+export function registerStripeMenu(): void {
+  zelavis.plugins.ui.menus.create({ title: "Stripe", path: "/commerce/stripe", page: { id: "settings", title: "Stripe settings", bundle: "dashboard", file: "settings.html" } });
+}
+
+export interface StripePluginClient {
+  readonly settings: {
+    get(): Promise<{ configured: { secretKey: boolean; webhookSecret: boolean }; secretKeyHint?: string }>;
+    set(input: { secretKey?: string; webhookSecret?: string }): Promise<{ configured: { secretKey: boolean; webhookSecret: boolean }; secretKeyHint?: string }>;
+  };
+}
+declare module "zelavis/sdk" { interface PluginApiRegistry { readonly stripe?: StripePluginClient } }

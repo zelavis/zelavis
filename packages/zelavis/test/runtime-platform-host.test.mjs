@@ -56,9 +56,8 @@ test("Agent conversion keeps the dashboard, authentication, Project status and r
     }).pipe(Effect.provideService(Scope.Scope, scope)));
     const port = await Effect.runPromise(host.listen({ host: "127.0.0.1", port: 0 }));
     const url = `http://127.0.0.1:${port}`, anonymous = createZelavisClient({ baseUrl: url });
-    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, provider: "password",
-      account: { email: "owner@example.com" }, credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
-    const { session } = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
+    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, username: "owner", password: "correct horse battery staple" } });
+    const { tokens: session } = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
     const generation = host.snapshot().generation;
     const nonce = randomUUID();
     const command = action => Effect.runPromise(requestNodeRuntimeControl(join(directory, "agent-update.sock"),
@@ -66,12 +65,12 @@ test("Agent conversion keeps the dashboard, authentication, Project status and r
     assert.equal((await command("prepare")).phase, "held");
     for (const path of ["/zelavis/", "/zelavis/api/v1/runtime/access", "/zelavis/api/v1/runtime/projects",
       "/zelavis/api/v1/runtime/logs", "/zelavis/api/v1/runtime/debug/projects/missing"]) {
-      const response = await fetch(`${url}${path}`, { headers: { authorization: `Bearer ${session.token}` }, signal: AbortSignal.timeout(2000) });
+      const response = await fetch(`${url}${path}`, { headers: { authorization: `Bearer ${session.accessToken}` }, signal: AbortSignal.timeout(2000) });
       assert.notEqual(response.status, 503, `${path} must remain available during conversion`);
       await response.arrayBuffer();
     }
-    const signedIn = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-    assert.ok(signedIn.session.token);
+    const signedIn = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+    assert.ok(signedIn.tokens.accessToken);
     assert.equal((await command("status")).phase, "held", "management access does not release workload admission");
   } catch (error) { console.error(JSON.stringify(logs.slice(-20))); throw error; }
   finally { await Effect.runPromise(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); }
@@ -136,10 +135,9 @@ for (const [failedActivation, lostReply] of [[false, false], [true, false], [fal
     const port = await Effect.runPromise(host.listen({ host: "127.0.0.1", port: 0 }));
     const url = `http://127.0.0.1:${port}`;
     const anonymous = createZelavisClient({ baseUrl: url });
-    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, provider: "password",
-      account: { email: "owner@example.com" }, credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
-    const { session } = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-    const owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${session.token}` } });
+    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, username: "owner", password: "correct horse battery staple" } });
+    const { tokens: session } = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+    const owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${session.accessToken}` } });
     await owner.projects.create({ id: "one", name: "One", recipeName: "@zelavis/app", start: false });
     const frontend = join(directory, "projects", "one", ".zelavis", "services", "site");
     await mkdir(join(frontend, "dist"), { recursive: true });
@@ -153,12 +151,12 @@ for (const [failedActivation, lostReply] of [[false, false], [true, false], [fal
     assert.equal(first.status, 200, body);
     await owner.projects.setRegistrationSettings("one", { enabled: true, expectedRevision: 0 });
     const auth = `${preview}/zelavis/api/v1/auth`;
-    const signup = await fetch(`${auth}/sign-up/password`, { method: "POST",
+    const signup = await fetch(`${auth}/username-password/sign-up`, { method: "POST",
       headers: { origin: preview, "x-forwarded-proto": "https", "content-type": "application/json" },
-      body: JSON.stringify({ identifier: "public@example.com", password: "correct horse battery staple" }),
+      body: JSON.stringify({ username: "public-user", password: "correct horse battery staple" }),
     });
-    assert.equal(signup.status, 201, await signup.clone().text());
-    const appUser = (await signup.json()).account.id;
+    assert.equal(signup.status, 200, await signup.clone().text());
+    const appUser = (await signup.json()).userId;
     assert.match(signup.headers.get("set-cookie"), /^zelavis_app_[a-f0-9]{24}=/);
     assert.doesNotMatch(signup.headers.get("set-cookie"), /Secure/);
     const cookie = signup.headers.get("set-cookie").split(";", 1)[0];
@@ -185,7 +183,7 @@ for (const [failedActivation, lostReply] of [[false, false], [true, false], [fal
     assert.equal(after.preview.port, app.preview.port);
     const appSession = await fetch(`${auth}/session`, { headers: { cookie } });
     assert.equal(appSession.status, 200);
-    assert.equal((await appSession.json()).principal.id, appUser);
+    assert.equal((await appSession.json()).account.id, appUser);
     assert.equal((await fetch(`${auth}/accounts`, { headers: { cookie } })).status, 404);
     assert.equal((await owner.json("/runtime/access")).mode, "owner");
     process.kill(appPid, 0);

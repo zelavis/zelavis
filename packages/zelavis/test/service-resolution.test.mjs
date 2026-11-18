@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { Effect } from "effect";
@@ -43,6 +45,35 @@ test("anything else a service imports is still its own to carry", async (t) => {
   const { services, entry } = await serviceFolder(t, `import Stripe from "stripe"; export default Stripe;`);
   const importer = createLocalRuntimeServiceImporter({ directory: services });
   await assert.rejects(importer(entry), (error) => error.code === "ERR_MODULE_NOT_FOUND" && /stripe/.test(error.message));
+});
+
+test("a Project's bundled Marketplace loads from an unpacked distribution without a zelavis dependency link", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "zv-unpacked-marketplace-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = fileURLToPath(new URL("..", import.meta.url));
+  const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+  await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+  await cp(join(source, "dist"), join(root, "dist"), { recursive: true });
+  const service = "services/zelavis-marketplace";
+  await mkdir(join(root, service), { recursive: true });
+  for (const entry of ["dist", "package.json", "allowlist.snapshot.json"]) {
+    await cp(join(source, service, entry), join(root, service, entry), { recursive: true });
+  }
+  // Dependencies are the host's existing copies. Deliberately omit zelavis:
+  // npm install inside an unpacked tarball does not link the package to itself.
+  for (const name of Object.keys(manifest.dependencies)) {
+    const target = join(root, "node_modules", name);
+    await mkdir(join(target, ".."), { recursive: true });
+    await symlink(await realpath(join(source, "node_modules", name)), target);
+  }
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { createLocalMarketplace } from "./dist/adapters/_marketplace-allowlist.js";
+    const marketplace = await createLocalMarketplace({ options: { sources: [] }, bundledNames: new Set(), role: "project", dataDirectory: "." });
+    assert.ok(marketplace?.gate);
+    assert.equal((await marketplace.client.current()).origin, "bundled");
+  `], { cwd: root, encoding: "utf8", timeout: 30_000, env: { PATH: process.env.PATH ?? "" } });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
 });
 
 test("code outside a services folder is resolved as it always was", async (t) => {

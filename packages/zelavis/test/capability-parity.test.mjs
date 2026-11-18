@@ -73,6 +73,11 @@ const collect = async () => {
   return { ops, sdkOf, cliUses };
 };
 
+// Optional service callbacks use the public POST /plugins/:namespace/webhooks/:provider convention.
+// They are provider-to-runtime signature-authorized ingress, not SDK/CLI operations. Product packages
+// test their actual handlers; core stays independent of optional products such as Ecommerce.
+const serviceWebhookIngress = op => op.method === "POST" && /^\/zelavis\/api\/v1\/plugins\/[a-z][A-Za-z0-9]*\/webhooks\/(?::[A-Za-z][A-Za-z0-9]*|\{[A-Za-z][A-Za-z0-9]*\})$/u.test(op.path);
+
 /** Not operations a person calls through a client: what each is instead. */
 const EXEMPT = {
   "GET /zelavis/api/v1/runtime/service-page.css": "asset: the stylesheet extension pages load",
@@ -86,6 +91,7 @@ const EXEMPT = {
   "GET /zelavis/api/v1/runtime/openapi": "the API description itself",
   "GET /zelavis/api/v1/runtime/openapi.json": "the API description itself",
   "GET /zelavis/api/v1/auth/oauth/{provider}/callback": "browser redirect target of an OAuth sign-in",
+  "POST /zelavis/api/v1/auth/oauth/{provider}/callback": "browser form_post redirect target for Apple OAuth",
   "GET /{path}": "frontend: the Project's or Platform's site",
   "GET /zelavis/{path}": "frontend: the dashboard",
   "GET database/menu/tables": "dashboard: dynamic menu items for the sidebar",
@@ -164,7 +170,7 @@ test("every public operation has a typed SDK method and a CLI command, or a stat
   const check = (list, declaredMap = DECLARED) => {
   const problems = [];
   for (const op of list) {
-    if (EXEMPT[op.id] !== undefined) continue;
+    if (EXEMPT[op.id] !== undefined || serviceWebhookIngress(op)) continue;
     const declared = declaredMap[op.id] ?? {};
     const sdk = sdkOf.get(op.id);
     if (sdk === undefined) {
@@ -186,7 +192,50 @@ test("every public operation has a typed SDK method and a CLI command, or a stat
   assert.deepEqual(problems, [], `${problems.length} operations lack parity:\n${problems.join("\n")}`);
   // Negative controls: a route nothing reaches is reported, and so is a declared CLI action that does not exist.
   assert.deepEqual(check([{ id: "POST /zelavis/api/v1/runtime/nothing", method: "POST", path: "/x", patterns: [] }]), ["POST /zelavis/api/v1/runtime/nothing: no SDK method reaches it"]);
+  assert.deepEqual(check([{ id: "POST /zelavis/api/v1/plugins/payments/webhooks/{provider}", method: "POST", path: "/zelavis/api/v1/plugins/payments/webhooks/:provider" }]), []);
+  assert.equal(check([{ id: "GET /zelavis/api/v1/plugins/payments/webhooks/{provider}", method: "GET", path: "/zelavis/api/v1/plugins/payments/webhooks/:provider" }]).length, 1);
   const startOp = ops.find((op) => op.id === "POST /zelavis/api/v1/runtime/projects/{projectId}/start");
   assert.match(check([startOp], { [startOp.id]: { cli: "projects launch-rocket" } }).join(), /is not in its usage/);
   assert.ok(ops.length > 250, "the operation list is the composed Platform's and the Project services'");
+});
+
+test("role commands expose all Auth and exact Project Gateway operations", async () => {
+  const { ops, sdkOf, cliUses } = await collect();
+  const expected = [
+    ["GET", "/auth/roles", "auth.admin.roles"],
+    ["POST", "/auth/roles", "auth.admin.createRole"],
+    ["PUT", "/auth/roles/{roleId}", "auth.admin.updateRole"],
+    ["DELETE", "/auth/roles/{roleId}", "auth.admin.deleteRole"],
+    ["GET", "/runtime/projects/{projectId}/auth/roles", "projects.roles"],
+    ["POST", "/runtime/projects/{projectId}/auth/roles", "projects.createRole"],
+    ["PUT", "/runtime/projects/{projectId}/auth/roles/{roleId}", "projects.updateRole"],
+    ["DELETE", "/runtime/projects/{projectId}/auth/roles/{roleId}", "projects.deleteRole"],
+  ];
+  for (const [method, path, sdk] of expected) {
+    const id = `${method} /zelavis/api/v1${path}`;
+    assert.ok(ops.some(operation => operation.id === id), id);
+    assert.ok(sdkOf.get(id)?.has(sdk), `${sdk} calls ${id}`);
+    assert.ok(cliUses.has(sdk), `CLI calls ${sdk}`);
+  }
+});
+
+test("invitation commands expose all Auth and exact Project Gateway operations", async () => {
+  const { ops, sdkOf, cliUses } = await collect();
+  const expected = [
+    ["GET", "/auth/invitations", "auth.admin.invitations"],
+    ["POST", "/auth/invitations", "auth.admin.invite"],
+    ["POST", "/auth/invitations/{id}/resend", "auth.admin.resendInvitation"],
+    ["DELETE", "/auth/invitations/{id}", "auth.admin.revokeInvitation"],
+    ["POST", "/auth/invitations/accept", "auth.acceptInvitation"],
+    ["GET", "/runtime/projects/{projectId}/auth/invitations", "projects.invitations"],
+    ["POST", "/runtime/projects/{projectId}/auth/invitations", "projects.invite"],
+    ["POST", "/runtime/projects/{projectId}/auth/invitations/{id}/resend", "projects.resendInvitation"],
+    ["DELETE", "/runtime/projects/{projectId}/auth/invitations/{id}", "projects.revokeInvitation"],
+  ];
+  for (const [method, path, sdk] of expected) {
+    const id = `${method} /zelavis/api/v1${path}`;
+    assert.ok(ops.some(operation => operation.id === id), id);
+    assert.ok(sdkOf.get(id)?.has(sdk), `${sdk} calls ${id}`);
+    assert.ok(cliUses.has(sdk), `CLI calls ${sdk}`);
+  }
 });

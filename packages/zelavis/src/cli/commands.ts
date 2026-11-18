@@ -19,8 +19,12 @@ import { runProjectsCommand } from "./projects.js";
 import { runNodesCommand } from "./nodes.js";
 import { runShardPlacementCommand } from "./shard-placement.js";
 import { runCloudCommand } from "./cloud.js";
+import { runRegistrarCommand } from "./registrar-operations.js";
+import { runEmailCommand } from "./email-operations.js";
 import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
+import { runIdentityDatabaseCommand } from "./identity-database.js";
+import { runServicesDatabaseCommand } from "./services-database.js";
 import { runBackupsCommand } from "./backups.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
@@ -98,6 +102,7 @@ export interface ZelavisCliOptions {
 }
 
 interface ParsedArgs {
+  approvePermissions?: string[];
   instance?: string;
   command?: string;
   target?: string;
@@ -115,7 +120,6 @@ interface ParsedArgs {
   email?: string;
   username?: string;
   displayName?: string;
-  provider?: string;
   token?: string;
   forService?: string;
   operationsRoot?: string;
@@ -144,6 +148,8 @@ function printHelp(): void {
 Usage:
   zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
   zelavis system-store import RECORDS.jsonl --confirm import [--replace] [--data-dir DIR]
+  zelavis identity-database restore DIR --confirm restore [--data-dir DIR] [--json]   (host-local, Platform stopped)
+  zelavis services-database restore DIR --confirm restore [--data-dir DIR] [--json]   (host-local, Platform stopped)
   zelavis backups <schedules|create-schedule|delete-schedule|run|runs|verify|restore|drill|drill-from> [name] [run-id] [--data JSON] [--confirm NAME] [--schedule NAME] [--recovery-key KEY] [--target-dir PATH] [--target JSON] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
@@ -154,14 +160,17 @@ Usage:
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh|updates|update <name>> [--url <url>] [--token <token>] [--json]
   zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
-  zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
+  zelavis registrar <providers|connection|connect|disconnect|contact|set-contact|check|quote|order|orders|order-status|domains|set-nameservers> [DOMAIN...] [--data JSON] [--limit N] [--after CURSOR] [--cursor CURSOR] [--json]
+  zelavis email <settings|set-settings|test|deliveries> [address] [--data JSON] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
+  zelavis cloud <status|connect|disconnect|nodes|request|release|scaling|policy|set-policy> [id] [--endpoint HTTPS_URL] [--data JSON] [--expected-updated-at N] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
   zelavis nodes <list|platform|trust|audit|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis terminal <status|list|install|open|attach|close> [session-id] [--url <url>] [--token <token>] [--json]
   zelavis debug <processes|updates|project <id>> [--url <url>] [--token <token>] [--json]
   zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
-  zelavis auth <providers|oauth-providers|registration-status|registration-settings|set-registration-settings|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|set-account-access|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis auth <group> <action> [id...] [--data JSON] [--url <url>] [--token <token>] [--json]   (groups: username-password, email-password, username-passkey, passkeys, oauth, mfa, emails, session, sessions, keys, methods, registration, bootstrap, admin; zelavis auth --help lists the actions)
+  zelavis auth <invitations|invite|resend-invitation|revoke-invitation|accept-invitation> [id] [--data JSON] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
   zelavis runtime <config|access|settings|update-settings> [--data JSON] [--url <url>] [--token <token>] [--json]
@@ -182,11 +191,11 @@ Usage:
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
   zelavis services sources [--url <url>] [--token <session-token>]
-  zelavis services install <name> [--url <url>]
+  zelavis services install <name> [--approve-permission P]... [--url <url>]
   zelavis services disable <name> [--url <url>]
   zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
   zelavis setup [--url <url>] [--token <bootstrap-token>]
-  zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
+  zelavis bootstrap --username <username> [--email <email>] [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
   zelavis agent [--data-dir <path>] [--operations-root <dir> --platform-authority <file>]
@@ -215,11 +224,17 @@ Commands:
   debug                     Read-only diagnostics: the Platform account's Zelavis processes and copies
   logs                      Read the Platform's recent log; --ref shows the cause
                             behind the reference of an "Action failed" message.
+  registrar                 Domain registration, transfer, renewal and order status
+                            through the operator’s registrar account
+  email                     The Platform's own email delivery: SMTP settings, a test send
+                            and the deliveries listing.
   update                    Check for a newer version and update this installation
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes;
                             registration-settings and set-registration-settings manage a Project's signup;
+                            email-settings, set-email-settings, send-test-email and email-deliveries
+                            manage an App's own email delivery;
                             domains, add-domain, verify-domain and remove-domain manage its hostnames;
                             set-account-access PROJECT ACCOUNT changes a Project account's authority;
                             tenants, create-tenant, delete-tenant and branch-tenant list, add, remove
@@ -251,6 +266,7 @@ Options:
   --services-dir <path>     Folder the Platform loads and installs services from.
                             Defaults to <data-dir>/services (or ZELAVIS_SERVICES_DIR).
   --url <url>               Zelavis root URL for endpoint-backed commands.
+  --approve-permission P   Approve a requested service permission (repeatable).
   --specifier <specifier>   ESM specifier for services register.
   --name <name>             Optional service name override.
   --source <source>         Service source: official or community.
@@ -261,10 +277,9 @@ Options:
   --confirm <phrase>        Destructive uninstall acknowledgement.
                             Required phrase: ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION}
   --json                    Print machine-readable command output.
-  --email <email>           Owner email address for bootstrap.
-  --username <username>     Owner username, when not using an email identity.
+  --email <email>           Owner email address for bootstrap, verified once email is configured.
+  --username <username>     Owner username for bootstrap.
   --display-name <name>     Owner display name.
-  --provider <provider>     Credential provider. Defaults to password.
   --for <service>           Limit extensions to those extending this service.
   --token <token>           Bootstrap token for bootstrap; session token for services.
                             Bootstrap defaults to ZELAVIS_BOOTSTRAP_TOKEN.
@@ -320,6 +335,9 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       parsed.help = true;
     } else if (arg === "--version" || arg === "-v") {
       parsed.version = true;
+    } else if (arg === "--approve-permission" || arg.startsWith("--approve-permission=")) {
+      const permission = arg.includes("=") ? arg.slice("--approve-permission=".length) : readValue(args, index++, arg);
+      (parsed.approvePermissions ??= []).push(permission);
     } else if (arg === "--install") {
       parsed.install = true;
     } else if (arg === "--all") {
@@ -450,11 +468,6 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--display-name=")) {
       parsed.displayName = arg.slice("--display-name=".length);
-    } else if (arg === "--provider") {
-      parsed.provider = readValue(args, index, arg);
-      index += 1;
-    } else if (arg.startsWith("--provider=")) {
-      parsed.provider = arg.slice("--provider=".length);
     } else if (arg === "--token") {
       parsed.token = readValue(args, index, arg);
       index += 1;
@@ -514,7 +527,7 @@ const runServicesCommand = Effect.fn("CLI.services")(function* (parsed: ParsedAr
   if (parsed.target === "install" || parsed.target === "enable") {
     if (!parsed.name) return yield* refuse("services install requires a service name.");
     const name = parsed.name;
-    const result = yield* integration(() => updateRuntimeService(name, { status: "installed" }, clientOptions));
+    const result = yield* integration(() => updateRuntimeService(name, { status: "installed", ...(parsed.approvePermissions ? { approvePermissions: parsed.approvePermissions } : {}) }, clientOptions));
     console.log(`Installed ${name}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
@@ -541,6 +554,7 @@ const runServicesCommand = Effect.fn("CLI.services")(function* (parsed: ParsedAr
         source: parsed.source,
         order: parsed.order,
         status: parsed.install ? "installed" : "available",
+        ...(parsed.approvePermissions ? { approvePermissions: parsed.approvePermissions } : {}),
       },
       clientOptions,
     ));
@@ -553,10 +567,6 @@ const runServicesCommand = Effect.fn("CLI.services")(function* (parsed: ParsedAr
 
   return yield* refuse(`Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`);
 });
-
-// The provider Zelavis ships with. An installation that replaced it names
-// its own with --provider.
-const DEFAULT_BOOTSTRAP_PROVIDER = "password";
 
 const resolveBootstrapPassword = Effect.fn("CLI.bootstrapPassword")(function* (parsed: ParsedArgs): Effect.fn.Return<string, TaggedFailure> {
   if (parsed.passwordStdin) {
@@ -584,37 +594,29 @@ const runBootstrapCommand = Effect.fn("CLI.bootstrap")(function* (parsed: Parsed
   if (!token) {
     return yield* refuse("A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.");
   }
-  if (!parsed.email && !parsed.username) return yield* refuse("bootstrap requires --email or --username.");
+  const username = parsed.username;
+  if (!username) return yield* refuse("bootstrap requires --username (and may take --email to verify once email is configured).");
 
   // Checked before the password is asked for, so an operator is not made to
   // type a secret into a Platform that was never going to accept it.
   const status = yield* integration(() => readBootstrapStatus({ url: parsed.url }));
   if (!status.required) return yield* refuse("This Platform already has an owner.");
-  const provider = parsed.provider ?? DEFAULT_BOOTSTRAP_PROVIDER;
-  if (!status.enrollmentProviders.includes(provider)) {
-    return yield* refuse(status.enrollmentProviders.length
-      ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
-      : "This Platform has no credential provider installed, so no owner can be enrolled.");
-  }
 
   const password = yield* resolveBootstrapPassword(parsed);
   const result = yield* integration(() => bootstrapPlatformOwner(
     {
       bootstrapToken: token,
-      provider,
+      username,
       password,
       ...(parsed.email ? { email: parsed.email } : {}),
-      ...(parsed.username ? { username: parsed.username } : {}),
       ...(parsed.displayName ? { displayName: parsed.displayName } : {}),
     },
     { url: parsed.url },
   ));
 
-  // The session token is deliberately not printed. It is a live owner
+  // The tokens are deliberately not printed. They are a live owner
   // credential, and stdout is redirected into logs far too often.
-  console.log(
-    `Created Platform owner ${result.account.email ?? result.account.username ?? result.account.id}.`,
-  );
+  console.log(`Created Platform owner ${result.account.username ?? result.account.id}.`);
   console.log("Sign in from the dashboard, or with the auth API, to continue.");
 });
 
@@ -636,6 +638,14 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "worker") {
       (yield* integration(() => runWorkerCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "registrar") {
+      (yield* integration(() => runRegistrarCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "email") {
+      (yield* integration(() => runEmailCommand(args.slice(1))));
       return;
     }
     if (args[0] === "cloud") {
@@ -676,6 +686,14 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "system-store") {
       yield* integration(() => runSystemStoreCommand(args.slice(1)));
+      return;
+    }
+    if (args[0] === "services-database") {
+      yield* integration(() => runServicesDatabaseCommand(args.slice(1)));
+      return;
+    }
+    if (args[0] === "identity-database") {
+      yield* integration(() => runIdentityDatabaseCommand(args.slice(1)));
       return;
     }
     if (args[0] === "data") {

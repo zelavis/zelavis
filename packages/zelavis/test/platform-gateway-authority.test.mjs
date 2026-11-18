@@ -161,6 +161,33 @@ test("Gateway account access proofs are signed, audience-bound and retained acro
   assert.equal((await Effect.runPromise(replayed()))["x-zelavis-authority"], undefined);
 });
 
+test("Gateway authority carries the client address, signed, through the worker re-signing", async () => {
+  const { Effect } = await import("effect");
+  const { createNodeRuntimeGateway } = await import("../dist/adapters/_node-runtime-gateway.js");
+  const secret = createGatewayAuthoritySecret();
+  const workerSecret = createGatewayAuthoritySecret();
+  const { signGatewayDispatch, splitGatewayDispatch, verifyGatewayClientAddress } = await import("../dist/platform/gateway-authority.js");
+  const original = claims({ accountAccessDigest: "a".repeat(64), clientAddress: "2001:db8::1" });
+  const dispatch = splitGatewayDispatch(await signGatewayDispatch(secret, original));
+  // The primary token has the same wire format and signature as a published engine expects.
+  assert.equal(dispatch.authority, await signGatewayAuthority(secret, { ...original, clientAddress: undefined }));
+  const verified = await verifyGatewayAuthority(secret, dispatch.authority, { audienceProjectId: "alpha" });
+  assert.equal(verified.accountAccessDigest, original.accountAccessDigest);
+  assert.equal(await verifyGatewayClientAddress(secret, dispatch.authority, dispatch.addressProof), original.clientAddress);
+  assert.equal(await verifyGatewayClientAddress(secret, dispatch.authority, dispatch.addressProof.replace("::1", "::2")), undefined);
+  const other = await signGatewayAuthority(secret, claims({ nonce: createGatewayAuthorityNonce() }));
+  assert.equal(await verifyGatewayClientAddress(secret, other, dispatch.addressProof), undefined);
+  assert.equal(splitGatewayDispatch(await signGatewayDispatch(secret, claims({ clientAddress: "6.6.6.6, 7.7.7.7" }))).addressProof, undefined);
+  const gateway = createNodeRuntimeGateway({ projectId: "alpha", parentSecret: () => secret, workerSecret: () => workerSecret });
+  const forwarded = await Effect.runPromise((await Effect.runPromise(gateway({
+    "x-zelavis-authority": dispatch.authority,
+    "x-zelavis-authority-client-address": dispatch.addressProof,
+  })))());
+  const next = await verifyGatewayAuthority(workerSecret, forwarded["x-zelavis-authority"], { audienceProjectId: "alpha" });
+  assert.equal(next.accountAccessDigest, original.accountAccessDigest);
+  assert.equal(await verifyGatewayClientAddress(workerSecret, forwarded["x-zelavis-authority"], forwarded["x-zelavis-authority-client-address"]), original.clientAddress);
+});
+
 test("Project runtimes reject forged authority and honour real caller authority", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-gateway-"));
   const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory }) });

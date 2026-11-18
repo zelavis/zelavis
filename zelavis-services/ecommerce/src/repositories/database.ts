@@ -1,8 +1,13 @@
+import { decodeDelivery, decodeFulfillmentMessage } from "../services/fulfillment.js";
+import { planProviderEvent, type EventKind, type EventState } from "../services/provider-events.js";
+import type { ProviderEvent } from "../contracts/payment-provider.js";
 import type {
   DatabaseRuntimeApi,
   Json as DatabaseJson,
   JsonObject as DatabaseJsonObject,
   TenantRuntimeApi,
+  Document,
+  DocumentWrite,
 } from "zelavis/db";
 import type {
   CouponRepository,
@@ -21,10 +26,12 @@ import type {
   PaymentAttempt,
   Product,
 } from "../domain/entities.js";
-import { Effect } from "effect";
+import { Effect, Schema, Semaphore } from "effect";
+import { Checkout } from "../domain/entities.js";
 import { StorageFailure } from "../errors.js";
 
 export interface EcommerceDatabaseCollections {
+  checkouts: string;
   customers: string;
   coupons: string;
   products: string;
@@ -39,6 +46,7 @@ export interface CreateDatabaseEcommerceRepositoriesOptions {
 }
 
 const defaultCollections: EcommerceDatabaseCollections = {
+  checkouts: "commerce_checkouts",
   customers: "commerce_customers",
   coupons: "commerce_coupons",
   products: "commerce_products",
@@ -52,11 +60,12 @@ function serializeDate(value: Date): string {
 }
 
 function toDatabaseJsonValue(value: unknown): DatabaseJson {
-  return JSON.parse(JSON.stringify(value)) as DatabaseJson;
+  const decoded = Schema.decodeUnknownSync(Schema.Json)(JSON.parse(JSON.stringify(value)));
+  return decoded as DatabaseJson;
 }
 
 function toDatabaseJsonObjectValue(value: Record<string, unknown>): DatabaseJsonObject {
-  return toDatabaseJsonValue(value) as DatabaseJsonObject;
+  return Schema.decodeUnknownSync(Schema.JsonObject)(toDatabaseJsonValue(value)) as DatabaseJsonObject;
 }
 
 function parseDate(value: unknown, field: string): Date {
@@ -95,37 +104,54 @@ function readOptionalStringRecord(
   }
 
   return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, String(entry)]),
+    Object.entries(record).map(([key, entry]) => {
+      if (typeof entry !== "string" || !entry || entry.length > 200) throw new TypeError("Stored provider references must be nonempty strings of at most 200 characters.");
+      return [key, entry];
+    }),
   );
 }
 
 type StoredCommerceEntity = DatabaseJsonObject;
 
 class DatabaseRepositorySupport {
+  private readonly collectionPermit = Semaphore.makeUnsafe(1);
   private readonly ensuredCollections = new Set<string>();
 
   constructor(private readonly database: TenantRuntimeApi) {}
 
   /** Wraps one database call, naming it so a failure says what was being done. */
-  private call<A>(operation: string, run: () => Promise<A>): Effect.Effect<A, StorageFailure> {
+  call<A>(operation: string, run: () => Promise<A>): Effect.Effect<A, StorageFailure> {
     return Effect.tryPromise({
       try: run,
       catch: (cause) => new StorageFailure({ operation, cause }),
     });
   }
 
+  decode<A>(operation: string, run: () => A): Effect.Effect<A, StorageFailure> {
+    return Effect.try({ try: run, catch: cause => new StorageFailure({ operation, cause }) });
+  }
+
   ensureCollection(name: string): Effect.Effect<void, StorageFailure> {
-    if (this.ensuredCollections.has(name)) return Effect.void;
-    return this.call(`ensureCollection(${name})`, async () => {
-      if (!(await this.database.documents.collectionExists(name))) {
-        await this.database.documents.createCollection({
-          name,
-          surface: "database",
-          metadata: { plugin: "@zelavis/ecommerce" },
-        });
+    return this.collectionPermit.withPermit(Effect.gen({ self: this }, function* () {
+      if (this.ensuredCollections.has(name)) return;
+      if (!(yield* this.call("collectionExists", () => this.database.documents.collectionExists(name)))) {
+        yield* this.call("createCollection", () => this.database.documents.createCollection({ name, surface: "database", metadata: { plugin: "@zelavis/ecommerce" } }));
       }
       this.ensuredCollections.add(name);
-    });
+    }));
+  }
+
+  setProviderReference(collection: string, id: string, provider: string, reference: string, at: Date): Effect.Effect<Customer, StorageFailure> {
+    return this.ensureCollection(collection).pipe(Effect.andThen(() => this.call("setProviderReference", () =>
+      this.database.documents.transaction(tx => Effect.runPromise(Effect.gen(function* () {
+        const record = yield* Effect.tryPromise({ try: () => tx.get({ collection, id }), catch: cause => cause });
+        if (!record) return yield* new StorageFailure({ operation: "setProviderReference", cause: "Customer is missing" });
+        const existing = deserializeCustomer(record.data);
+        const updated = { ...existing, providerReferences: { ...existing.providerReferences, [provider]: reference }, updatedAt: at };
+        yield* Effect.tryPromise({ try: () => tx.update({ collection, id, data: serializeCustomer(updated), mode: "replace" }), catch: cause => cause });
+        return updated;
+      }))),
+    )));
   }
 
   insert<T>(
@@ -170,7 +196,7 @@ class DatabaseRepositorySupport {
       Effect.andThen(() =>
         this.call(`findById(${collection}/${id})`, () =>
           this.database.documents.findById({ collection, id }))),
-      Effect.map((document) => (document ? deserialize(document.data) : undefined)),
+      Effect.flatMap(document => this.decode("decodeDocument", () => document ? deserialize(document.data) : undefined)),
     );
   }
 
@@ -185,7 +211,7 @@ class DatabaseRepositorySupport {
             collection,
             orderBy: [{ path: "updatedAt", direction: "desc" }],
           }))),
-      Effect.map((documents) => documents.map((document) => deserialize(document.data))),
+      Effect.flatMap(documents => this.decode("decodeDocuments", () => documents.map(document => deserialize(document.data)))),
     );
   }
 }
@@ -195,6 +221,8 @@ function serializeCustomer(customer: Customer): StoredCommerceEntity {
     id: customer.id,
     ...(customer.accountId ? { accountId: customer.accountId } : {}),
     email: customer.email,
+    ...(customer.principalId ? { principalId: customer.principalId } : {}),
+    ...(customer.providerReferences ? { providerReferences: customer.providerReferences } : {}),
     ...(customer.firstName ? { firstName: customer.firstName } : {}),
     ...(customer.lastName ? { lastName: customer.lastName } : {}),
     ...(customer.metadata ? { metadata: toDatabaseJsonObjectValue(customer.metadata) } : {}),
@@ -212,6 +240,8 @@ function deserializeCustomer(data: StoredCommerceEntity): Customer {
     id: data.id,
     ...(typeof data.accountId === "string" ? { accountId: data.accountId } : {}),
     email: data.email,
+    ...(typeof data.principalId === "string" ? { principalId: data.principalId } : {}),
+    ...(data.providerReferences ? { providerReferences: readOptionalStringRecord(data.providerReferences) } : {}),
     ...(typeof data.firstName === "string" ? { firstName: data.firstName } : {}),
     ...(typeof data.lastName === "string" ? { lastName: data.lastName } : {}),
     ...(readOptionalRecord(data.metadata) ? { metadata: readOptionalRecord(data.metadata) } : {}),
@@ -372,7 +402,10 @@ function deserializeOrder(data: StoredCommerceEntity): Order {
 function serializePaymentAttempt(paymentAttempt: PaymentAttempt): StoredCommerceEntity {
   return {
     id: paymentAttempt.id,
-    orderId: paymentAttempt.orderId,
+    ...(paymentAttempt.orderId ? { orderId: paymentAttempt.orderId } : {}),
+    ...(paymentAttempt.subscriptionId ? { subscriptionId: paymentAttempt.subscriptionId } : {}),
+    ...(paymentAttempt.checkoutId ? { checkoutId: paymentAttempt.checkoutId } : {}),
+    ...(paymentAttempt.providerUpdatedAt ? { providerUpdatedAt: serializeDate(paymentAttempt.providerUpdatedAt) } : {}),
     provider: paymentAttempt.provider,
     amount: paymentAttempt.amount,
     currency: paymentAttempt.currency,
@@ -389,7 +422,7 @@ function serializePaymentAttempt(paymentAttempt: PaymentAttempt): StoredCommerce
 function deserializePaymentAttempt(data: StoredCommerceEntity): PaymentAttempt {
   if (
     typeof data.id !== "string" ||
-    typeof data.orderId !== "string" ||
+    (data.orderId !== undefined && typeof data.orderId !== "string") ||
     typeof data.provider !== "string" ||
     typeof data.amount !== "number" ||
     typeof data.currency !== "string" ||
@@ -402,7 +435,10 @@ function deserializePaymentAttempt(data: StoredCommerceEntity): PaymentAttempt {
 
   return {
     id: data.id,
-    orderId: data.orderId,
+    ...(typeof data.orderId === "string" ? { orderId: data.orderId } : {}),
+    ...(typeof data.subscriptionId === "string" ? { subscriptionId: data.subscriptionId } : {}),
+    ...(typeof data.checkoutId === "string" ? { checkoutId: data.checkoutId } : {}),
+    ...(data.providerUpdatedAt ? { providerUpdatedAt: parseDate(data.providerUpdatedAt, "providerUpdatedAt") } : {}),
     provider: data.provider,
     amount: data.amount,
     currency: data.currency,
@@ -425,6 +461,9 @@ function serializeSubscription(subscription: BillingSubscription): StoredCommerc
     intervalCount: subscription.intervalCount,
     status: subscription.status,
     cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+    ...(subscription.providerCustomerReference ? { providerCustomerReference: subscription.providerCustomerReference } : {}),
+    ...(subscription.providerUpdatedAt ? { providerUpdatedAt: serializeDate(subscription.providerUpdatedAt) } : {}),
+    ...(subscription.checkoutId ? { checkoutId: subscription.checkoutId } : {}),
     ...(subscription.currentPeriodStart
       ? { currentPeriodStart: serializeDate(subscription.currentPeriodStart) }
       : {}),
@@ -467,6 +506,9 @@ function deserializeSubscription(data: StoredCommerceEntity): BillingSubscriptio
     intervalCount: data.intervalCount,
     status: data.status as BillingSubscription["status"],
     cancelAtPeriodEnd: data.cancelAtPeriodEnd,
+    ...(typeof data.providerCustomerReference === "string" ? { providerCustomerReference: data.providerCustomerReference } : {}),
+    ...(data.providerUpdatedAt ? { providerUpdatedAt: parseDate(data.providerUpdatedAt, "providerUpdatedAt") } : {}),
+    ...(typeof data.checkoutId === "string" ? { checkoutId: data.checkoutId } : {}),
     ...(typeof data.currentPeriodStart === "string"
       ? { currentPeriodStart: parseDate(data.currentPeriodStart, "currentPeriodStart") }
       : {}),
@@ -485,6 +527,10 @@ class DatabaseCustomerRepository implements CustomerRepository {
     private readonly support: DatabaseRepositorySupport,
     private readonly collection: string,
   ) {}
+  setProviderReference(id: string, provider: string, reference: string, at: Date) {
+    return this.support.setProviderReference(this.collection, id, provider, reference, at);
+  }
+
   create(customer: Customer) {
     return this.support.insert(this.collection, customer.id, customer, serializeCustomer);
   }
@@ -622,9 +668,78 @@ export function createDatabaseEcommerceRepositories(
     ...defaultCollections,
     ...options.collections,
   };
-  const support = new DatabaseRepositorySupport(database.forTenant(options.tenantId));
+  const tenant = database.forTenant(options.tenantId);
+  const support = new DatabaseRepositorySupport(tenant);
 
+  const checkoutSchema = Schema.Struct({ ...Checkout.fields, createdAt: Schema.DateFromString, updatedAt: Schema.DateFromString });
+  const checkoutJson = (value: Checkout) => toDatabaseJsonObjectValue({ ...value, lines: [...value.lines], createdAt: serializeDate(value.createdAt), updatedAt: serializeDate(value.updatedAt) });
+  const checkoutFrom = (value: StoredCommerceEntity): Checkout => Schema.decodeUnknownSync(checkoutSchema)(value);
+  const codecs = {
+    checkouts: { encode: checkoutJson, decode: checkoutFrom },
+    customers: { encode: serializeCustomer, decode: deserializeCustomer },
+    subscriptions: { encode: serializeSubscription, decode: deserializeSubscription },
+    paymentAttempts: { encode: serializePaymentAttempt, decode: deserializePaymentAttempt },
+  };
+  const applyEvent = (provider: string, event: ProviderEvent, attempt = 0): Effect.Effect<boolean, StorageFailure> => Effect.gen(function* () {
+    for (const kind of Object.keys(codecs) as EventKind[]) yield* support.ensureCollection(collections[kind]);
+    const state: EventState = {};
+    const originals = new Map<string, Document>();
+    const kind: EventKind = event.type === "checkout.completed" ? "checkouts" : event.type === "subscription.updated" ? "subscriptions" : "paymentAttempts";
+    const reference = event.type === "checkout.completed" ? event.checkoutReference : event.type === "subscription.updated" ? event.subscriptionReference : event.paymentReference;
+    const matches = yield* support.call("findProviderReference", () => tenant.documents.findMany({ collection: collections[kind], where: [{ path: "provider", op: "eq", value: provider }, { path: "reference", op: "eq", value: reference }], limit: 2 }));
+    if (matches.length > 1) return yield* new StorageFailure({ operation: "ambiguousProviderReference", cause: "Provider reference is not unique" });
+    const target = matches[0];
+    if (!target && (event.type === "payment.succeeded" || event.type === "payment.failed") && event.subscriptionReference) {
+      const subscriptions = yield* support.call("findInvoiceSubscription", () => tenant.documents.findMany({ collection: collections.subscriptions, where: [{ path: "provider", op: "eq", value: provider }, { path: "reference", op: "eq", value: event.subscriptionReference! }], limit: 2 }));
+      if (subscriptions.length > 1) return yield* new StorageFailure({ operation: "ambiguousProviderReference", cause: "Subscription reference is not unique" });
+      if (subscriptions[0]) state.subscription = yield* support.decode("decodeSubscription", () => deserializeSubscription(subscriptions[0]!.data));
+    }
+    if (!target && !state.subscription) return false;
+    if (target) originals.set(`${kind}:${target.id}`, target);
+    if (target && kind === "checkouts") {
+      state.checkout = yield* support.decode("decodeCheckout", () => checkoutFrom(target.data));
+      const customer = yield* support.call("eventCustomer", () => tenant.documents.findById({ collection: collections.customers, id: state.checkout!.customerId }));
+      if (customer) { state.customer = yield* support.decode("decodeCustomer", () => deserializeCustomer(customer.data)); originals.set(`customers:${customer.id}`, customer); }
+    } else if (target && kind === "subscriptions") state.subscription = yield* support.decode("decodeSubscription", () => deserializeSubscription(target.data));
+    else if (target) state.payment = yield* support.decode("decodePayment", () => deserializePaymentAttempt(target.data));
+    const plan = yield* support.decode("planProviderEvent", () => planProviderEvent(provider, event, state));
+    if (!plan) return false;
+    const operations: DocumentWrite[] = yield* support.decode("encodeProviderEvent", () => plan.changes.map((change): DocumentWrite => {
+      const data = codecs[change.kind].encode(change.value as never);
+      if (change.insert) return { _tag: "Insert", collection: collections[change.kind], id: change.value.id, data };
+      const original = originals.get(`${change.kind}:${change.value.id}`)!;
+      return { _tag: "Update", collection: collections[change.kind], id: change.value.id, data, mode: "replace", expectedVersion: original.version };
+    }));
+    yield* support.call("applyProviderEvent", () => tenant.documents.write({ operations, idempotencyKey: `${provider}:${event.eventId}`,
+      emit: [{ id: `${provider}:${event.eventId}`, topic: `commerce.${event.type}`, payload: { record: toDatabaseJsonObjectValue({ ...plan.payload }), occurredAt: event.occurredAt.toISOString() } }],
+    }));
+    return true;
+  }).pipe(Effect.catch(error => {
+    if (attempt < 7 && error.cause && typeof error.cause === "object" && "_tag" in error.cause && error.cause._tag === "DocumentConflict") return applyEvent(provider, event, attempt + 1);
+    return Effect.fail(error);
+  }));
   return {
+    events: { apply: applyEvent },
+    fulfillment: {
+      read: after => support.call("readFulfillment", () => tenant.outbox.read({ after: after as import("zelavis/db").EventCursor | undefined, limit: 50 })).pipe(Effect.flatMap(page => support.decode("decodeFulfillment", () => ({ ...page, messages: page.messages.map(decodeFulfillmentMessage) })))),
+      get: id => support.findById("commerce_fulfillment_deliveries", id, decodeDelivery),
+      save: delivery => support.ensureCollection("commerce_fulfillment_deliveries").pipe(Effect.andThen(() => support.call("saveDelivery", () => tenant.documents.write({ operations: [{ _tag: "Upsert", collection: "commerce_fulfillment_deliveries", id: delivery.id, data: { ...delivery } }] }))), Effect.asVoid),
+      remove: message => Effect.gen(function* () {
+        // Include acknowledgements left by a handler removed in a later service composition.
+        // Delete a bounded page before dropping the message, so a crash can only cause redelivery.
+        const records = yield* support.call("deliveryCleanupPage", () => tenant.documents.findMany({ collection: "commerce_fulfillment_deliveries", where: [{ path: "messageId", op: "eq", value: message }], limit: 50 }));
+        if (records.length) yield* support.call("removeDeliveries", () => tenant.documents.write({ operations: records.map(record => ({ _tag: "Delete", collection: "commerce_fulfillment_deliveries", id: record.id })) }));
+        const remaining = yield* support.call("deliveryCleanupRemaining", () => tenant.documents.findMany({ collection: "commerce_fulfillment_deliveries", where: [{ path: "messageId", op: "eq", value: message }], limit: 1 }));
+        if (!remaining.length) yield* support.call("removeFulfillment", () => tenant.outbox.remove({ ids: [message] }));
+      }),
+      failures: after => support.ensureCollection("commerce_fulfillment_deliveries").pipe(Effect.andThen(() => support.call("fulfillmentFailures", () => tenant.documents.findPage({ collection: "commerce_fulfillment_deliveries", where: [{ path: "failed", op: "eq", value: true }], limit: 50, after: after as import("zelavis/db").DocumentCursor | undefined }))), Effect.flatMap(page => support.decode("decodeDeliveries", () => ({ deliveries: page.documents.map(document => decodeDelivery(document.data)), next: page.next })))),
+    },
+    checkouts: {
+      create: value => support.insert(collections.checkouts, value.id, value, checkoutJson),
+      update: value => support.update(collections.checkouts, value.id, value, checkoutJson),
+      findById: id => support.findById(collections.checkouts, id, checkoutFrom),
+      list: () => support.list(collections.checkouts, checkoutFrom),
+    },
     customers: new DatabaseCustomerRepository(support, collections.customers),
     coupons: new DatabaseCouponRepository(support, collections.coupons),
     products: new DatabaseProductRepository(support, collections.products),

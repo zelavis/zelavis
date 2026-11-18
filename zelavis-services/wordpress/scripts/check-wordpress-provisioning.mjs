@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { Agent, get as httpGet } from "node:http";
 import { pathToFileURL } from "node:url";
+import { claimQualificationOwner } from "/workspace/distribution/scripts/lib/qualification-auth.mjs";
 import { installRecipeIfAvailable } from "/workspace/distribution/scripts/lib/install-recipe.mjs";
 if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== "1") throw new Error("Run through wordpress-provisioning-container.sh on a disposable container.");
 await access("/.dockerenv");
@@ -15,14 +16,7 @@ if (phase === "claim") {
   assert.equal(process.getuid(), 0);
   const environment = await readFile("/etc/zelavis/zelavis.env", "utf8");
   const bootstrapToken = /^ZELAVIS_BOOTSTRAP_TOKEN=(.+)$/m.exec(environment)?.[1];
-  const response = await fetch(`${baseUrl}/zelavis/api/v1/auth/bootstrap`, {
-    method: "POST", headers: { "content-type": "application/json", origin: baseUrl },
-    body: JSON.stringify({ bootstrapToken, provider: "password", account: { email: "qualification@example.test" }, credential: { identifier: "qualification@example.test", password: "disposable qualification password 2026" } }),
-  });
-  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
-  const cookie = response.headers.get("set-cookie").split(";")[0];
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile("/var/lib/zelavis/qualification-session", cookie, { mode: 0o600 });
+  await claimQualificationOwner(baseUrl, bootstrapToken);
   console.log("PASS: installed Platform owner claimed through bootstrap.");
 } else {
   assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");

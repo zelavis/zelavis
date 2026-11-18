@@ -219,6 +219,7 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
   supervisor = yield* Effect.acquireRelease(createNodeRuntimeSupervisor({
     agent: engineAgent, workloadId: "platform", initial: recovered.release, generation: recovered.generation,
     admission, headers: headers(), startupTimeoutMs: options.startupTimeoutMs,
+    trustForwardedFor: (options.configuration?.installation as { edge?: boolean } | undefined)?.edge === true,
     resolve: selected => options.resolve(selected, { ...options.configuration, dataDirectory: directory, host: options.host, handover,
       ...(enrollmentEndpoint ? { enrollmentEndpoint } : {}),
       custody: { ownerSession, endpoint, token, preserveOnShutdown: Boolean(options.environment.ZELAVIS_AGENT_ENDPOINT) } }, { ...options.environment, ZELAVIS_AGENT_ENDPOINT: agentEndpoint! }),

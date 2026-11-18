@@ -11,7 +11,7 @@ import type {
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis edge <status|plan|switch|publish|routes|preflight|onboard|certificates|renew> [args] [--url URL] [--token TOKEN] [--json]\n" +
+  "zelavis edge <status|plan|switch|publish|routes|preflight|onboard|certificates|renew|dns-providers|dns-connect|dns-disconnect|dns-provider-zones|dns-zones|dns-adopt-zone|dns-release-zone|dns-wildcard> [args] [--url URL] [--token TOKEN] [--json]\n" +
   "  zelavis edge status\n" +
   "  zelavis edge plan <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
   "  zelavis edge switch <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
@@ -22,7 +22,15 @@ const usage =
   "  zelavis edge preflight <hostname>\n" +
   "  zelavis edge onboard --mode MODE [--hostname HOST] [--local-target-url URL]\n" +
   "  zelavis edge certificates\n" +
-  "  zelavis edge renew [--hostname HOST] [--renew-if-within-days N]";
+  "  zelavis edge renew [--hostname HOST] [--renew-if-within-days N]\n" +
+  "  zelavis edge dns-providers\n" +
+  "  zelavis edge dns-connect <provider> --data '{\"credentials\":{...}}'\n" +
+  "  zelavis edge dns-disconnect <provider>\n" +
+  "  zelavis edge dns-provider-zones <provider> [--cursor C]\n" +
+  "  zelavis edge dns-zones\n" +
+  "  zelavis edge dns-adopt-zone <apex> --data '{\"provider\":\"cloudflare\",\"zoneId\":\"...\",\"hostedSubdomains\":true,\"targets\":{\"a\":[\"203.0.113.7\"],\"aaaa\":[]}}'\n" +
+  "  zelavis edge dns-release-zone <apex>\n" +
+  "  zelavis edge dns-wildcard <apex>";
 
 const capabilities = new Set<ZelavisEdgeCapability>([
   "http",
@@ -57,6 +65,8 @@ const knownFlags = new Set([
   "--mode",
   "--local-target-url",
   "--renew-if-within-days",
+  "--data",
+  "--cursor",
 ]);
 
 function parsePublication(value: string): Pick<ZelavisEdgePublication, "id" | "revision"> {
@@ -92,6 +102,8 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
   let modeFlag: string | undefined;
   let localTargetFlag: string | undefined;
   let renewWithinFlag: number | undefined;
+  let dataFlag: string | undefined;
+  let cursorFlag: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -159,6 +171,8 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
       if (!Number.isSafeInteger(renewWithinFlag) || renewWithinFlag < 0) throw new Error("--renew-if-within-days requires a non-negative integer.");
     }
     if (flag === "--project-id") projectIdFlag = value;
+    if (flag === "--data") dataFlag = value;
+    if (flag === "--cursor") cursorFlag = value;
     if (flag === "--scope") {
       if (value !== "platform" && value !== "project") {
         throw new Error(`Unknown scope "${value}". Must be platform or project.`);
@@ -229,6 +243,29 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
       ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
       ...(renewWithinFlag === undefined ? {} : { renewIfWithinDays: renewWithinFlag }),
     })));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (action.startsWith("dns-")) {
+    const [name, ...extra] = subArgs;
+    const named = ["dns-connect", "dns-disconnect", "dns-provider-zones", "dns-adopt-zone", "dns-release-zone", "dns-wildcard"].includes(action);
+    if ((named && !name) || (!named && name !== undefined) || extra.length > 0) throw new Error(`edge ${action} takes ${named ? "one argument" : "no arguments"}. ${usage}`);
+    if (cursorFlag !== undefined && action !== "dns-provider-zones") throw new Error("--cursor is only supported by edge dns-provider-zones.");
+    const needsData = action === "dns-connect" || action === "dns-adopt-zone";
+    if (needsData !== (dataFlag !== undefined)) throw new Error(needsData ? `edge ${action} requires --data JSON.` : "--data is only supported by edge dns-connect and dns-adopt-zone.");
+    const data: unknown = dataFlag === undefined ? undefined : JSON.parse(dataFlag);
+    // The server validates `--data` against the same schema as every other caller.
+    const result: unknown = action === "dns-providers" ? yield* integrationValue(client.edge.dns.providers())
+      : action === "dns-connect" ? yield* integrationValue(client.edge.dns.connect(name!, data as Parameters<typeof client.edge.dns.connect>[1]))
+      : action === "dns-disconnect" ? (yield* integrationValue(client.edge.dns.disconnect(name!)), { provider: name, connected: false })
+      : action === "dns-provider-zones" ? yield* integrationValue(client.edge.dns.providerZones(name!, cursorFlag))
+      : action === "dns-zones" ? yield* integrationValue(client.edge.dns.zones())
+      : action === "dns-adopt-zone" ? yield* integrationValue(client.edge.dns.adoptZone(name!, data as Parameters<typeof client.edge.dns.adoptZone>[1]))
+      : action === "dns-release-zone" ? (yield* integrationValue(client.edge.dns.releaseZone(name!)), { apex: name, released: true })
+      : action === "dns-wildcard" ? yield* integrationValue(client.edge.dns.orderWildcard(name!))
+      : undefined;
+    if (result === undefined) throw new Error(`Unknown edge command "${action}". ${usage}`);
     print(result, () => JSON.stringify(result, null, 2));
     return;
   }

@@ -62,6 +62,27 @@ for await (const page of pages((after) => client.data(projectId).events.read({ a
 
 It stops at the last page, or when a cursor does not move.
 
+## Auth sessions in the SDK
+
+Access Auth through `client.auth`. The client groups operations by method,
+session, registration, and administration. In a same-origin browser, Auth
+uses HttpOnly cookies. For a browser SDK using bearer tokens, pass
+`authSession: {}` to `createBrowserZelavisClient` from `zelavis/sdk/browser`.
+Supply an `authSession.storage` when the application owns persistent token
+storage. The client rotates a token once across concurrent calls on
+`access_token_expired` and discards a session when refresh returns `noSession`.
+
+```ts
+import { createBrowserZelavisClient } from "zelavis/sdk/browser";
+
+const client = createBrowserZelavisClient({ baseUrl: "https://example.com", authSession: {} });
+const result = await client.auth.usernamePassword.signIn({ username, password });
+if (result.status === "complete") {
+  const { account } = await client.auth.session.current();
+  console.log(account.displayName);
+}
+```
+
 ## One operation, three ways, least authority
 
 A service account that may only read one Project's data, used from each surface:

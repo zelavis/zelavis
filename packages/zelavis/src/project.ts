@@ -483,6 +483,8 @@ export interface ZelavisProjectGatewayAuthorityInput {
   readonly tenantId: string;
   readonly permissions: readonly string[];
   readonly accountAccessDigest?: string;
+  /** The caller's network address as the Platform saw it. */
+  readonly clientAddress?: string;
 }
 
 export interface ZelavisProjectCreateInput {

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { normalizeClientAddress } from "../runtime/client-address.js";
 import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import {
   resolveTrustedEd25519Key,
@@ -55,6 +56,7 @@ export interface ProjectRouteClaims {
     readonly tenantId: string;
     readonly permissions: readonly string[];
     readonly accountAccessDigest?: string;
+    readonly clientAddress?: string;
   };
 }
 
@@ -70,7 +72,9 @@ const validRoute = (value: unknown): value is ProjectRouteClaims => {
     typeof gateway.generation === "number" && Number.isSafeInteger(gateway.generation) &&
     Array.isArray(gateway.permissions) && gateway.permissions.length <= 64 && gateway.permissions.every((permission) => validId(permission)) &&
     (gateway.accountAccessDigest === undefined ||
-      (typeof gateway.accountAccessDigest === "string" && /^[a-f0-9]{64}$/u.test(gateway.accountAccessDigest)));
+      (typeof gateway.accountAccessDigest === "string" && /^[a-f0-9]{64}$/u.test(gateway.accountAccessDigest))) &&
+    (gateway.clientAddress === undefined ||
+      (typeof gateway.clientAddress === "string" && normalizeClientAddress(gateway.clientAddress) === gateway.clientAddress));
 };
 
 const LEASE_KEY = /^ZELAVIS_LEASE_[A-Z_]+$/;

@@ -1,22 +1,29 @@
 import { Effect } from "effect";
 import { readFile } from "node:fs/promises";
 import { defineAdapter, Zelavis } from "zelavis";
-import { nodeAdapter } from "zelavis/adapters/node";
+import { createCloudflareDnsProvider, createNamecheapRegistrar, nodeAdapter } from "zelavis/adapters/node";
 import { closeNodeServer, createNodeServer, shutdownOnSignals } from "zelavis/runtimes/node";
 import { zelavisUiFrontend as frontend } from "../src/frontend.ts";
 
 const txtFile = process.env.ZELAVIS_TEST_PROJECT_DOMAIN_TXT;
+// The browser suite's fake Cloudflare API: the built-in driver, pointed at it.
+const registrarApi = process.env.ZELAVIS_TEST_REGISTRAR_API;
+const cloudflareApi = process.env.ZELAVIS_TEST_CLOUDFLARE_API;
 const node = nodeAdapter({
   dataDirectory: process.env.ZELAVIS_DATA_DIR, database: {},
+  ...(process.env.ZELAVIS_TEST_CAPACITY ? { enrollmentEndpoint: { url: "https://127.0.0.1:8444", fingerprint: "ab".repeat(32) } } : {}),
   ...(txtFile ? { externalProjectDomainTarget: `http://127.0.0.1:${process.env.PORT}` } : {}),
 });
-const adapter = !txtFile ? node : defineAdapter({
+const adapter = !txtFile && !cloudflareApi && !registrarApi ? node : defineAdapter({
   name: node.name, close: node.close,
   resolve: options => Effect.runPromise(Effect.gen(function* () {
     const resolved = yield* Effect.promise(() => Promise.resolve(node.resolve!(options)));
     const ingress = resolved.resources?.projectDomainIngress;
     if (!ingress) throw new Error("The browser fixture needs the Node Project domain ingress.");
-    return { ...resolved, resources: { ...resolved.resources, projectDomainIngress: {
+    const registrarProviders = registrarApi ? { edgeRegistrars: [createNamecheapRegistrar({ endpoint: registrarApi })] } : {};
+    const dnsProviders = cloudflareApi ? { edgeDnsProviders: [createCloudflareDnsProvider({ apiBase: cloudflareApi })] } : {};
+    if (!txtFile) return { ...resolved, resources: { ...resolved.resources, ...dnsProviders, ...registrarProviders } };
+    return { ...resolved, resources: { ...resolved.resources, ...dnsProviders, ...registrarProviders, projectDomainIngress: {
       ...ingress,
       dns: { resolveTxt: (name: string) => Effect.runPromise(Effect.gen(function* () {
         const source = yield* Effect.tryPromise({

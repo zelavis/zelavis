@@ -36,7 +36,7 @@ const upstream = createServer(async (req, res) => {
   const send = (value, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
   if (path === `${api}/runtime/config`) return send(config);
   if (path === `${proxy}/runtime/config`) return send({ ...config, serviceRegistry: projectRegistry });
-  if (path === `${api}/auth/bootstrap`) return send({ available: true, required: false, providers: ["password"], enrollmentProviders: [] });
+  if (path === `${api}/auth/bootstrap`) return send({ available: true, required: false, tokenRequired: true, methods: ["usernamePassword"] });
   if (path === `${api}/auth/registration`) return send({ enabled: false, providers: [] });
   if (!req.headers.cookie?.includes("view-session=owner")) return send({ error: "Unauthorized" }, 401);
   observed.push({ path, cookie: req.headers.cookie });
@@ -408,9 +408,12 @@ try {
       assert.equal(await page.getByLabel("Project name", { exact: true }).inputValue(), "Retained project draft");
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto(`${origin}/zelavis${path}?tab=plugins`, { waitUntil: "networkidle" });
+    await page.goto(`${origin}/zelavis${path}`, { waitUntil: "networkidle" });
+    await page.getByRole("tab", { name: /^Plugins/ }).click();
     const plugins = page.getByRole("list", { name: "Plugins", exact: true });
+    const installedResponse = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/runtime/services"));
     await plugins.getByRole("button", { name: "Install", exact: true }).click();
+    assert.equal(new URL((await installedResponse).url()).pathname, `${projectScope ? proxy : api}/runtime/services`);
     await plugins.getByText("Installed", { exact: true }).waitFor();
     assert.ok(installs.has(`${projectScope ? proxy : api}/runtime/services`), "retained Marketplace actions use their exact scope");
   }

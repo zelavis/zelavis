@@ -52,10 +52,10 @@ export function facts(entries: readonly (readonly [string, string])[]) {
 }
 
 /** A confirmation that survives the refresh following an action: the next render of a page shows it once. */
-let flashText: string | undefined;
-export const setFlash = (text: string) => { flashText = text; };
-export function flashNotice(title: string) {
+let flash: { readonly text: string; readonly scope: string | undefined } | undefined;
+export const setFlash = (text: string, scope?: string) => { flash = { text, scope }; };
+export function flashNotice(title: string, scope?: string) {
   const holder = node("div", { role: "status" });
-  if (flashText) { holder.replaceChildren(resourceNotice(title, flashText)); flashText = undefined; }
+  if (flash && flash.scope === scope) { holder.replaceChildren(resourceNotice(title, flash.text)); flash = undefined; }
   return holder;
 }

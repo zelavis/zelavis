@@ -90,9 +90,10 @@ for (const [what, victims, mode] of [
     process.env.ZELAVIS_PROJECT_LEASES_URL = `http://127.0.0.1:${server.address().port}/zelavis/api/v1`;
     process.env.ZELAVIS_PROJECT_LEASES_NODE = "node-a";
     process.env.ZELAVIS_PROJECT_LEASES_STANDBY = "node-b";
-    // "Started again at once" means before the lease could lapse: its lease outlasts a Project start on a slow machine
-    // (several seconds on two shared CPUs), so the restart is what wins, never the machine's speed.
-    process.env.ZELAVIS_PROJECT_LEASES_TTL_MILLIS = mode === "race" ? "20000" : "3000";
+    // Every case first restarts the Platform while its writer and standby survive. Keep that planned restart inside
+    // the lease even under the full suite's process load, so failover is triggered by the deliberate writer kill below.
+    // The race case also restarts its writer within this lease. The failover assertions still wait for real expiry.
+    process.env.ZELAVIS_PROJECT_LEASES_TTL_MILLIS = "20000";
     const platform = () => new Zelavis({ adapter: nodeAdapter({
       dataDirectory: join(root, "platform"),
       projects: { remoteDispatch: { localNodeId: "node-a", nodes: { "node-b": { url: agent.address, agentId: "agent-b", caFile: certFile } } } },

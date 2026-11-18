@@ -27,7 +27,7 @@ export const newStats = () => ({
 const sizeOf = (value) => value === null || value === undefined ? 0 : value.byteLength ?? value.length ?? 0;
 
 /** A SQLite engine on its own file whose binding counts into `stats`. */
-export const instrumentedSqliteEngine = (stats) => Effect.gen(function* () {
+export const instrumentedSqliteEngine = (stats, { zeroBlob } = {}) => Effect.gen(function* () {
   const open = yield* Effect.promise(() => loadSqliteOpener());
   const directory = mkdtempSync(join(tmpdir(), "zv-budget-"));
   after(() => rmSync(directory, { recursive: true, force: true }));
@@ -67,5 +67,11 @@ export const instrumentedSqliteEngine = (stats) => Effect.gen(function* () {
       close: () => handle.close(),
     };
   };
-  return sqliteKvEngineOver(counted(false), { openReader: () => counted(true) });
+  const writer = counted(false);
+  const engine = sqliteKvEngineOver(writer, { openReader: () => counted(true) });
+  if (zeroBlob !== undefined) {
+    // Seed on the SQLite side so the memory control has no same-sized JS write buffer to collect.
+    writer.prepare("INSERT INTO kv (key, value) VALUES (?, zeroblob(?))").run(zeroBlob.key, zeroBlob.size);
+  }
+  return engine;
 });

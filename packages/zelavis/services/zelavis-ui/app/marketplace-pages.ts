@@ -1,7 +1,8 @@
 import { Effect } from "effect";
-import { array, label, object, request, type Config } from "./api.ts";
+import { ApiError, array, label, object, request, type Config } from "./api.ts";
 import { button, empty, link, node } from "./dom.ts";
 import { badge, card, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
+import { VOCABULARY } from "./permission-vocabulary.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /**
@@ -44,9 +45,9 @@ const tile = (service: Record<string, unknown>, large = false) => {
   return node("span", { "aria-hidden": "true", class: `mk-tile${large ? " large" : ""}`, style: `background-color:oklch(0.94 0.05 ${hash});color:oklch(0.42 0.13 ${hash})` }, titleOf(service).charAt(0).toUpperCase());
 };
 
-const installService = (api: string, service: Record<string, unknown>) => service.installVia === "acquire"
-  ? request(`${api}/runtime/services`, "POST", { packageSource: `npm:${label(service.name)}@${label(service.version)}`, status: "installed" })
-  : request(`${api}/runtime/services/${encodeURIComponent(label(service.name, ""))}`, "PATCH", { status: "installed" });
+const installService = (api: string, service: Record<string, unknown>, approvePermissions?: readonly string[]) => service.installVia === "acquire"
+  ? request(`${api}/runtime/services`, "POST", { packageSource: `npm:${label(service.name)}@${label(service.version)}`, status: "installed", ...(approvePermissions ? { approvePermissions } : {}) })
+  : request(`${api}/runtime/services/${encodeURIComponent(label(service.name, ""))}`, "PATCH", { status: "installed", ...(approvePermissions ? { approvePermissions } : {}) });
 
 const dateText = (value: unknown) => { const date = new Date(label(value, "")); return Number.isNaN(date.getTime()) ? label(value) : date.toLocaleDateString(); };
 
@@ -65,8 +66,31 @@ export const marketplaceScreen = Effect.fn("ui.marketplaceScreen")(function*(con
   const allowlist = yield* request(`${control.api.basePath}/runtime/marketplace/allowlist`).pipe(Effect.map(object), Effect.catch(() => Effect.succeed(undefined)));
 
   const done = (text: string) => { setFlash(text); context.refresh(); };
-  const install = (service: Record<string, unknown>) => context.run(installService(runtime.api.basePath, service), () => done(`Installed ${titleOf(service)}.`));
-  const update = (tab: Tab, service: Record<string, unknown>) => context.run(request(`${(tab === "apps" ? control : runtime).api.basePath}/runtime/services/${encodeURIComponent(label(service.name, ""))}/update`, "POST", {}), result => done(tab === "apps" ? `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}. Its Projects now offer the upgrade.` : `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}.`));
+  const clearApproval = { approveService: undefined, approveAction: undefined, approvePermissions: undefined };
+  const askApproval = (service: Record<string, unknown>, action: string, permissions: readonly string[], projectName?: string) =>
+    context.setSearch({ approveService: label(service.name, ""), approveAction: action, approvePermissions: permissions.join(","), ...(projectName ? { name: projectName } : {}) });
+  const approvalFailure = (service: Record<string, unknown>, action: string, projectName?: string) => (error: ApiError) => {
+    if (error.status === 409 && error.message === "principal_approval_required" && error.permissions?.length) {
+      return Effect.sync(() => { askApproval(service, action, error.permissions!, projectName); return undefined; });
+    }
+    return Effect.fail(error);
+  };
+  const install = (service: Record<string, unknown>, approval?: readonly string[]) => {
+    const permissions = array(object(service.principal).permissions).map(String);
+    if (!approval && permissions.length) { askApproval(service, "install", permissions); return; }
+    context.run(installService((service.kind === "app" ? control : runtime).api.basePath, service, approval).pipe(Effect.catch(approvalFailure(service, "install"))), result => {
+      if (result === undefined) return;
+      setFlash(`Installed ${titleOf(service)}.`);
+      if (params.has("approveService")) context.setSearch(clearApproval); else context.refresh();
+    });
+  };
+  const update = (tab: Tab, service: Record<string, unknown>, approval?: readonly string[]) => context.run(
+    request(`${(tab === "apps" ? control : runtime).api.basePath}/runtime/services/${encodeURIComponent(label(service.name, ""))}/update`, "POST", approval ? { approvePermissions: approval } : {})
+      .pipe(Effect.catch(approvalFailure(service, "update"))), result => {
+        if (result === undefined) return;
+        setFlash(`Updated ${titleOf(service)} to ${label(object(object(result).service).version)}.`);
+        if (params.has("approveService")) context.setSearch(clearApproval); else context.refresh();
+      });
   const startCreate = (service: Record<string, unknown>) => context.setSearch({ create: label(service.name, "") });
 
   const tabs = node("div", { role: "tablist", "aria-label": "Marketplace sections", class: "actions" }, ...TABS.map(([id, title]) => {
@@ -119,7 +143,8 @@ export const marketplaceScreen = Effect.fn("ui.marketplaceScreen")(function*(con
           const created = object(yield* request(`${control.api.basePath}/runtime/projects`, "POST", { name: projectName, recipeName: label(creating.name, ""), start: true }));
           return { approve: false as const, id: label(object(created.project).id, "") };
         });
-        context.run(work, outcome => {
+        context.run(work.pipe(Effect.catch(approvalFailure(creating, "install", projectName))), outcome => {
+          if (outcome === undefined) return;
           if (outcome.approve) context.navigate(`/projects?${new URLSearchParams({ new: "1", recipe: label(creating.name, ""), name: projectName })}`);
           else context.navigate(`/projects/${encodeURIComponent(outcome.id)}`);
         });
@@ -156,6 +181,24 @@ export const marketplaceScreen = Effect.fn("ui.marketplaceScreen")(function*(con
           button("Close", () => context.setSearch({ details: undefined })))));
     }
     sections.push(forTab(tab, node("div", {}, ...contents)));
+  }
+  const approving = registryFor(activeTab).map(object).find(service => service.name === params.get("approveService"));
+  if (approving) {
+    const permissions = (params.get("approvePermissions") ?? "").split(",").filter(Boolean);
+    const close = () => context.setSearch(clearApproval);
+    const dialog = node("dialog", { class: "account-access-drawer", "aria-label": "Approve service permissions" },
+      node("h2", {}, `Approve ${titleOf(approving)}`),
+      node("p", {}, "This service asks to act on your Platform with:"),
+      node("ul", {}, ...permissions.map(permission => node("li", {}, node("code", {}, permission),
+        node("p", {}, VOCABULARY.find(([, name]) => name === permission)?.[2] ?? permission)))),
+      node("p", {}, "This service will act on your Platform with these permissions. Disabling it revokes them."),
+      node("div", { class: "actions" }, button(params.get("approveAction") === "update" ? "Approve and update" : "Approve and install", () => {
+        if (params.get("approveAction") === "update") update(activeTab, approving, permissions);
+        else install(approving, permissions);
+      }, { class: "primary" }), button("Cancel", close)));
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    requestAnimationFrame(() => { if (dialog.isConnected) dialog.showModal(); });
+    sections.push(dialog);
   }
   const workspace = page(...sections);
   workspace.setAttribute("data-fuzor-view-query", "tab");

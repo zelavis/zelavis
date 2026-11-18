@@ -48,7 +48,7 @@ export const zelavisUiFrontend = (context: ZelavisPlatformFrontendContext): Prom
     service,
     servicePageStylesheet: zelavisServicePageStylesheet,
     ...(serviceUiScript !== undefined && serviceUiStylesheet !== undefined ? { serviceUi: { script: serviceUiScript, stylesheet: serviceUiStylesheet, modules } } : {}),
-    clientRoutes: ["/*", "/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login", "/sign-up"],
+    clientRoutes: ["/*", "/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login", "/sign-up", "/forgot-password", "/reset-password", "/verify-email", "/change-email", "/invitation", "/account", "/account/*", "/mfa", "/oauth/callback"],
     bundleStore: {
       read(_scope, path) {
         const relative = path.replace(/^\/+/, "");

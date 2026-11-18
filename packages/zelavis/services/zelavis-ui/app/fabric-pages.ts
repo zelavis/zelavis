@@ -1,8 +1,9 @@
+import { cloudPolicyCard } from "./cloud-policy.ts";
 import { Effect } from "effect";
 import { ApiError, array, label, object, request } from "./api.ts";
 import { CLOUD_PROVIDERS, describeScaleOutOutcome, joinCommand, newRequestId } from "./capacity.ts";
 import { button, field, node } from "./dom.ts";
-import { badge, card, dataRow, columns, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
+import { badge, card, dataRow, flashNotice, columns, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
 
@@ -150,28 +151,38 @@ const cloudPage = Effect.fn("ui.fabricCloud")(function*(context: ScreenContext) 
     const connected = connection !== null && connection !== undefined;
     const machines = connected ? array(object(yield* request(`${api}/nodes`)).nodes) : [];
     const scaling = connected ? object(object(yield* request(`${api}/scaling`)).scaling) : null;
-    return { connection: connected ? object(connection) : null, machines: machines.map(object), scaling };
+    const policy = object(yield* request(`${api}/policy`));
+    return { connection: connected ? object(connection) : null, machines: machines.map(object), scaling, policy };
   });
   const loaded = yield* read.pipe(Effect.result);
   if (loaded._tag === "Failure") return page(resourceNotice("Cloud capacity is not available", reason(loaded.failure)));
-  const { connection, machines, scaling } = loaded.success;
+  const { connection, machines, scaling, policy } = loaded.success;
   const refresh = () => context.refresh();
-  const sections: HTMLElement[] = [];
+  const sections: HTMLElement[] = [flashNotice("Cloud capacity", "cloud"), cloudPolicyCard(context, api, policy)].filter((section): section is HTMLElement => section !== undefined);
 
   if (connection) {
-    sections.push(rowsCard("Cloud provider", dataRow(`${label(connection.label)} (${label(connection.provider)})`, `Token ending ${label(connection.tokenHint)} · connected ${when(connection.connectedAt)} by ${label(connection.connectedBy)}`,
+    sections.push(rowsCard("Cloud provider", dataRow(`${label(connection.label)} (${label(connection.provider)})`, `${typeof connection.endpoint === "string" ? new URL(connection.endpoint).host + " · " : ""}Token ending ${label(connection.tokenHint)} · connected ${when(connection.connectedAt)} by ${label(connection.connectedBy)}`,
       (() => { const disconnect = button("Disconnect", () => context.run(request(`${api}/connection`, "DELETE"), refresh)); if (machines.length) disconnect.setAttribute("disabled", ""); return disconnect; })())));
   } else {
     const provider = dropdown({ name: "provider", label: "Provider" }, CLOUD_PROVIDERS.map(entry => ({ value: entry.id, label: entry.label })));
+    const token = node("input", { name: "token", type: "password", autocomplete: "off", placeholder: "API token", required: "", "aria-label": "API token" });
+    const endpoint = node("input", { name: "endpoint", type: "url", "aria-label": "Endpoint (https)", placeholder: "https://automation.example.com/capacity", maxlength: "2048" });
+    const endpointField = node("label", { hidden: "" }, node("span", {}, "Endpoint (https)"), endpoint);
+    const webhookHelp = node("p", { hidden: "" }, "Zelavis sends a signed request to this address whenever it needs a machine created or deleted. Your automation creates the machine and runs the first-boot script it receives; the machine counts as ready once it joins.");
+    provider.addEventListener("change", () => {
+      const webhook = new FormData(form).get("provider") === "webhook";
+      endpointField.hidden = !webhook; endpoint.required = webhook; webhookHelp.hidden = !webhook;
+      token.setAttribute("aria-label", webhook ? "Signing secret" : "API token"); token.placeholder = webhook ? "Signing secret" : "API token";
+    });
     const form = node("form", { class: "form" },
       node("p", {}, "The token can create and delete machines in its cloud project, so use a token from a dedicated project. It is stored encrypted, never shown again, and every use is audited."),
-      provider, node("input", { name: "label", placeholder: "Label (optional)", "aria-label": "Label" }), node("input", { name: "token", type: "password", autocomplete: "off", placeholder: "API token", required: "", "aria-label": "API token" }),
+      provider, node("input", { name: "label", placeholder: "Label (optional)", "aria-label": "Label" }), token, endpointField, webhookHelp,
       node("button", { type: "submit", class: "primary" }, "Connect"));
     form.addEventListener("submit", event => {
       event.preventDefault();
       const data = new FormData(form);
       const text = (key: string) => String(data.get(key) ?? "").trim();
-      context.run(request(`${api}/connection`, "POST", { provider: text("provider"), token: text("token"), ...(text("label") ? { label: text("label") } : {}) }), refresh);
+      context.run(request(`${api}/connection`, "POST", { provider: text("provider"), token: text("token"), ...(text("provider") === "webhook" ? { endpoint: text("endpoint") } : {}), ...(text("label") ? { label: text("label") } : {}) }), refresh);
     });
     sections.push(card("Cloud provider", node("p", {}, "Optional. Connecting a provider lets Zelavis create and delete worker machines in it. Existing servers keep working without one."), form));
   }

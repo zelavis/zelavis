@@ -20,6 +20,8 @@ Each guide should solve one practical problem end to end.
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
 - [Adapters and Fetch-Native Hosts](./adapters-and-fetch-native.md)
 - [Dashboard Development](./dashboard-development.md)
+- [DNS Automation](./dns-automation.md)
+- [Domain Registration](./domain-registration.md)
 - [File Storage Flow](./file-storage-flow.md)
 - [Official Service Packages](./official-service-packages.md)
 - [Plugin API](./plugin-api.md)

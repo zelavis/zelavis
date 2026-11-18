@@ -21,7 +21,7 @@ import { createRemoteShardHost } from "./_remote-shard-host.js";
 import type { ReadLimits } from "../db/read-budget.js";
 import type { ZelavisProjectLogEntry, ZelavisProjectRuntimeSnapshot } from "../project.js";
 import { isStandbyWorkload } from "../core/agent/project-dispatch.js";
-import { ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../platform/gateway-authority.js";
+import { setGatewayDispatchHeaders } from "../platform/gateway-authority.js";
 
 /** A separately supervised Node Agent that runs prepared Projects on this Node. */
 export function createRemoteProjectAgent(options: {
@@ -111,7 +111,7 @@ export function createRemoteProjectAgent(options: {
       if (authority === undefined) throw new Error("The Project cannot sign a Gateway envelope here.");
       const headers = new Headers(request.headers as [string, string][]);
       for (const [name] of [...headers]) if (name.toLowerCase().startsWith("x-zelavis-")) headers.delete(name);
-      headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
+      setGatewayDispatchHeaders(headers, authority);
       const target = new URL(route.path, snapshot.url);
       if (target.origin !== new URL(snapshot.url).origin) throw new Error("A routed path stays on the Project's own listener.");
       const answered = yield* integrationValue(fetch(target, {

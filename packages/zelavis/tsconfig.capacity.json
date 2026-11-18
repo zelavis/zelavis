@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src/adapters/capacity",
+    "outDir": ".capacity-build",
+    "declaration": false
+  },
+  "include": ["src/adapters/capacity/**/*.ts"],
+  "exclude": []
+}

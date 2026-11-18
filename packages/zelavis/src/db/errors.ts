@@ -430,6 +430,24 @@ export class DocumentConflict extends Schema.TaggedError<DocumentConflict>()("Do
   reason: Schema.String,
 }) {}
 
+/**
+ * A `documents.transaction` that could not commit: another writer changed what its body read, on every attempt
+ * (`read-set`), or the commit's own version check failed on every attempt (`version`), or the time allowed ran out
+ * (`deadline`).
+ */
+export class TransactionConflict extends Schema.TaggedError<TransactionConflict>()("TransactionConflict", {
+  tenant: Schema.String,
+  attempts: Schema.Number,
+  reason: Schema.Literals(["read-set", "version", "deadline"]),
+}) {}
+
+/** A `documents.transaction` asked for more than one transaction holds, or for a read it cannot overlay. */
+export class TransactionTooLarge extends Schema.TaggedError<TransactionTooLarge>()("TransactionTooLarge", {
+  tenant: Schema.String,
+  what: Schema.Literals(["point-reads", "query-reads", "query-limit", "writes", "emits", "query"]),
+  limit: Schema.Number,
+}) {}
+
 /** No cross-Tenant index has this name. */
 export class CrossTenantIndexNotFound extends Schema.TaggedError<CrossTenantIndexNotFound>()(
   "CrossTenantIndexNotFound",

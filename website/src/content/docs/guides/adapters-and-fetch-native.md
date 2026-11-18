@@ -70,9 +70,11 @@ Fetch-native hosts can call `zv.fetch(request)` directly.
 ## SDK bundle surfaces
 
 Browser support means SDK/client code, not running the Platform OS in a browser.
-Use `zelavis/sdk/browser` for a browser-safe fetch client and portable
-`zelavis/app/db` / `zelavis/app/identity` contracts without importing the
-dashboard, runtime host utilities, or local server adapters.
+Use `zelavis/sdk/browser` for a browser-safe fetch client (including
+`client.auth`) and the browser Auth helpers (`startBrowserOAuth`,
+`finishBrowserOAuth`, `registerBrowserPasskey`, `authenticateBrowserPasskey`,
+`withAuthLock`) without importing the dashboard, runtime host utilities, or
+local server adapters.
 
 ```ts
 import { createBrowserZelavisClient } from "zelavis/sdk/browser";

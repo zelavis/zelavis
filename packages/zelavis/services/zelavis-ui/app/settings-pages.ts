@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { ApiError, array, label, object, request } from "./api.ts";
 import { button, field, link, node } from "./dom.ts";
+import { emailSettingsCards } from "./email-settings.ts";
 import { card, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
@@ -77,6 +78,7 @@ export const auditCard = Effect.fn("ui.assistantAudit")(function*(context: Scree
 
 export const settingsScreen = Effect.fn("ui.settingsScreen")(function*(context: ScreenContext) {
   if (context.path === "/settings/appearance") return yield* appearanceScreen(context);
+  if (context.path === "/settings/email") return page(...(yield* emailSettingsCards(context)));
   const api = context.config.api.basePath;
   const settings = object(yield* request(`${api}/runtime/settings`));
   const raw = object(yield* request(`${api}/runtime/config`));
@@ -124,6 +126,7 @@ export const settingsScreen = Effect.fn("ui.settingsScreen")(function*(context: 
     updates,
     provider,
     audit,
+    rowsCard("Email delivery", dataRow("SMTP", "Configure how this Platform sends email, send a test and follow deliveries.", link("Open", "/settings/email"))),
     rowsCard("Appearance", dataRow("Persistence", settings.persistence === "read-only" ? "Read-only until runtime settings storage is available." : "Runtime settings storage is available. Root path changes apply after restart."), dataRow("Theme", "Configure dashboard light, dark, or system mode.", link("Open", "/settings/appearance"))),
     rowsCard("Runtime Services", dataRow("Mounted services", "Inspect core services and service-provided runtime pieces registered in this runtime.", link("Open", "/services"))));
 });

@@ -40,3 +40,33 @@ test("closing a page scope aborts pending work and removes its broker listener",
   })));
   assert.equal(signal.aborted, true); assert.equal(host.messages.size, 0); assert.equal(host.frameEvents.size, 0);
 });
+
+test("the broker offers only safe URLs returned by opted-in successful POSTs to the owning service", async () => {
+  const offered = [], calls = [];
+  let cleared = 0;
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (path.endsWith("/unsafe")) return Response.json({ url: "javascript:alert(1)" });
+    if (path.endsWith("/failed")) return Response.json({ url: "https://billing.example/path" }, { status: 400 });
+    return Response.json({ url: "https://billing.example/path" });
+  };
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    let answer;
+    const host = fixture(value => Effect.runSync(Deferred.succeed(answer, value)));
+    yield* installServiceBroker(host.frame, grant, {
+      offer: url => offered.push(url.href), clear: () => { cleared++; },
+    });
+    host.send({ id: "spoof", path: "checkout", method: "POST", offerExternalLink: true }, {});
+    assert.deepEqual(calls, []);
+    for (const [path, method, offerExternalLink] of [
+      ["unsafe", "POST", true], ["failed", "POST", true], ["direct", "GET", true],
+      ["not-requested", "POST", false], ["checkout", "POST", true],
+    ]) {
+      answer = yield* Deferred.make();
+      host.send({ id: path, path, method, offerExternalLink });
+      yield* Deferred.await(answer).pipe(Effect.timeout("1 second"));
+    }
+    assert.deepEqual(offered, ["https://billing.example/path"]);
+  })));
+  assert.equal(cleared, 1);
+});

@@ -62,7 +62,12 @@ export class ProviderFailure extends Schema.TaggedError<ProviderFailure>()("Prov
 }) {}
 
 /** Every failure this domain raises, for a caller that wants to name them all. */
+export class InvalidWebhook extends Schema.TaggedError<InvalidWebhook>()("InvalidWebhook", {}) {}
+export class CheckoutUnsupported extends Schema.TaggedError<CheckoutUnsupported>()("CheckoutUnsupported", { provider: Schema.String }) {}
+export class ProviderNotConfigured extends Schema.TaggedError<ProviderNotConfigured>()("ProviderNotConfigured", { provider: Schema.String }) {}
+
 export type EcommerceError =
+  | InvalidWebhook | CheckoutUnsupported | ProviderNotConfigured
   | InvalidInput
   | NotFound
   | UnknownProvider

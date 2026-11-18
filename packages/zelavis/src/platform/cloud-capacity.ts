@@ -1,6 +1,6 @@
 import { Data, Effect } from "effect";
 import type { CapacityProvider, ZelavisCapacityNode, ZelavisCapacityProvisionInput } from "../core/provider/index.js";
-import { integration } from "../core/runtime/effect-boundary.js";
+import { integration, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { decryptSecret, encryptSecret, type EncryptedSecret } from "../edge/acme-crypto.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
@@ -10,8 +10,8 @@ import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-stor
  * Authority. Fabric alone decides allocation, placement, draining and fencing. This
  * controller only asks a provisioning engine for machines and releases them; a machine is
  * not a Node until enrollment verifies it (`ready` comes from the provider contract, which
- * reports ready only after enrollment). The engine (`@zelavis/cloud`) is injected, never
- * imported, so the core runtime carries no cloud code.
+ * reports ready only after enrollment). The capacity adapter is injected, never
+ * imported, so no vendor client enters the runtime-neutral layers.
  *
  * The provider token is the one durable secret here. It is sealed (AES-256-GCM, key derived
  * from the Platform master secret and bound to this record's purpose), never returned, never
@@ -24,6 +24,7 @@ import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-stor
 
 export const CLOUD_CONNECTION_NAMESPACE = "fabric.cloud-connection.v1";
 export const CLOUD_AUDIT_NAMESPACE = "fabric.cloud-audit.v1";
+export const CLOUD_POLICY_NAMESPACE = "fabric.cloud-policy.v1";
 export const CLOUD_SCALING_NAMESPACE = "fabric.cloud-scaling.v1";
 const SCALING_KEY = "default";
 const LAST_REQUEST_KEY = "last-request";
@@ -42,11 +43,11 @@ const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const AUDIT_PRUNE_PAGE = 50;
 
 /** Providers the Platform can connect. Adding one is a deliberate change, not a runtime string. */
-export const CLOUD_PROVIDERS = ["hetzner"] as const;
+export const CLOUD_PROVIDERS = ["hetzner", "webhook"] as const;
 export type CloudProviderId = (typeof CLOUD_PROVIDERS)[number];
 
 export type CloudCapacityCode =
-  | "invalid-request" | "not-connected" | "already-connected" | "has-nodes" | "audit-unavailable" | "provider-failed";
+  | "policy-missing" | "policy-conflict" | "invalid-request" | "not-connected" | "already-connected" | "has-nodes" | "audit-unavailable" | "provider-failed";
 
 export class CloudCapacityError extends Data.TaggedError("CloudCapacityError")<{
   readonly code: CloudCapacityCode;
@@ -57,6 +58,42 @@ export class CloudCapacityError extends Data.TaggedError("CloudCapacityError")<{
 const fail = (code: CloudCapacityCode, message: string, cause?: unknown) =>
   Effect.fail(new CloudCapacityError({ code, message, ...(cause === undefined ? {} : { cause }) }));
 
+export interface CloudCapacityPolicy {
+  readonly location: string;
+  readonly image: string;
+  readonly maxNodes: number;
+  readonly allowedLocations?: readonly string[];
+  readonly machineClasses: readonly {
+    readonly name: string;
+    readonly cpuCores: number;
+    readonly memoryBytes: number;
+    readonly diskBytes: number;
+  }[];
+}
+
+const MAX_CLASSES = 16;
+const MAX_NODES = 100;
+
+/** Validates the operator's machine policy at both the write and persisted-read boundaries. */
+export const parseCloudPolicy = (value: unknown): Effect.Effect<CloudCapacityPolicy, CloudCapacityError> => Effect.gen(function* () {
+  const parsed = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const text = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 128 && !/[\x00-\x1f\x7f]/.test(v);
+  const positive = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+  const classes = Array.isArray(parsed.machineClasses) ? parsed.machineClasses : [];
+  if (!text(parsed.location) || !text(parsed.image) || !positive(parsed.maxNodes) || (parsed.maxNodes as number) > MAX_NODES ||
+      classes.length < 1 || classes.length > MAX_CLASSES ||
+      classes.some(c => typeof c !== "object" || c === null || !text(c.name) || !(typeof c.cpuCores === "number" && Number.isFinite(c.cpuCores) && c.cpuCores > 0 && c.cpuCores <= Number.MAX_SAFE_INTEGER) || !positive(c.memoryBytes) || !positive(c.diskBytes)) ||
+      new Set(classes.map(c => c.name)).size !== classes.length ||
+      (parsed.allowedLocations !== undefined && !(Array.isArray(parsed.allowedLocations) && parsed.allowedLocations.length >= 1 && parsed.allowedLocations.length <= 16 && parsed.allowedLocations.every(text)))) {
+    return yield* fail("invalid-request", `The cloud policy needs location and image (1 to 128 characters), maxNodes (1 to ${MAX_NODES}) and 1 to ${MAX_CLASSES} uniquely named machineClasses with positive cpuCores and positive whole memoryBytes and diskBytes; allowedLocations has 1 to 16 names.`);
+  }
+  return {
+    location: parsed.location, image: parsed.image, maxNodes: parsed.maxNodes as number,
+    ...(parsed.allowedLocations === undefined ? {} : { allowedLocations: [...parsed.allowedLocations as string[]] }),
+    machineClasses: classes.map(c => ({ name: c.name, cpuCores: c.cpuCores, memoryBytes: c.memoryBytes, diskBytes: c.diskBytes })),
+  };
+});
+
 /** What an operator may see of the connection: never the token or its ciphertext. */
 export interface CloudConnectionSummary {
   readonly provider: CloudProviderId;
@@ -65,6 +102,7 @@ export interface CloudConnectionSummary {
   readonly connectedBy: string;
   /** Last four characters, enough to tell two tokens apart. */
   readonly tokenHint: string;
+  readonly endpoint?: string;
 }
 
 interface ConnectionRecord extends CloudConnectionSummary {
@@ -107,6 +145,7 @@ const isScaling = (value: unknown): value is CloudScalingSettings => {
 export interface CloudProviderConfig {
   readonly provider: CloudProviderId;
   readonly token: string;
+  readonly endpoint?: string;
 }
 
 export interface CloudCapacityOptions {
@@ -115,7 +154,7 @@ export interface CloudCapacityOptions {
   readonly masterSecret: string;
   readonly platformId: string;
   /** Builds the provisioning engine for a connection. `firstBoot` mints the machine's enrollment. */
-  readonly buildProvider: (config: CloudProviderConfig, firstBoot: (nodeId: string) => Promise<string>) => CapacityProvider | Promise<CapacityProvider>;
+  readonly buildProvider: (config: CloudProviderConfig, firstBoot: (nodeId: string) => Promise<string>, policy: CloudCapacityPolicy) => CapacityProvider | Promise<CapacityProvider>;
   /** Mints the single-use enrollment token for a machine and returns its first-boot script. */
   readonly firstBootFor: (nodeId: string) => Promise<string>;
   readonly now?: () => number;
@@ -124,12 +163,21 @@ export interface CloudCapacityOptions {
 const sealKey = (masterSecret: string) => `${masterSecret}\u0000${SEAL_PURPOSE}`;
 const asValue = (value: unknown) => value as ZelavisSystemStoreValue;
 
+const isWebhookEndpoint = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; } // URL syntax is untrusted persisted input.
+};
+
 const isConnection = (value: unknown): value is ConnectionRecord => {
   if (value === null || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   return (CLOUD_PROVIDERS as readonly string[]).includes(v.provider as string) && typeof v.label === "string" &&
     Number.isFinite(v.connectedAt) && typeof v.connectedBy === "string" && typeof v.tokenHint === "string" &&
-    typeof v.sealed === "object" && v.sealed !== null;
+    typeof v.sealed === "object" && v.sealed !== null &&
+    (v.provider === "webhook" ? isWebhookEndpoint(v.endpoint) : v.endpoint === undefined);
 };
 
 const summarize = ({ sealed: _sealed, ...summary }: ConnectionRecord): CloudConnectionSummary => summary;
@@ -164,10 +212,31 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
       );
     });
 
-  const providerOf = (config: CloudProviderConfig) =>
-    integration(() => options.buildProvider(config, options.firstBootFor)).pipe(
-      Effect.mapError((error) => new CloudCapacityError({ code: "provider-failed", message: "The cloud provider could not be prepared.", cause: error })),
+  const readPolicy = Effect.gen(function* () {
+    const record = yield* integration(() => store.get(CLOUD_POLICY_NAMESPACE, "default")).pipe(
+      Effect.mapError(() => new CloudCapacityError({ code: "provider-failed", message: "The capacity policy could not be read." })),
     );
+    if (record === undefined) return { policy: null, record: undefined };
+    const value: unknown = record.value;
+    const fields = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    if (fields.schemaVersion !== 1 ||
+        typeof fields.updatedAt !== "number" || !Number.isSafeInteger(fields.updatedAt) || fields.updatedAt < 1 || typeof fields.updatedBy !== "string") {
+      return yield* fail("provider-failed", "The stored capacity policy is malformed.");
+    }
+    const policy = yield* parseCloudPolicy(fields.policy).pipe(Effect.mapError(() => new CloudCapacityError({ code: "provider-failed", message: "The stored capacity policy is malformed." })));
+    return { policy, updatedAt: fields.updatedAt, record };
+  });
+
+  const providerOf = (config: CloudProviderConfig) => Effect.gen(function* () {
+    const { policy } = yield* readPolicy;
+    if (policy === null) return yield* fail("policy-missing", "Set the capacity policy first.");
+    return yield* integration(() => options.buildProvider(config, options.firstBootFor, policy)).pipe(
+      Effect.mapError(error => {
+        const cause = unwrapFailure(error);
+        return new CloudCapacityError({ code: "provider-failed", message: cause instanceof Error && cause.message === "The cloud bundle could not be loaded." ? cause.message : "The cloud provider could not be prepared." });
+      }),
+    );
+  });
 
   /** The connection and an engine built from its token, which exists only for the call. */
   const connected = Effect.gen(function* () {
@@ -177,7 +246,7 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
       try: () => decryptSecret(record.sealed, sealKey(options.masterSecret)),
       catch: (cause) => new CloudCapacityError({ code: "provider-failed", message: "The stored provider token could not be opened.", cause }),
     });
-    return { record, provider: yield* providerOf({ provider: record.provider, token }) };
+    return { record, provider: yield* providerOf({ provider: record.provider, token, ...(record.endpoint ? { endpoint: record.endpoint } : {}) }) };
   });
 
   let shortfallSince: number | undefined;
@@ -197,9 +266,30 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
     );
 
   return {
+    policy: () => readPolicy.pipe(Effect.map(({ policy, updatedAt }) => ({ policy, ...(updatedAt === undefined ? {} : { updatedAt }) }))),
+
+    setPolicy: (input: unknown, principalId: string, expectedUpdatedAt?: number) => Effect.gen(function* () {
+      const policy = yield* parseCloudPolicy(input).pipe(Effect.mapError(error => new CloudCapacityError({ code: "invalid-request", message: error.message })));
+      const current = yield* readPolicy;
+      if (expectedUpdatedAt !== undefined && (!Number.isSafeInteger(expectedUpdatedAt) || expectedUpdatedAt < 1)) return yield* fail("invalid-request", "expectedUpdatedAt must be a positive safe integer.");
+      if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== current.updatedAt) return yield* fail("policy-conflict", "The policy changed; reload it.");
+      const updatedAt = Math.max(now(), (current.updatedAt ?? 0) + 1);
+      if (!Number.isSafeInteger(updatedAt)) return yield* fail("invalid-request", "The policy revision is exhausted.");
+      yield* audit(principalId, "policy.set");
+      const value = asValue({ schemaVersion: 1, policy, updatedAt, updatedBy: principalId });
+      const saved = yield* integration(() => current.record === undefined
+        ? store.setIfAbsent(CLOUD_POLICY_NAMESPACE, "default", value)
+        : store.compareAndSet(CLOUD_POLICY_NAMESPACE, "default", current.record.updatedAt, value, current.record.value)).pipe(
+        Effect.map(result => result !== undefined && (!("created" in result) || result.created)),
+        Effect.mapError(() => new CloudCapacityError({ code: "provider-failed", message: "The capacity policy could not be stored." })),
+      );
+      if (!saved) return yield* fail("policy-conflict", "The policy changed; reload it.");
+      return { policy, updatedAt };
+    }),
+
     connection: () => readRecord.pipe(Effect.map((record) => record === undefined ? undefined : summarize(record))),
 
-    connect: (input: { readonly provider: string; readonly token: string; readonly label?: string; readonly principalId: string }) =>
+    connect: (input: { readonly provider: string; readonly token: string; readonly label?: string; readonly endpoint?: string; readonly principalId: string }) =>
       Effect.gen(function* () {
         if (!(CLOUD_PROVIDERS as readonly string[]).includes(input.provider)) {
           return yield* fail("invalid-request", `The cloud provider must be one of: ${CLOUD_PROVIDERS.join(", ")}.`);
@@ -207,16 +297,25 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
         if (typeof input.token !== "string" || !TOKEN.test(input.token) || input.token.length > MAX_TOKEN_LENGTH) {
           return yield* fail("invalid-request", "The provider token has an unexpected shape.");
         }
+        let endpoint: string | undefined;
+        if (input.provider === "webhook") {
+          if (input.token.length < 32) return yield* fail("invalid-request", "A signing secret needs 32 to 512 printable characters.");
+          try {
+            const url = new URL(input.endpoint ?? "");
+            if (url.protocol !== "https:" || url.username || url.password || url.hash || url.search || url.href.length > 2048) return yield* fail("invalid-request", "The webhook endpoint must be an HTTPS URL without credentials, query or fragment (at most 2048 characters).");
+            endpoint = url.href;
+          } catch { return yield* fail("invalid-request", "An HTTPS webhook endpoint is required."); }
+        } else if (input.endpoint !== undefined) return yield* fail("invalid-request", "Only the webhook provider accepts an endpoint.");
         const label = input.label ?? input.provider;
         if (!LABEL.test(label)) return yield* fail("invalid-request", "The label has characters that are not allowed.");
         if ((yield* readRecord) !== undefined) return yield* fail("already-connected", "A cloud provider is already connected; disconnect it first.");
         const provider = input.provider as CloudProviderId;
         // The token is proved by use before it is kept: a token that cannot list is not stored.
-        const engine = yield* providerOf({ provider, token: input.token });
-        yield* wrap(() => engine.list());
         yield* audit(input.principalId, "connect", { provider });
+        const engine = yield* providerOf({ provider, token: input.token, ...(endpoint ? { endpoint } : {}) });
+        yield* wrap(() => engine.list());
         const record: ConnectionRecord = {
-          provider, label, connectedAt: now(), connectedBy: input.principalId,
+          provider, label, ...(endpoint ? { endpoint } : {}), connectedAt: now(), connectedBy: input.principalId,
           tokenHint: input.token.slice(-4),
           sealed: encryptSecret(input.token, sealKey(options.masterSecret)),
         };
@@ -230,9 +329,9 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
     /** Removes the token. Refused while machines this Platform created still exist, because releasing them needs it. */
     disconnect: (principalId: string) => Effect.gen(function* () {
       const { record, provider } = yield* connected;
+      yield* audit(principalId, "disconnect", { provider: record.provider });
       const nodes = yield* wrap(() => provider.list());
       if (nodes.length > 0) return yield* fail("has-nodes", `${nodes.length} machine(s) created by this Platform still exist; release them first.`);
-      yield* audit(principalId, "disconnect", { provider: record.provider });
       yield* integration(() => store.delete(CLOUD_CONNECTION_NAMESPACE, CONNECTION_KEY)).pipe(
         Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The connection could not be removed.", cause })),
       );
@@ -289,6 +388,7 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
         shortfallSince ??= at;
         if (at - shortfallSince < SCALE_OUT_SUSTAIN_MS) return "waiting" as const;
         const { provider } = yield* connected;
+        yield* audit("autoscaler", "nodes.list");
         const machines = yield* wrap(() => provider.list());
         if (machines.some((machine) => machine.state === "provisioning")) return "booting" as const;
         if (machines.length >= settings.maxMachines) return "at-limit" as const;
@@ -311,8 +411,9 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
       return outcome;
     }),
 
-    nodes: (): Effect.Effect<readonly ZelavisCapacityNode[], CloudCapacityError> => Effect.gen(function* () {
+    nodes: (principalId = "system"): Effect.Effect<readonly ZelavisCapacityNode[], CloudCapacityError> => Effect.gen(function* () {
       const { provider } = yield* connected;
+      yield* audit(principalId, "nodes.list");
       return yield* wrap(() => provider.list());
     }),
 

@@ -23,8 +23,8 @@
       "zelavis": [
         "../../packages/zelavis/src/index.ts"
       ],
-      "zelavis/app/identity": [
-        "../../packages/zelavis/src/app/identity/index.ts"
+      "zelavis/auth": [
+        "../../packages/zelavis/src/auth/index.ts"
       ],
       "zelavis/runtime": [
         "../../packages/zelavis/src/core/runtime/index.ts"

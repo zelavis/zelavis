@@ -79,6 +79,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
       name: "ecommerce-test-adapter",
       async resolve() {
         return {
+          resolvePrincipal: () => ({ id: "owner", type: "user", permissions: ["*"] }),
           subsystems: {
             database: { directory },
           },
@@ -113,6 +114,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
       },
     },
   });
+  t.after(() => zelavis.close());
 
   // Create customer
   const customerRes = await zelavis.fetch(
@@ -225,6 +227,7 @@ test("ecommerce operations provide three-way parity across HTTP, JS SDK, and CLI
       },
     },
   });
+  t.after(() => zelavis.close());
 
   const owner = { principal: { id: "owner", type: "user", permissions: ["*"] } };
   const fetcher = (url, init) => zelavis.fetch(new Request(url, init), owner);
@@ -287,4 +290,26 @@ test("ecommerce operations provide three-way parity across HTTP, JS SDK, and CLI
     globalThis.fetch = originalFetch;
     console.log = originalLog;
   }
+});
+
+test("all Ecommerce routes require view or manage permission", async (t) => {
+  const { zelavis: compose, createMemorySystemStore } = await import("../../../packages/zelavis/dist/index.js");
+  const runtime = await compose({ systemStore: createMemorySystemStore(), serviceRegistry: { catalog: [{ service: await loadEcommercePlugin(), status: "installed" }] } });
+  t.after(() => runtime.close());
+  const commerceRoutes = runtime.routes.filter(entry => entry.route.id?.startsWith("commerce."));
+  assert.ok(commerceRoutes.length >= 20);
+  for (const { route } of commerceRoutes) {
+    if (route.id === "commerce.webhooks.receive") { assert.equal(route.access, undefined); assert.equal(route.maxRequestBodyBytes, 262144); }
+    else assert.deepEqual(route.access.permissions, [route.method === "GET" ? "ecommerce.view" : "ecommerce.manage"], route.id);
+  }
+  const client = createZelavisClient({ baseUrl: "http://localhost", fetch: (url, init) => runtime.fetch(new Request(url, init), { principal: { id: "owner", type: "user", permissions: ["*"] } }) });
+  assert.ok(!(await client.pluginOperations()).some(operation => operation.namespace === "ecommerce" && operation.path.includes("/webhooks/")));
+  const url = "/zelavis/api/v1/plugins/ecommerce/products";
+  assert.equal((await runtime.plain({ url })).status, 401);
+  const principal = permissions => ({ id: "reader", type: "user", permissions });
+  assert.equal((await runtime.plain({ url, principal: principal([]) })).status, 403);
+  assert.equal((await runtime.plain({ url, principal: principal(["ecommerce.view"]) })).status, 200);
+  const body = { title: "Product", price: { amount: 100, currency: "USD" } };
+  assert.equal((await runtime.plain({ url, method: "POST", body, principal: principal(["ecommerce.view"]) })).status, 403);
+  assert.equal((await runtime.plain({ url, method: "POST", body, principal: principal(["ecommerce.manage"]) })).status, 201);
 });

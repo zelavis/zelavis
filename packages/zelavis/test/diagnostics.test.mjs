@@ -110,10 +110,9 @@ test("an API key made with the debug permissions reads diagnostics over HTTP, th
   const through = (url, init) => runtime.fetch(new Request(url, init));
   const anonymous = createZelavisClient({ baseUrl: "http://localhost", fetch: through });
   await anonymous.json("/auth/bootstrap", { method: "POST", body: {
-    bootstrapToken: "diagnostics-bootstrap-token-0123456789abcdef", provider: "password", account: { email: "owner@example.com" },
-    credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
-  const signedIn = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-  const owner = createZelavisClient({ baseUrl: "http://localhost", fetch: through, headers: { authorization: `Bearer ${signedIn.session.token}` } });
+    bootstrapToken: "diagnostics-bootstrap-token-0123456789abcdef", username: "owner", password: "correct horse battery staple" } });
+  const signedIn = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+  const owner = createZelavisClient({ baseUrl: "http://localhost", fetch: through, headers: { authorization: `Bearer ${signedIn.tokens.accessToken}` } });
   const keyWith = async (name, permissions) => (await owner.json("/auth/service-accounts", { method: "POST", body: { name, permissions, expiresInDays: 30 } })).token;
   const debugToken = await keyWith("debug", ["server.debug.read", "server.logs.read"]);
   const logsToken = await keyWith("logs only", ["server.logs.read"]);

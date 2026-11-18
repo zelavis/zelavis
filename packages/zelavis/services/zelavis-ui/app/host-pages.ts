@@ -1,3 +1,6 @@
+import { VOCABULARY } from "./permission-vocabulary.ts";
+import { invitationsPanel } from "./invitations-page.ts";
+import { accountPageControls, accountSessionsCard, canManageAccounts, createAccountCard, readAuthAccounts } from "./auth-accounts.ts";
 import { Effect } from "effect";
 import { accountAccessEditor, canEditAccountAccess } from "./account-access-editor.ts";
 import { array, label, object, request } from "./api.ts";
@@ -7,8 +10,12 @@ import { API_KEY_PRESETS } from "./api-key-presets.ts";
 import type { ScreenContext } from "./screens.ts";
 import { backupSchedulesPanel } from "./backup-schedules-panel.ts";
 import { dropdown } from "./dropdown.ts";
+import { rolesScreen } from "./roles-page.ts";
+import { registrarCards } from "./registrar-panel.ts";
+import { canAccess } from "./navigation-menu.ts";
+import { dnsAutomationCards } from "./dns-automation.ts";
 
-type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
+type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/roles" | "/server/access/permissions";
 
 /** Server pages about the host itself: the overview, backends, domains, the System Store, security and access. */
 
@@ -90,14 +97,17 @@ export const runtimesScreen = Effect.fn("ui.runtimesScreen")(function*(context: 
 });
 
 export const domainsScreen = Effect.fn("ui.domainsScreen")(function*(context: ScreenContext) {
-  const result = object(yield* request(`${context.config.api.basePath}/runtime/edge/routes`));
+  const edgeView = canAccess(context.config.access, { permissions: ["server.edge.view"] });
+  const result = edgeView ? object(yield* request(`${context.config.api.basePath}/runtime/edge/routes`)) : {};
   const rows = array(result.hostnames).map(object).map(row => {
     const project = typeof row.projectId === "string" ? row.projectId : undefined;
     const proof = object(row.projectDomain);
     return dataRow(label(row.host), [project ? `Project ${project}` : "Platform", label(row.tlsMode), label(proof.routing, "")].filter(Boolean).join(" · "),
       project ? link("Project domains", `/projects/${encodeURIComponent(project)}/domains`) : undefined);
   });
-  return page(rowsCard("Domain inventory", ...(rows.length ? rows : [dataRow("No hostnames configured", "Verified Project hostnames appear here.")])));
+  return page(rowsCard("Domain inventory", ...(rows.length ? rows : [dataRow("No hostnames configured", "Verified Project hostnames appear here.")])),
+    ...(edgeView ? yield* dnsAutomationCards(context) : []),
+    ...(yield* registrarCards(context)));
 });
 
 export const systemStoreScreen = Effect.fn("ui.systemStoreScreen")(function*(context: ScreenContext) {
@@ -224,12 +234,7 @@ export const accessScreen = Effect.fn("ui.accessScreen")(function*(context: Scre
     resourceNotice("One access model", "Platform users have roles and explicit scoped grants. Edit human account access in Users. Reseller organizations and Hosting Provider billing remain planned."));
 });
 
-const VOCABULARY = [
-  ["System", "server.manage", "Server, domains, resources, security, backups, and logs."],
-  ["Projects", "projects.list", "List projects visible to the current principal."],
-  ["Project content", "project.content.read", "Read project content surfaces for a scoped project."],
-  ["Project website", "project.website.manage", "Manage the website surface for a scoped project."]
-] as const;
+
 
 export const permissionsScreen = Effect.fn("ui.permissionsScreen")(function*(_context: ScreenContext) {
   return page(
@@ -243,9 +248,11 @@ export const permissionsScreen = Effect.fn("ui.permissionsScreen")(function*(_co
 
 export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(context: ScreenContext) {
   const api = `${context.config.api.basePath}/auth`;
-  const accounts = array(yield* request(`${api}/accounts`)).map(object);
+  const accountPage = yield* readAuthAccounts(context, api);
+  const { accounts } = accountPage;
   const serviceAccounts = array(object(yield* request(`${api}/service-accounts`)).serviceAccounts).map(object);
-  const people = accounts.filter(account => object(account.metadata).principalType !== "service");
+  const people = accounts.filter(account => account.kind === "human");
+  const invitations = yield* invitationsPanel(context);
   const editor = yield* accountAccessEditor(context, accounts);
   const owners = people.filter(account => array(account.roles).includes("owner")).length;
   const status = node("p", { class: "muted", role: "status" });
@@ -275,6 +282,7 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
 
   return page(
     editor ?? flashNotice("Account access"),
+    yield* accountSessionsCard(context, api, accounts),
     columns(3,
       statCard("People", String(people.length), `${owners} owner account${owners === 1 ? "" : "s"}.`),
       statCard("Service accounts", String(serviceAccounts.length), "Scoped machine identities for SDKs, CI, and agents."),
@@ -282,10 +290,14 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
     rowsCard("Platform users", ...people.map(account => dataRow(
       label(account.displayName ?? account.email ?? account.username ?? account.id), label(account.email ?? account.username ?? account.id),
       node("div", { class: "actions" },
-        badge(label(array(account.roles)[0], account.verified === true ? "verified" : "unverified")),
+        badge(label(array(account.roles)[0], "user")),
+        canManageAccounts(context) ? button("Sessions", () => context.setSearch({ accountSessions: label(account.id, "") })) : undefined,
         canEditAccountAccess(context, account)
           ? button("Edit access", () => context.setSearch({ accountAccess: label(account.id, "") }), { "aria-label": `Edit access for ${label(account.displayName ?? account.email ?? account.username ?? account.id)}` })
           : undefined)))),
+    accountPageControls(context, accountPage),
+    invitations,
+    createAccountCard(context, api),
     card("API keys", form, token, status),
     rowsCard("Keys", ...serviceAccounts.map(account => dataRow(
       label(account.displayName ?? account.id), `${label(account.id)} · ${array(account.permissions).length} permissions · ${array(account.grants).length} scoped grants`,
@@ -305,5 +317,6 @@ export const hostScreens = {
   "/server/security": securityScreen,
   "/server/access": accessScreen,
   "/server/access/users": accessUsersScreen,
+  "/server/access/roles": (context: ScreenContext) => rolesScreen(context),
   "/server/access/permissions": permissionsScreen
 } as const satisfies Record<HostPath, (context: ScreenContext) => Effect.Effect<HTMLElement, unknown>>;

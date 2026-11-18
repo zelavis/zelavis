@@ -8,6 +8,7 @@ import {
 } from "../dist/platform/cloud-capacity.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 
+const POLICY = { location: "nbg1", image: "ubuntu-24.04", maxNodes: 2, machineClasses: [{ name: "cpx11", cpuCores: 2, memoryBytes: 2 * 1024 ** 3, diskBytes: 40 * 1024 ** 3 }] };
 const TOKEN = "hcloud_token_0123456789abcdef";
 const run = (effect) => Effect.runPromise(effect);
 const codeOf = async (effect) => {
@@ -20,6 +21,7 @@ function setup() {
   const nodes = new Map();
   const provisioned = [];
   const store = createMemorySystemStore();
+  store.set("fabric.cloud-policy.v1", "default", { schemaVersion: 1, policy: POLICY, updatedAt: 1, updatedBy: "owner" });
   const controller = createCloudCapacityController({
     store, masterSecret: "master-secret-for-tests", platformId: "platform-1", now: () => clock.at,
     buildProvider: () => ({

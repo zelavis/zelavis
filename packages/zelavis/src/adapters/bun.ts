@@ -116,6 +116,16 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           : (yield* integrationValue(createBunSqliteSystemStore({ filename: systemStoreFilename })));
       if (systemStore) stores.add(systemStore);
 
+      // The Platform's identity database (Platform users' Auth data), as on Node: private, no route, not
+      // `core.database`. Bun has no Platform backups host yet, so its default backups directory sits beside it.
+      if (!isProjectRuntime) {
+        nextSubsystems.identityDatabase = {
+          directory: join(dataDirectory, "identity-database", "shards"),
+          nodeId: "local",
+          shards: ["identity-0"],
+        };
+      }
+
       if (databaseOptions !== false) {
         // One store implementation over SQLite. Bun has no `node:sqlite`, so the
         // engine binds `bun:sqlite` there; the file format is the same.

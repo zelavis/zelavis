@@ -49,7 +49,8 @@ life of it: its log starts over, and a cursor from before is refused
 (`CursorFromAnotherLife`) rather than read as a place in the new log.
 
 A transaction is atomic within one Tenant. A batch (`documents.write`) commits
-together or not at all; there is no write that spans Tenants. Work that must
+together or not at all, and a read-decide-write change is a
+[transaction](#transactions); there is no write that spans Tenants. Work that must
 change several Tenants writes each Tenant's part separately, with an
 `idempotencyKey` so a retry is safe.
 
@@ -264,7 +265,7 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   `startStandby`), a Project process on another node owns the lease once promoted and names the writer's node as its own
   standby. Its database opens as a standby (`openNodeDatabase({ lease: { role: "standby", … } })`): it follows the writer
   through the Platform with its follower credential, and is handed out only when the lease has lapsed or been released and
-  the copy holds what the writer's followers acknowledged. Nothing but that database opens before then, because Identity,
+  the copy holds what the writer's followers acknowledged. Nothing but that database opens before then, because Auth,
   Workloads and entities write to the database at start, which would make the copy diverge. Until it is promoted the
   process is up (runtime status `standby`) and answers `503 { "error": "This Project is standing by for its writer." }`;
   after, it composes the Project and serves.
@@ -446,6 +447,43 @@ a reference must read a declared field. Over HTTP the choice is `columns` on
 `POST …/documents/collections` and `POST …/documents/:collection/columns`; on
 the CLI it is `--columns` on `zelavis data create-collection` and
 `zelavis data set-columns`.
+
+## Transactions
+
+`documents.transaction(body, options?)` is a serializable read-decide-write change over one Tenant's
+documents. The body receives `tx` (`get`, `find`, `insert`, `update`, `delete`, `emit`), reads one
+snapshot and stages its writes in memory; nothing reaches the store until it returns. The commit is one
+`documents.write` batch that first re-reads everything the body read, inside the writer's transaction,
+and refuses when any of it changed, a point read's version or a query's ordered list of ids and
+versions, so a concurrent insert that a query missed (a phantom) is caught too. The body then runs
+again.
+
+```ts
+await tenant.documents.transaction(async (tx) => {
+  const found = await tx.find({ collection: "people", where: [{ path: "email", value: "a@x" }], limit: 1 });
+  if (found.length === 0) await tx.insert({ collection: "people", data: { email: "a@x" } });
+});
+```
+
+- Reads inside the body see its own staged writes. `find` answers equality, `in` and range filters with
+  `orderBy` and a `limit`; search, geometry, links, similarity, `related`, `hybrid`, `statistics` and
+  `offset` fail `TransactionTooLarge` (`what: "query"`).
+- The body may run more than once (up to `attempts`, 1 to 8, default 8, with a growing random delay
+  between runs, over at most `deadlineMs`, 100 to 30 000, default 5000), so it must not do anything it
+  cannot repeat. Only a changed read or a failed version check starts another attempt; a failure of the
+  body, `UniqueViolation`, `SchemaViolation` or `CheckViolation` ends the transaction as itself, and the
+  body's own failure commits nothing and appends no event.
+- Exhausting the attempts or the deadline fails `TransactionConflict` (`read-set`, `version` or
+  `deadline`).
+- Bounds: 256 point reads, 256 query reads of 1 to 1000 documents each, 1000 staged writes and 1000
+  emitted messages; past them `TransactionTooLarge` (`point-reads`, `query-reads`, `query-limit`,
+  `writes`, `emits`).
+- A body that stages nothing returns without a commit: its reads came from one snapshot.
+- `emit` records outbox messages in the same batch, so they exist exactly when the writes do.
+- The password hashing or network call a body needs runs inside it but holds no lock: the writer is taken
+  only for the commit.
+- One Tenant only. There is no HTTP, SDK or CLI form: a body is code, and queries and writes that cross
+  the wire are data.
 
 ## Measures and materialized aggregates
 
@@ -1265,7 +1303,7 @@ schedule.recoveryKey; // shown once: keep it off this host
   --recovery-key KEY [RUN]`. The newest finished run unless one is named. The release gate
   `pnpm release:qualify:backups` does this on two disposable machines: a WordPress Project backed up while it serves,
   drilled and restored on its own host, then drilled from the shared target alone on a second, fresh one.
-- **The Platform's own backups.** The Platform backs up its System Store the same way, on its own schedules:
+- **The Platform's own backups.** The Node Platform backs up its System Store, identity database and services database the same way, on its own schedules (one backups host, `<data>/backups`; a run holds the components `system-store`, `identity` and `database`):
   `GET|POST …/runtime/backups/schedules`, `…/runtime/backups/runs`, `…/schedules/:name/run|runs/:runId/verify|restore`
   (`server.backups.manage`, system scope), `client.runtime.backups.*`, `zelavis backups …` and Server → Backups. The
   store is captured as records (JSON lines through its own paging), so it does not depend on the engine behind it.
@@ -1273,7 +1311,26 @@ schedule.recoveryKey; // shown once: keep it off this host
   protected off the host only by its schedule's key. A restored run is applied host-locally with the Platform
   stopped: `zelavis system-store import <restored>/system-store/records.jsonl --confirm import [--replace]`, which
   takes the Platform's data ownership (refused while the Platform runs) and refuses a store that holds records
-  unless told to replace them.
+  unless told to replace them. The **identity database** (`<data>/identity-database/shards`, Platform users' Auth data) is
+  a private `zelavis/db` instance, separate from the System Store and from every Project's database: no route mounts it,
+  `runtime/config` does not report it and services' `core.database` never sees it. Its component is an image of every
+  shard, restored host-locally with the Platform stopped:
+  `zelavis identity-database restore <restored>/identity --confirm restore [--data-dir DIR] [--json]`, which takes the
+  Platform's data ownership (refused while the Platform runs), moves the current database to
+  `identity-database/shards.replaced-<timestamp>` and copies the restored image into place. It is host-local by design,
+  with no HTTP or SDK form: the database being replaced cannot authorize its own replacement.
+  The **services database** (`<data>/services-database/shards`) is separate again: only installed services' setup
+  receives it through `core.database`, using `service:<package name>` Tenants by convention. Services in one process
+  share it; this is not per-service security isolation. Platform features never read it, it has no routes or dashboard,
+  and `runtime/config` still reports no app-facing database. Its image is the `database` component of the same backup
+  run; it opens no separate backups host. Restore it with
+  `zelavis services-database restore <restored>/database --confirm restore [--data-dir DIR] [--json]`.
+  The command validates the image, refuses while the Platform owns the data directory, moves current shards to
+  `services-database/shards.replaced-<UTC timestamp>`, then moves the restored directory into place (consuming it).
+  A failed move rolls the previous shards back. If the process crashes between moves, Platform startup refuses to
+  create an empty database: rerun the same restore command to finish it. All three restore/import commands are
+  host-local; there is no restore route for either private database. On Bun the Platform opens its identity database
+  but runs no Platform backups and opens no services database yet.
 
 | Form | Schedules | Runs |
 |---|---|---|

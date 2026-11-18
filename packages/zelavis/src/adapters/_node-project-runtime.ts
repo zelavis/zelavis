@@ -30,7 +30,7 @@ import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeRuntimeClient } from "./_node-runtime-client.js";
 import { nodeProjectControlPaths } from "./_node-project-control.js";
 import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
-import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
+import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayDispatch, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcess, ZelavisAgentProcessRunner, } from "../core/agent/process-command.js";
 import { ZelavisProjectValidationError } from "../project.js";
@@ -935,7 +935,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             // No running child means nothing to authorize against.
             if (!secret)
                 return undefined;
-            return yield* integration(() => signGatewayAuthority(secret, {
+            return yield* integration(() => signGatewayDispatch(secret, {
                 ...claims,
                 nonce: createGatewayAuthorityNonce(),
                 expiresAt: Date.now() + ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,

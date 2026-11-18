@@ -86,6 +86,31 @@
       </section>
 
       <section class="zv-card zv-stack">
+        <h2>Passkeys</h2>
+        <form id="passkey-form">
+          <label>Relying-party ID <input id="rp-id" required /></label>
+          <label>Relying-party name <input id="rp-name" required /></label>
+          <label>Allowed origins, comma-separated <input id="passkey-origins" required /></label>
+          <div><button class="zv-button" type="submit">Save passkey settings</button></div>
+        </form>
+        <p id="passkey-status" role="status"></p>
+      </section>
+      <section class="zv-card zv-stack">
+        <h2>Multi-factor authentication</h2>
+        <form id="policy-form">
+          <label>Require MFA for
+            <select id="required-for"><option value="none">No accounts</option><option value="privileged">Privileged accounts</option><option value="all">All accounts</option></select>
+          </label>
+          <div><button class="zv-button" type="submit">Save MFA policy</button></div>
+        </form>
+        <p id="policy-status" role="status"></p>
+      </section>
+      <section class="zv-card zv-stack">
+        <h2>Signing keys</h2>
+        <button id="rotate-key" type="button" class="zv-button">Rotate signing key</button>
+        <p id="key-status" role="status"></p>
+      </section>
+      <section class="zv-card zv-stack">
         <div>
           <h2>Auth plugins</h2>
           <p class="zv-muted" id="extensions-hint">Loading…</p>
@@ -98,7 +123,7 @@
       // Four levels up from /runtime/service-page-assets/<service>/<bundle>/<file>
       // is the API root this page was served from.
       const apiRoot = new URL("../../../../", location.href).pathname.replace(/\/$/, "");
-      const OWNER = "zelavis/identity";
+      const OWNER = "zelavis/auth";
 
       const el = (id) => document.getElementById(id);
 
@@ -140,9 +165,10 @@
         }
       }
 
-      registrationEnabled.addEventListener("change", () => {
+      const registrationChanged = () => {
         registrationSave.disabled = !registration || registrationEnabled.checked === registration.enabled;
-      });
+      };
+      registrationEnabled.addEventListener("change", registrationChanged);
       el("registration-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!registration || registrationSave.disabled) return;
@@ -155,7 +181,8 @@
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ enabled: registrationEnabled.checked, expectedRevision: registration.revision }),
           });
-          showRegistration(saved, saved.enabled ? "Registration opened." : "Registration closed.");
+          const notice = saved.enabled ? "Registration opened." : "Registration closed.";
+          showRegistration(saved, notice);
         } catch (cause) {
           registration = undefined;
           const notice = cause.code === "registration_settings_conflict"
@@ -179,33 +206,116 @@
         return span;
       }
 
+      const json = (method, body) => ({
+        method, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+
       async function renderProviders() {
+        const list = el("providers");
+        const status = el("providers-hint");
         try {
-          const status = await api("/auth/bootstrap");
-          el("providers-hint").textContent = status.required
-            ? "This installation has no owner yet."
-            : "How people sign in to this installation.";
-          const list = el("providers");
-          list.replaceChildren();
-          const names = status.providers ?? [];
-          if (names.length === 0) {
-            list.append(text("No sign-in method is available.", "empty"));
-            return;
-          }
+          const [{ methods }, settings] = await Promise.all([api("/auth/methods"), api("/auth/methods/settings")]);
+          const names = new Set([...settings.enabled, ...methods.map(method => method.name)]);
+          const form = document.createElement("form");
+          const save = document.createElement("button");
+          save.className = "zv-button";
+          save.textContent = "Save sign-in methods";
           for (const name of names) {
-            const enrolls = (status.enrollmentProviders ?? []).includes(name);
-            list.append(
-              card([
-                text(name, "name"),
-                text(enrolls ? "creates accounts" : "sign-in only", "tag"),
-              ]),
-            );
+            const label = document.createElement("label");
+            const check = document.createElement("input");
+            check.type = "checkbox";
+            check.name = "method";
+            check.value = name;
+            check.checked = settings.enabled.includes(name);
+            label.append(check, " ", name.replace("oauth:", "OAuth: "));
+            form.append(label);
           }
+          form.append(save);
+          form.addEventListener("submit", async event => {
+            event.preventDefault();
+            save.disabled = true;
+            try {
+              await api("/auth/methods/settings", json("PUT", {
+                enabled: new FormData(form).getAll("method"), expectedRevision: settings.revision,
+              }));
+              await renderProviders();
+              status.textContent = "Sign-in methods saved.";
+            } catch (cause) {
+              if (cause.code === "methods_settings_conflict") await renderProviders();
+              status.textContent = cause.message;
+            } finally {
+              save.disabled = false;
+            }
+          });
+          list.replaceChildren(form);
+          status.textContent = "";
         } catch (cause) {
-          el("providers-hint").textContent = cause.message;
-          el("providers-hint").classList.add("error");
+          status.textContent = cause.message;
         }
       }
+
+      async function renderPolicy() {
+        const status = el("policy-status");
+        const form = el("policy-form");
+        try {
+          const policy = await api("/auth/mfa/policy");
+          el("required-for").value = policy.requiredFor;
+          form.onsubmit = async event => {
+            event.preventDefault();
+            try {
+              await api("/auth/mfa/policy", json("PUT", {
+                requiredFor: el("required-for").value, expectedRevision: policy.revision,
+              }));
+              await renderPolicy();
+              status.textContent = "MFA policy saved.";
+            } catch (cause) {
+              await renderPolicy();
+              status.textContent = cause.message;
+            }
+          };
+        } catch (cause) {
+          status.textContent = cause.message;
+        }
+      }
+
+      async function renderPasskeys() {
+        const status = el("passkey-status");
+        const form = el("passkey-form");
+        try {
+          const settings = await api("/auth/passkeys/settings");
+          el("rp-id").value = settings.rpId;
+          el("rp-name").value = settings.rpName;
+          el("passkey-origins").value = settings.origins.join(", ");
+          form.onsubmit = async event => {
+            event.preventDefault();
+            try {
+              await api("/auth/passkeys/settings", json("PUT", {
+                rpId: el("rp-id").value, rpName: el("rp-name").value,
+                origins: el("passkey-origins").value.split(",").map(value => value.trim()).filter(Boolean),
+              }));
+              await renderPasskeys();
+              status.textContent = "Passkey settings saved.";
+            } catch (cause) {
+              status.textContent = cause.message;
+            }
+          };
+        } catch (cause) {
+          status.textContent = cause.message;
+        }
+      }
+
+      el("rotate-key").addEventListener("click", async () => {
+        const control = el("rotate-key");
+        control.disabled = true;
+        try {
+          await api("/auth/keys/rotate", json("POST", {}));
+          el("key-status").textContent = "Signing key rotated.";
+        } catch (cause) {
+          el("key-status").textContent = cause.message;
+        } finally {
+          control.disabled = false;
+        }
+      });
 
       async function renderConnections() {
         const list = el("connections");
@@ -314,7 +424,7 @@
         }
       });
 
-      await Promise.all([renderProviders(), renderRegistration(), renderConnections(), renderExtensions()]);
+      await Promise.all([renderProviders(), renderRegistration(), renderConnections(), renderExtensions(), renderPolicy(), renderPasskeys()]);
     </script>
   </body>
 </html>

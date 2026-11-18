@@ -1,0 +1,596 @@
+{
+  "repository": "https://github.com/convex/convex-auth",
+  "commit": "a8b5d9a2ebc8b733b510b7c1f46558af6ef21fce",
+  "files": [
+    {
+      "path": "auth/apple/constants.ts",
+      "upstream": "packages/core/src/components/apple/constants.ts",
+      "blob": "b10904aabec07114ff12b263ebb1f53022fc36bd",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/apple/http.ts",
+      "upstream": "packages/core/src/components/apple/http.ts",
+      "blob": "3f6da335279bd0a4d54c2770fb21e77642cab320",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/apple/provider.ts",
+      "upstream": "packages/core/src/components/apple/provider.ts",
+      "blob": "1b51b8e89c37ebad34f5721f966e8ba19319638e",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/apple/secret.ts",
+      "upstream": "packages/core/src/components/apple/secret.ts",
+      "blob": "6a31dbe13eac9c979d292175d6f0e679e51370f0",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/apple/tables.ts",
+      "upstream": "packages/core/src/components/apple/schema.ts",
+      "blob": "4bb0da1b5a7f9718a83dee223e9daae15d0a7e71",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/apple/user.ts",
+      "upstream": "packages/core/src/components/apple/user.ts",
+      "blob": "ceb42e58967e9ed82605f0310a82d83951c4040f",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/cookies.ts",
+      "upstream": "packages/core/src/ssr/cookies.ts",
+      "blob": "02da9b9c2f5af84c4cba7a8e1b4a553e30f7f25b",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/crypto.ts",
+      "upstream": "packages/core/src/component/crypto.ts",
+      "blob": "ef6e1163cf5efbb7897c1a41b370eaf723f6a69a",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/core/expiry.ts",
+      "upstream": "packages/core/src/component/expiry.ts",
+      "blob": "b8d8a85d5a614b68d097befb41fca99dc290bdee",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/core/public.ts",
+      "upstream": "packages/core/src/component/public.ts",
+      "blob": "1b40408c075a65fa381c6b3e973d1c41ed7980a7",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/sessions.ts",
+      "upstream": "packages/core/src/component/sessions.ts",
+      "blob": "8777e5e4c337898c403f01d89273b1e5a6dc1058",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/setup.ts",
+      "upstream": "packages/core/src/server/setup.ts",
+      "blob": "80e284f041048fbcd7870b30ee2db7f270adb852",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/tables.ts",
+      "upstream": "packages/core/src/component/schema.ts",
+      "blob": "7af5b2f1e951667fb4685a67061b3b6c6a63c1a4",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/core/userId.ts",
+      "upstream": "packages/core/src/server/userId.ts",
+      "blob": "5974d6b97da17467f0b5fa10e9d00c826693874d",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/challenge/addEmail.ts",
+      "upstream": "packages/core/src/components/email/challenge/addEmail.ts",
+      "blob": "555ffe137a3a1a5daa11108eb0c75f276e2ee782",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/challenge/changeEmail.ts",
+      "upstream": "packages/core/src/components/email/challenge/changeEmail.ts",
+      "blob": "01a21847ad71863b5e22b6a7d6993bee22555c32",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/challenge/common.ts",
+      "upstream": "packages/core/src/components/email/challenge/common.ts",
+      "blob": "e183df6e2490d46f07e5d7ee0e4807cffa59b644",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/challenge/custom.ts",
+      "upstream": "packages/core/src/components/email/challenge/custom.ts",
+      "blob": "a101ecea00380e2b7ba62e38b555551c2d99ba05",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/challenge/signUp.ts",
+      "upstream": "packages/core/src/components/email/challenge/signUp.ts",
+      "blob": "05a021f29dfc83619f06947ce69ff958b37a0247",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/cleanup.ts",
+      "upstream": "packages/core/src/components/email/cleanup.ts",
+      "blob": "e7b2e1588e555be2d19bf72d3a8a9ab383fadd9d",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/helpers.ts",
+      "upstream": "packages/core/src/components/email/helpers.ts",
+      "blob": "3acb8dc884cb9b1839d10eb90b8a349b32bc1908",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/tables.ts",
+      "upstream": "packages/core/src/components/email/schema.ts",
+      "blob": "f7f7633d20fb9bc602e3b59fc10008f489b3f502",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/validation.ts",
+      "upstream": "packages/core/src/components/email/validation.ts",
+      "blob": "ada8d444c2c5402ab879c3c9e7477ce383a5f57a",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/email/verifiedEmails.ts",
+      "upstream": "packages/core/src/components/email/verifiedEmails.ts",
+      "blob": "2de2e09eaa8cb94a886708e932ba6c362f7510b6",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/github/constants.ts",
+      "upstream": "packages/core/src/components/github/constants.ts",
+      "blob": "eaad5e2d9a0b5afbc72ec153245dfcf351cf0b2c",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/github/http.ts",
+      "upstream": "packages/core/src/components/github/http.ts",
+      "blob": "b20111f403c2ad8ff7c95ee3e7e15cdb71ee5ff7",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/github/provider.ts",
+      "upstream": "packages/core/src/components/github/provider.ts",
+      "blob": "1b51b8e89c37ebad34f5721f966e8ba19319638e",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/github/tables.ts",
+      "upstream": "packages/core/src/components/github/schema.ts",
+      "blob": "4bb0da1b5a7f9718a83dee223e9daae15d0a7e71",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/google/constants.ts",
+      "upstream": "packages/core/src/components/google/constants.ts",
+      "blob": "89ba39d03c60f31ecef20ccd746a51af449ca7a1",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/google/http.ts",
+      "upstream": "packages/core/src/components/google/http.ts",
+      "blob": "5c01bc140cc793f6ab3698b14cefccfbb046d8c4",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/google/provider.ts",
+      "upstream": "packages/core/src/components/google/provider.ts",
+      "blob": "1b51b8e89c37ebad34f5721f966e8ba19319638e",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/google/tables.ts",
+      "upstream": "packages/core/src/components/google/schema.ts",
+      "blob": "4bb0da1b5a7f9718a83dee223e9daae15d0a7e71",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/crypto.ts",
+      "upstream": "packages/core/src/lib/crypto.ts",
+      "blob": "a5fa5a4f8e9cac429998c60cced939900d93c53c",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/authorize.ts",
+      "upstream": "packages/core/src/lib/oauth/authorize.ts",
+      "blob": "61d2c8f9a0161767cefecf2c28f85d79a5bc8bd3",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/callback.ts",
+      "upstream": "packages/core/src/lib/oauth/callback.ts",
+      "blob": "2a00daca99b4a4dbd87a74427a6d236339c07449",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/constants.ts",
+      "upstream": "packages/core/src/lib/oauth/constants.ts",
+      "blob": "3292724aa0f1ec120a6f4672ec729e5ddcd318dc",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/crypto.ts",
+      "upstream": "packages/core/src/lib/oauth/crypto.ts",
+      "blob": "fea4a37ed6959c99d634dc725a4e766dbed2c784",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/dbHelpers.ts",
+      "upstream": "packages/core/src/lib/oauth/dbHelpers.ts",
+      "blob": "8ad2ee01b8244cd0c3051edf340a2b1597a61acc",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/http.ts",
+      "upstream": "packages/core/src/lib/oauth/http.ts",
+      "blob": "211563758763e2577048725b4ac9eb345e3ec6e8",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/providerFunctions.ts",
+      "upstream": "packages/core/src/lib/oauth/providerFunctions.ts",
+      "blob": "75a2ffea3267fa815c71c50b6909b89a33b0525d",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/redemption.ts",
+      "upstream": "packages/core/src/lib/oauth/redemption.ts",
+      "blob": "c2a300f1c828d6416b621aebae3d149dca6c22b8",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauth/schema.ts",
+      "upstream": "packages/core/src/lib/oauth/schema.ts",
+      "blob": "9c5725ee2e2c8ef3031816df482f10b16a009fbc",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/oauthParams.ts",
+      "upstream": "packages/core/src/lib/oauthParams.ts",
+      "blob": "3945272959bebd621f73d81f975aabd8a148264f",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/password.ts",
+      "upstream": "packages/core/src/lib/password.ts",
+      "blob": "69778a35d55a2f940f3aa66a763047af09684b75",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/ttl.ts",
+      "upstream": "packages/core/src/lib/ttl.ts",
+      "blob": "a30cf5645a91a648dc7310bda21fc8c7880806a2",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/lib/types.ts",
+      "upstream": "packages/core/src/lib/types.ts",
+      "blob": "82709430a870b9d0a3c7702003e92d73bb317287",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/apple.ts",
+      "upstream": "packages/core/src/methods/apple/server.ts",
+      "blob": "dc7189e40c80eed4c4327728b2c85044cda47776",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/email-password.ts",
+      "upstream": "packages/core/src/methods/email-password/server.ts",
+      "blob": "885d0c89577c388e647022872933510abee46d3a",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/github.ts",
+      "upstream": "packages/core/src/methods/github/server.ts",
+      "blob": "4e50de1b7484f6d988fc4ea0c32a4b3ea3413ca6",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/google.ts",
+      "upstream": "packages/core/src/methods/google/server.ts",
+      "blob": "c1c738905911f32e41e516abb0af12679347b394",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/oauth.ts",
+      "upstream": "packages/core/src/methods/oauth/server.ts",
+      "blob": "e57314cce03db2a4463a4512e5483ce27f20ebf9",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/username-passkey/aaguids.ts",
+      "upstream": "packages/core/src/methods/username-passkey/aaguids.ts",
+      "blob": "f286e99deb6112cf76df2318a7e4bd95e06689d2",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/methods/username-passkey/base64url.ts",
+      "upstream": "packages/core/src/methods/username-passkey/base64url.ts",
+      "blob": "15d67a31337b5447518a7b3a3cefdcd445077249",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/methods/username-passkey/options.ts",
+      "upstream": "packages/core/src/methods/username-passkey/options.ts",
+      "blob": "2097080cd31eb549fcd46176ddc414c09c8a0627",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/methods/username-passkey/purposes.ts",
+      "upstream": "packages/core/src/methods/username-passkey/purposes.ts",
+      "blob": "62a3bf174e68fb35bf688c6b0ea8705f1f97eae6",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/methods/username-passkey/server.ts",
+      "upstream": "packages/core/src/methods/username-passkey/server.ts",
+      "blob": "4b887b627d9e09b6064de49e213a91754e1d8ca0",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/methods/username-password.ts",
+      "upstream": "packages/core/src/methods/username-password/server.ts",
+      "blob": "baadb028c19ab95c0ce5adf1650d56a2acdffb6f",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/oauth/provider.ts",
+      "upstream": "packages/core/src/components/oauth/provider.ts",
+      "blob": "abe1597cd044f752c68ecac661b5ed894e80527d",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/oauth/tables.ts",
+      "upstream": "packages/core/src/components/oauth/schema.ts",
+      "blob": "ee4ca6b00a06a96a2a80253a53376a588f5668d8",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/authentication.ts",
+      "upstream": "packages/core/src/components/passkey/authentication.ts",
+      "blob": "e8dc3160a39423b9b5e5511f712ab458d0ab65d6",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/cleanup.ts",
+      "upstream": "packages/core/src/components/passkey/cleanup.ts",
+      "blob": "ff3c15174bef3e4346b14b71c4deb726e2c6182b",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/constants.ts",
+      "upstream": "packages/core/src/components/passkey/constants.ts",
+      "blob": "ef58eb6393c32afd6c3205e5a5e685adcdc12211",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/passkey/helpers.ts",
+      "upstream": "packages/core/src/components/passkey/helpers.ts",
+      "blob": "abf9da01c1098df012f33fc1d9887ef9c907a974",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/registration.ts",
+      "upstream": "packages/core/src/components/passkey/registration.ts",
+      "blob": "2d1347bb189264e6ed25f9e576515c56c16b6f78",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/tables.ts",
+      "upstream": "packages/core/src/components/passkey/schema.ts",
+      "blob": "76540c0413e0b5fbb4cc9d71e4a49402a63a2700",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/passkey/validation.ts",
+      "upstream": "packages/core/src/components/passkey/validation.ts",
+      "blob": "1b1072b8fd12fa50c794f9d645817567f7c063fa",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/password/commonPasswords.generated.ts",
+      "upstream": "packages/core/src/components/password/commonPasswords.generated.ts",
+      "blob": "91acd1b4c465d822a1fa9d0f506be4fbe09c4b46",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/password/commonPasswords.ts",
+      "upstream": "packages/core/src/components/password/commonPasswords.ts",
+      "blob": "76cd8ad408ad48779d9ab463994a9bf652b45a06",
+      "kind": "copied"
+    },
+    {
+      "path": "auth/password/public.ts",
+      "upstream": "packages/core/src/components/password/public.ts",
+      "blob": "618c1bca4f9b9ae3f3b9976d730ace04c5fe0a37",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/password/tables.ts",
+      "upstream": "packages/core/src/components/password/schema.ts",
+      "blob": "2e91804a267728a23ba4b2891b8bc9929f764e4e",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/password/validation.ts",
+      "upstream": "packages/core/src/components/password/validation.ts",
+      "blob": "a40308b5ad12e6d4f447e5c0b467c1be8d27517d",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/backupCodes.ts",
+      "upstream": "packages/core/src/components/totp/backupCodes.ts",
+      "blob": "d71c57a45abf0b6523189ef59db04bb037085441",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/enrollment.ts",
+      "upstream": "packages/core/src/components/totp/enrollment.ts",
+      "blob": "373d7ae6f27d58c75c82eaabd79e7e9bb1046ffa",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/helpers.ts",
+      "upstream": "packages/core/src/components/totp/helpers.ts",
+      "blob": "0597d43f6ed700a302424da291bc3db43db7c37a",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/tables.ts",
+      "upstream": "packages/core/src/components/totp/schema.ts",
+      "blob": "5e373529622b223aa7df63e7b8df6db85e3177d6",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/totp.ts",
+      "upstream": "packages/core/src/components/totp/totp.ts",
+      "blob": "86d9548cc035d555b905c72df3e902935879fcde",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/totp/validation.ts",
+      "upstream": "packages/core/src/components/totp/validation.ts",
+      "blob": "8babe6db4e2a61c1462af09b8e898a9a42557931",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/username/public.ts",
+      "upstream": "packages/core/src/components/username/public.ts",
+      "blob": "faea70d0d4cd441015b8ec008fcf6b12d831c6fd",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/username/tables.ts",
+      "upstream": "packages/core/src/components/username/schema.ts",
+      "blob": "fcba6937271b3c5a9c773e8393a33851ffd85715",
+      "kind": "translated"
+    },
+    {
+      "path": "auth/username/validation.ts",
+      "upstream": "packages/core/src/components/username/validation.ts",
+      "blob": "a1838312d1e3c4c6a33e92db0960e132065e374f",
+      "kind": "translated"
+    },
+    {
+      "path": "sdk/auth-oauth.ts",
+      "upstream": "packages/core/src/methods/oauth/client.ts",
+      "blob": "d95e749f77f45dfbeca9c9e71567500a6ed5aa55",
+      "kind": "translated"
+    },
+    {
+      "path": "sdk/auth-passkeys.ts",
+      "upstream": "packages/core/src/methods/username-passkey/client.ts",
+      "blob": "dad2d8cf1e662800bdb46517f993f9b9eb2d15ee",
+      "kind": "translated",
+      "additionalSources": [
+        {
+          "upstream": "packages/core/src/methods/username-passkey/ceremonies.ts",
+          "blob": "f2d19d3f037acb38c638d09970e5a185ed8a41fd"
+        }
+      ]
+    },
+    {
+      "path": "sdk/auth-session.ts",
+      "upstream": "packages/core/src/browser/sessionManager.ts",
+      "blob": "f6696cc5665a7196c8d4dba39c720e9a05bd7070",
+      "kind": "translated",
+      "additionalSources": [
+        {
+          "upstream": "packages/core/src/browser/storage.ts",
+          "blob": "9d8c5891a12b9f17579d416b23bd8b1b8bf21e37"
+        },
+        {
+          "upstream": "packages/core/src/browser/mutex.ts",
+          "blob": "c7d3a1642e87fe78a6ad127ce65b3956216b98a3"
+        }
+      ]
+    },
+    {
+      "path": "test/fixtures/passkey-authenticator/bytes.ts",
+      "upstream": "packages/passkey-test-authenticator/src/bytes.ts",
+      "blob": "ee5e038d04d78d3df7583fc1c91a1bc0a725cc85",
+      "kind": "copied"
+    },
+    {
+      "path": "test/fixtures/passkey-authenticator/cbor.ts",
+      "upstream": "packages/passkey-test-authenticator/src/cbor.ts",
+      "blob": "faafc34902305e5829c5f5418004f4b77ca1edce",
+      "kind": "copied"
+    },
+    {
+      "path": "test/fixtures/passkey-authenticator/index.ts",
+      "upstream": "packages/passkey-test-authenticator/src/index.ts",
+      "blob": "91f543ab1884f569b41fcc442522885030ab3a0f",
+      "kind": "copied"
+    }
+  ],
+  "omitted": [
+    {
+      "upstream": "packages/core/src/react",
+      "reason": "React hooks; Zelavis uses the SDK"
+    },
+    {
+      "upstream": "packages/core/src/ssr/nextjs",
+      "reason": "Next.js binding; Zelavis serves its own cookies"
+    },
+    {
+      "upstream": "packages/core/src/methods/*/react*",
+      "reason": "React method clients; Zelavis uses the SDK"
+    },
+    {
+      "upstream": "packages/core/src/components/anonymous",
+      "reason": "anonymous sign-in is unexported upstream and unused in Zelavis"
+    },
+    {
+      "upstream": "packages/core/src/methods/anonymous",
+      "reason": "anonymous sign-in is unexported upstream and unused in Zelavis"
+    },
+    {
+      "upstream": "packages/core/src/**/_generated",
+      "reason": "Convex codegen; Zelavis uses Effect Schema and hand-written contracts"
+    },
+    {
+      "upstream": "packages/core/src/**/convex.config.ts",
+      "reason": "Convex component wiring (rate limiter, batch worker, Resend); replaced by the Auth module runtime"
+    },
+    {
+      "upstream": "packages/core/src/server/authProvider.ts",
+      "reason": "Convex auth provider configuration; replaced by the Zelavis authenticator"
+    },
+    {
+      "upstream": "packages/core/src/wasm.d.ts",
+      "reason": "password-hash-wasm types; Zelavis keeps PBKDF2-SHA256"
+    },
+    {
+      "upstream": "packages/core/src/testing",
+      "reason": "convex-test harness; Zelavis tests use test/_auth.mjs"
+    },
+    {
+      "upstream": "packages/core/src/**/*.fixture.ts",
+      "reason": "convex-test fixtures; Zelavis tests use test/_auth.mjs"
+    },
+    {
+      "upstream": "packages/core/src/components/*TestSetup.ts",
+      "reason": "convex-test setup; Zelavis tests use test/_auth.mjs"
+    },
+    {
+      "upstream": "packages/core/src/browser/keyedStore.ts",
+      "reason": "Zelavis browser flows pass results to their initiating page, without a framework-specific subscription store."
+    },
+    {
+      "upstream": "packages/core/src/browser/retry.ts",
+      "reason": "Zelavis single-use refresh and redemption requests cannot be retried on an ambiguous network failure."
+    }
+  ]
+}

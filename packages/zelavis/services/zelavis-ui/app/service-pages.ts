@@ -64,8 +64,17 @@ export function resolveBrokeredPath(path: unknown, grant: BrokerGrant): string |
   return result.pathname.startsWith(`${base}/`) ? result.pathname + result.search : undefined;
 }
 
+function externalServiceLink(value: unknown): URL | undefined {
+  const url = object(value).url;
+  if (typeof url !== "string" || url.length > 2048 || /[\\\u0000-\u0020]/u.test(url) || !URL.canParse(url)) return undefined;
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password || !(parsed.protocol === "https:" ||
+      parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))) return undefined;
+  return parsed;
+}
+
 /** Scoped listener, bounded requests and no credentials or redirects passed to the frame. */
-export const installServiceBroker = Effect.fn("new-ui.installServiceBroker")(function*(frame: HTMLIFrameElement, grant: BrokerGrant) {
+export const installServiceBroker = Effect.fn("new-ui.installServiceBroker")(function*(frame: HTMLIFrameElement, grant: BrokerGrant, external?: { offer: (url: URL) => void; clear: () => void }) {
   const owner = frame.ownerDocument.defaultView!;
   const requests = new Map<string, Fiber.Fiber<void, never>>();
   const reply = (source: Window, id: string, payload: Record<string, unknown>) => {
@@ -76,7 +85,7 @@ export const installServiceBroker = Effect.fn("new-ui.installServiceBroker")(fun
   const onLoad = () => {
     if (initialLoad) { initialLoad = false; return; }
     // A different document must not inherit the old page's grant through WindowProxy.
-    owner.removeEventListener("message", onMessage); interrupt();
+    owner.removeEventListener("message", onMessage); interrupt(); external?.clear();
     frame.insertAdjacentElement("beforebegin", message("This service page navigated. Refresh the dashboard to reopen its scoped API access."));
   };
   const onMessage = (event: MessageEvent) => {
@@ -95,13 +104,17 @@ export const installServiceBroker = Effect.fn("new-ui.installServiceBroker")(fun
       if (method === "GET" && body !== undefined) return yield* Effect.fail(new ApiError({ message: "GET requests cannot contain a body." }));
       const response = yield* Effect.tryPromise({ try: signal => fetch(path, { signal, method, body, redirect: "error", credentials: "same-origin", headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) } }), catch: () => new ApiError({ message: "Service request failed." }) });
       const value = yield* readBrokerBody(response);
+      if (external && frame.isConnected && response.ok && method === "POST" && data.offerExternalLink === true) {
+        const url = externalServiceLink(value);
+        if (url) external.offer(url);
+      }
       reply(source, id, { status: response.status, ok: response.ok, body: value });
     }).pipe(Effect.timeout("30 seconds"), Effect.catchCause(cause => Effect.sync(() => { reply(source, id, { error: "Service request failed or timed out." }); console.warn("Service page request failed", cause); })), Effect.ensuring(Effect.sync(() => requests.delete(id))));
     const fiber = Effect.runFork(work);
     if (!fiber.pollUnsafe()) requests.set(id, fiber);
   };
   yield* Effect.acquireRelease(Effect.sync(() => { owner.addEventListener("message", onMessage); frame.addEventListener("load", onLoad); }), () => Effect.gen(function*() {
-    owner.removeEventListener("message", onMessage); frame.removeEventListener("load", onLoad);
+    owner.removeEventListener("message", onMessage); frame.removeEventListener("load", onLoad); external?.clear();
     const fibers = [...requests.values()]; requests.clear();
     yield* Effect.forEach(fibers, fiber => Fiber.interrupt(fiber), { concurrency: 8, discard: true });
   }));
@@ -163,6 +176,30 @@ export const servicePageScreen = Effect.fn("new-ui.servicePageScreen")(function*
     observer.disconnect();
     frame.removeEventListener("load", publishTheme);
   }));
-  if (!page.trusted && page.apiPath) yield* installServiceBroker(frame, { serviceName: page.serviceName, apiPath: page.apiPath });
-  return node("section", { class: "service-page" }, frame);
+  const section = node("section", { class: "service-page" }, frame);
+  if (!page.trusted && page.apiPath) {
+    const title = node("h2", { id: "service-link-title" }, "Open external link");
+    const detail = node("p", {});
+    const link = node("a", { class: "button primary", target: "_blank", rel: "noopener noreferrer" });
+    const cancel = node("button", { class: "button", type: "button" }, "Cancel");
+    const dialog = node("dialog", { class: "service-link-dialog panel", "aria-labelledby": "service-link-title" },
+      title, detail, node("div", { class: "row" }, cancel, link));
+    section.append(dialog);
+    const clear = () => {
+      if (dialog.open) dialog.close();
+      link.removeAttribute("href");
+    };
+    cancel.addEventListener("click", clear);
+    link.addEventListener("click", () => dialog.close());
+    yield* installServiceBroker(frame, { serviceName: page.serviceName, apiPath: page.apiPath }, {
+      clear,
+      offer(url) {
+        detail.textContent = `${page.title} provided a link to ${url.host}. It opens in a new tab.`;
+        link.textContent = `Open ${url.host}`;
+        link.href = url.href;
+        if (!dialog.open && dialog.isConnected) dialog.showModal();
+      },
+    });
+  }
+  return section;
 });

@@ -160,7 +160,7 @@ what it does not:
   validated arguments, not from the model's words, and the change is pinned to
   the exact target (a Project recreated under the same name is refused).
 - **Data reaching the provider is bounded.** The database tools read one fixed
-  tenant, never the identity records that live beside it, at most 20 records at
+  tenant, never the Auth partition that lives beside it, at most 20 records at
   a time, and every result has credential-shaped values removed. That removal is
   defense in depth, not a boundary.
 - **Model output cannot phone home.** The dashboard never loads an image a reply

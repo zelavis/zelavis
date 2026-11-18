@@ -379,3 +379,32 @@ For possible alternatives:
 - [Service Authoring](../guides/service-authoring.md)
 - [Adapter Entry Points](../adapters/entry-points.md)
 - [Marketplace](../adapters/index.md)
+
+## Service principals and lifecycle
+
+An extension can request Platform authority through `zelavis.principal.permissions`
+in its manifest. Installation remains under `system.services.manage`, and the
+operator can approve only permissions within their own authority. All install
+transports enforce exact set approval; updates requesting additional permissions
+require new approval. See [service authoring](../guides/service-authoring.md) for
+HTTP, SDK and CLI examples.
+
+The Platform creates one real Zelavis Auth service account per package, keyed by
+an Auth ownership row rather than a display name. Account creation, delegation,
+token rotation and the security event commit in one Auth transaction. The Platform
+seals the token in its System Store, bound to the package and installation master
+secret. Neither installation responses nor service setup expose it.
+
+Platform services receive `core.fetch`, which uses that account or an anonymous
+principal and discards caller-supplied credentials. It consumes its internal token
+before dispatch, leaving endpoint code only the resolved principal. Failed sealing,
+registry mutation or activation revokes a newly granted account; retry requires
+approval again. Project runtimes have no
+Platform authority to delegate: principal installation returns
+`principal_unsupported` and their setup context offers no fetch.
+
+Disabling a service revokes its tokens, deletes its owned account and sealed record,
+and requires new approval on reinstall. An installed service's capability owners
+are reverse dependencies: disabling an owner fails until its extenders are disabled.
+These accounts confer explicit API authority; they do not sandbox executable plugin
+code or raise a package to system scope.

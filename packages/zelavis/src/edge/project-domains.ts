@@ -1,10 +1,11 @@
 import { Data, Effect, Schema, Semaphore } from "effect";
-import { evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { describeFailure, evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { generateVerificationToken } from "../domain-binding.js";
 import { checkDomainBindingDnsProof, domainBindingDnsChallengeName, DnsTxtProofMissing, type DnsTxtResolver } from "../domain-verifier.js";
 import { isCanonicalProjectId, ZelavisProjectConflictError, ZelavisProjectNotFoundError, type ZelavisProjectManager } from "../project.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 import type { ZelavisCertificateController } from "./certificates.js";
+import { EdgeDnsError, hostedRecordsFor, type EdgeDnsAccess } from "./dns-connections.js";
 import type { ZelavisEdgeManager } from "./index.js";
 import { projectDomainRouteId, toPublicationSummary, type ProjectHostnameOwner, type ZelavisEdgeRouteStore } from "./routes.js";
 
@@ -43,6 +44,15 @@ export function normalizeProjectDomainHostname(raw: string): string | undefined 
 }
 
 const tlsMode = Schema.Literals(["external", "managed"]);
+const dnsMode = Schema.Literals(["manual", "automatic"]);
+const MAX_DNS_RECORDS = 4;
+const storedRecord = Schema.Struct({
+  provider: Schema.String.check(Schema.isMaxLength(32)),
+  zoneId: Schema.String.check(Schema.isMaxLength(128)),
+  recordId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  type: Schema.Literals(["A", "AAAA", "CNAME"]),
+  content: Schema.String.check(Schema.isMaxLength(253)),
+});
 const state = Schema.Literals(["pending_dns", "verified", "publishing", "active", "removing"]);
 const issue = Schema.Literals(["dns_pending", "dns_unavailable", "edge_unavailable", "certificate_pending", "publication_pending"]);
 const timestamp = Schema.String.check(Schema.makeFilter(value => {
@@ -65,7 +75,12 @@ const storedEntry = Schema.Struct({
   publicationRevision: Schema.optionalKey(Schema.Natural),
   stagedRoute: Schema.optionalKey(Schema.Literal(true)),
   issue: Schema.optionalKey(issue),
+  /** Absent is manual: the customer proves the hostname with a TXT record. Automatic is a hosted subdomain. */
+  dns: Schema.optionalKey(dnsMode),
+  dnsRecords: Schema.optionalKey(Schema.Array(storedRecord).check(Schema.isMaxLength(MAX_DNS_RECORDS))),
 }).check(Schema.makeFilter(entry => {
+  if (entry.dns === "automatic" && (entry.tlsMode !== "managed" || entry.state === "pending_dns" || entry.challengeToken)) return false;
+  if (entry.dns !== "automatic" && entry.dnsRecords) return false;
   if (entry.state === "pending_dns") return Boolean(entry.challengeToken && entry.challengeExpiresAt && !entry.verifiedAt);
   if (entry.state === "removing") return true;
   return Boolean(entry.verifiedAt && (entry.state !== "active" || entry.activatedAt));
@@ -85,6 +100,8 @@ type StoredDomain = typeof storedEntry.Type;
 export const AddProjectDomainSchema = Schema.Struct({
   hostname: Schema.String.check(Schema.isMaxLength(254)),
   tlsMode,
+  /** `automatic`: a subdomain one label below an operator zone that allows hosted subdomains; managed TLS only. */
+  dns: Schema.optionalKey(dnsMode),
 });
 export const VerifyProjectDomainSchema = Schema.Struct({ expectedRevision: Schema.Natural });
 export const decodeAddProjectDomain = Schema.decodeUnknownSync(AddProjectDomainSchema, strict);
@@ -93,12 +110,14 @@ export type AddProjectDomainInput = typeof AddProjectDomainSchema.Type;
 export type VerifyProjectDomainInput = typeof VerifyProjectDomainSchema.Type;
 export type ProjectDomainTlsMode = typeof tlsMode.Type;
 export type ProjectDomainState = typeof state.Type;
+export type ProjectDomainDnsMode = typeof dnsMode.Type;
 
 export interface ProjectDomain {
   readonly id: string;
   readonly projectId: string;
   readonly hostname: string;
   readonly tlsMode: ProjectDomainTlsMode;
+  readonly dns: ProjectDomainDnsMode;
   readonly state: ProjectDomainState;
   readonly revision: number;
   readonly verifiedAt?: string;
@@ -107,6 +126,7 @@ export interface ProjectDomain {
   readonly issue?: typeof issue.Type;
 }
 export interface ProjectDomainList { readonly domains: readonly ProjectDomain[] }
+export interface ProjectHostedZones { readonly zones: readonly { readonly apex: string }[] }
 export interface RemoveProjectDomainResult { readonly removed: boolean; readonly pending: boolean }
 
 /** Configured by the Platform host. The public request cannot set an ingress target. */
@@ -120,7 +140,8 @@ export interface ProjectDomainIngress {
 
 type DomainErrorCode = "invalid_hostname" | "invalid_domain_request" | "domain_not_found" |
   "hostname_unavailable" | "domain_revision_conflict" | "project_deleting" |
-  "dns_not_verified" | "domain_limit" | "domain_verification_busy" | "domain_ingress_unavailable";
+  "dns_not_verified" | "domain_limit" | "domain_verification_busy" | "domain_ingress_unavailable" | "hosted_zone_unavailable" |
+  "dns_provider_failed";
 
 export class ProjectDomainError extends Data.TaggedError("ProjectDomainError")<{
   readonly code: DomainErrorCode;
@@ -137,7 +158,7 @@ const unavailable = () => failure("hostname_unavailable", "This hostname is unav
 function presentDomain(projectId: string, entry: StoredDomain): ProjectDomain {
   const { id, hostname, tlsMode, state, revision, verifiedAt, issue, challengeToken, challengeExpiresAt } = entry;
   return {
-    id, projectId, hostname, tlsMode, state, revision,
+    id, projectId, hostname, tlsMode, dns: entry.dns ?? "manual", state, revision,
     ...(verifiedAt ? { verifiedAt } : {}),
     ...(state === "active" ? { publicUrl: `https://${hostname}/` } : {}),
     ...(state === "pending_dns" && challengeToken && challengeExpiresAt ? {
@@ -152,6 +173,8 @@ export interface ProjectDomainController {
   add(projectId: string, input: AddProjectDomainInput): Promise<{ domain: ProjectDomain; created: boolean }>;
   verify(projectId: string, hostname: string, input: VerifyProjectDomainInput): Promise<ProjectDomain>;
   remove(projectId: string, hostname: string, expectedRevision: number): Promise<RemoveProjectDomainResult>;
+  /** The operator zones a customer may take a hosted subdomain under. */
+  hostedZones(projectId: string): Promise<ProjectHostedZones>;
   /** Called by the deletion participant that already holds the Project lifecycle permit. */
   cleanup(projectId: string): Effect.Effect<void, TaggedFailure>;
 }
@@ -163,9 +186,11 @@ export function createProjectDomainController(options: {
   ingress?: ProjectDomainIngress;
   manager?: ZelavisEdgeManager;
   certificates?: ZelavisCertificateController;
+  /** Operator DNS zones: hosted subdomains and their address records. */
+  dns?: EdgeDnsAccess;
   now?: () => number;
 }): ProjectDomainController {
-  const { store, routes, manager, ingress, certificates } = options;
+  const { store, routes, manager, ingress, certificates, dns } = options;
   const now = options.now ?? Date.now;
   const time = () => new Date(now()).toISOString();
   const dnsPermits = Semaphore.makeUnsafe(4);
@@ -229,10 +254,69 @@ export function createProjectDomainController(options: {
   });
   const pending = (entry: StoredDomain) => entry.state === "pending_dns";
   const expired = (entry: StoredDomain) => Date.parse(entry.challengeExpiresAt ?? "") <= now();
+  const automatic = (entry: StoredDomain) => entry.dns === "automatic";
+  const fromDns = (error: unknown) => {
+    if (!(error instanceof EdgeDnsError)) return error as TaggedFailure;
+    if (error.code === "hosted_zone_unavailable" || error.code === "dns_zone_not_found") return failure("hosted_zone_unavailable", error.message);
+    if (error.code === "dns_provider_failed" || error.code === "dns_provider_unavailable" || error.code === "invalid_dns_connection") {
+      return failure("dns_provider_failed", error.message);
+    }
+    return failure("domain_ingress_unavailable", error.message);
+  };
+  const hostedZone = Effect.fn("ProjectDomains.hostedZone")(function* (hostname: string) {
+    if (!dns) return yield* failure("hosted_zone_unavailable", "This installation offers no hosted subdomains.");
+    const zone = yield* dns.hostedZoneFor(hostname).pipe(Effect.mapError(fromDns));
+    if (!zone) return yield* failure("hosted_zone_unavailable", "Choose a name one label below a zone this installation offers.");
+    return zone;
+  });
+
+  /** Creates the zone's address records for a hosted subdomain, each id persisted on the entry as it is made. */
+  const ensureRecords = Effect.fn("ProjectDomains.ensureRecords")(function* (projectId: string, entry: StoredDomain) {
+    if (!automatic(entry)) return entry;
+    const zone = yield* hostedZone(entry.hostname);
+    let latest = entry;
+    for (const target of hostedRecordsFor(zone)) {
+      if ((latest.dnsRecords ?? []).some(row => row.provider === zone.provider && row.zoneId === zone.zoneId &&
+          row.type === target.type && row.content === target.content)) continue;
+      if ((latest.dnsRecords?.length ?? 0) >= MAX_DNS_RECORDS) return yield* failure("domain_ingress_unavailable", "The hosted subdomain holds its record limit.");
+      const record = { name: entry.hostname, type: target.type, content: target.content, ttl: 300 };
+      // A record made by an attempt that stopped before recording its id is taken over rather than duplicated.
+      const found = yield* dns!.findRecord(zone, record).pipe(Effect.mapError(fromDns));
+      const ref = found ?? (yield* dns!.createRecord(zone, record).pipe(Effect.mapError(fromDns)));
+      latest = yield* live(projectId, Effect.gen(function* () {
+        const snapshot = yield* current(projectId, latest.hostname, latest.revision);
+        return yield* replace(projectId, snapshot, { dnsRecords: [...(snapshot.entry.dnsRecords ?? []),
+          { provider: ref.provider, zoneId: ref.zoneId, recordId: ref.recordId, type: target.type, content: target.content }] });
+      }));
+    }
+    return latest;
+  });
+
+  /** Removes exactly the records Zelavis made for a hosted subdomain: by persisted id, then any it made without one. */
+  const releaseRecords = Effect.fn("ProjectDomains.releaseRecords")(function* (entry: StoredDomain) {
+    if (!automatic(entry)) return;
+    if (!dns) return yield* failure("domain_ingress_unavailable", "DNS automation is unavailable; the hosted subdomain's records cannot be removed.");
+    const apex = entry.hostname.slice(entry.hostname.indexOf(".") + 1);
+    for (const ref of entry.dnsRecords ?? []) yield* dns.removeRecord(ref, apex).pipe(Effect.mapError(fromDns));
+    const zone = yield* dns.hostedZoneFor(entry.hostname).pipe(Effect.mapError(fromDns));
+    if (!zone) return;
+    for (const target of hostedRecordsFor(zone)) {
+      yield* dns.removeMatching(zone, { name: entry.hostname, type: target.type, content: target.content }).pipe(Effect.mapError(fromDns));
+    }
+  });
 
   const prove = Effect.fn("ProjectDomains.prove")(function* (projectId: string, entry: StoredDomain) {
     const owner = ownerFor(projectId, entry);
     if (yield* owned(owner)) return entry;
+    if (automatic(entry)) {
+      // The operator's zone owns a hosted subdomain: there is no TXT to prove, only the zone to still offer it.
+      yield* hostedZone(entry.hostname);
+      return yield* live(projectId, Effect.gen(function* () {
+        const { entry: latest } = yield* current(projectId, entry.hostname, entry.revision);
+        if (!(yield* integration(() => routes.claimProjectHostname(owner, latest.verifiedAt!)))) return yield* unavailable();
+        return latest;
+      }));
+    }
     if (entry.verifiedAt && now() - Date.parse(entry.verifiedAt) < PROOF_MS) {
       return yield* live(projectId, Effect.gen(function* () {
         const { entry: latest } = yield* current(projectId, entry.hostname, entry.revision);
@@ -260,7 +344,8 @@ export function createProjectDomainController(options: {
           const cause = error?.cause;
           const dnsCode = cause instanceof Error && typeof cause.cause === "object" && cause.cause !== null && "code" in cause.cause
             ? cause.cause.code : undefined;
-          const missingTxt = error instanceof DnsTxtProofMissing || dnsCode === "ENODATA" || dnsCode === "ENOTFOUND";
+          // A missing record (or one published as a CNAME) is the customer's to fix; anything else is DNS not answering.
+          const missingTxt = error instanceof DnsTxtProofMissing || dnsCode === "ENODATA" || dnsCode === "ENOTFOUND" || dnsCode === "ECNAME";
           yield* replace(projectId, snapshot, { issue: missingTxt ? "dns_pending" : "dns_unavailable" });
           return yield* failure("dns_not_verified", missingTxt
             ? "The TXT record does not contain the current challenge."
@@ -350,8 +435,9 @@ export function createProjectDomainController(options: {
           adapter.detection.healthy && adapter.capabilities.includes("https") && adapter.capabilities.includes("certificate-hot-reload"))) {
         return yield* note(projectId, entry, "edge_unavailable");
       }
-      const ready = yield* integration(() => ingress!.preflight!(entry.hostname), { interruptible: true }).pipe(
-        Effect.timeout("5 seconds"), Effect.catch(() => Effect.succeed(false)));
+      // A hosted subdomain is issued under its zone's wildcard through DNS-01, so it needs no HTTP reachability first.
+      const ready = automatic(entry) || (yield* integration(() => ingress!.preflight!(entry.hostname), { interruptible: true }).pipe(
+        Effect.timeout("5 seconds"), Effect.catch(() => Effect.succeed(false))));
       if (!ready) return yield* note(projectId, entry, "certificate_pending");
       const reserve = live(projectId, Effect.gen(function* () {
         yield* current(projectId, entry.hostname, entry.revision);
@@ -364,6 +450,17 @@ export function createProjectDomainController(options: {
       const ordered = yield* certificatePermits.withPermitsIfAvailable(1)(Effect.acquireUseRelease(
         reserve,
         order => Effect.result(Effect.gen(function* () {
+          if (automatic(entry)) {
+            const zone = yield* hostedZone(entry.hostname);
+            const wildcard = `*.${zone.apex}`;
+            const existing = yield* integration(() => certificates!.getCertificate(zone.wildcardCertificateRef ?? `certificate:${wildcard}`));
+            if (existing?.hostname === wildcard && existing.status === "valid" && Date.parse(existing.expiresAt) > now()) return existing;
+            const ordered = yield* integration(() => certificates!.orderCertificate({
+              hostname: wildcard, challenge: "dns-01", signal: AbortSignal.any([order.signal, AbortSignal.timeout(300_000)]),
+            }));
+            yield* dns!.setWildcardCertificate(zone.apex, ordered.ref).pipe(Effect.mapError(fromDns));
+            return ordered;
+          }
           const ref = `certificate:${entry.hostname}`;
           const existing = yield* integration(() => certificates!.getCertificate(ref));
           if (existing?.hostname === entry.hostname && existing.status === "valid" && Date.parse(existing.expiresAt) > now()) return existing;
@@ -444,11 +541,67 @@ export function createProjectDomainController(options: {
           yield* integration(() => certificates.retireProjectCertificate(ref, entry.id));
         }
       }
+      yield* releaseRecords(entry);
       if (!(yield* integration(() => routes.releaseProjectHostname(owner)))) return yield* conflict();
+    } else {
+      yield* releaseRecords(entry);
     }
     yield* save(projectId, observed, observed.entries.filter(row => row.id !== entry.id));
     return true;
   });
+
+  /** Proof, address records, then activation: the step `verify` retries until the domain is active. */
+  const settle = Effect.fn("ProjectDomains.settle")(function* (projectId: string, entry: StoredDomain) {
+    if (entry.state === "removing") return yield* conflict();
+    if (entry.state === "active") {
+      if ((yield* owned(ownerFor(projectId, entry)))?.projectDomain?.routing !== "active") return yield* conflict();
+      return entry;
+    }
+    const verified = yield* prove(projectId, entry);
+    const addressed = yield* ensureRecords(projectId, verified);
+    const activation = yield* activationPermits.withPermitsIfAvailable(1)(activate(projectId, addressed));
+    if (activation._tag === "None") return yield* failure("domain_verification_busy", "Ingress activation is busy. Try again shortly.", 5);
+    return activation.value;
+  });
+
+  /** A hosted subdomain: claimed at once (the operator's zone owns it), addressed, and activated under the zone's wildcard. */
+  const addHosted = (projectId: string, input: AddProjectDomainInput) => present(Effect.gen(function* () {
+    const hostname = yield* normalize(input.hostname);
+    if (input.tlsMode !== "managed") return yield* failure("hosted_zone_unavailable", "A hosted subdomain uses managed TLS.");
+    yield* hostedZone(hostname);
+    const added = yield* live(projectId, Effect.gen(function* () {
+      const observed = yield* read(projectId);
+      const previous = observed.entries.find(entry => entry.hostname === hostname);
+      const claimed = yield* integration(() => routes.getHostname(hostname));
+      if (claimed && !(previous && claimed.projectId === projectId && claimed.projectDomain?.domainId === previous.id)) return yield* unavailable();
+      if (previous) {
+        if (!automatic(previous) || previous.state === "removing") return yield* conflict();
+        return { entry: previous, created: false };
+      }
+      const entries = observed.entries.filter(row => !(pending(row) && expired(row)));
+      if (entries.length >= MAX_DOMAINS) return yield* failure("domain_limit", "This Project already has 20 domains.");
+      if (observed.revision >= Number.MAX_SAFE_INTEGER) return yield* conflict();
+      const verifiedAt = time();
+      const entry: StoredDomain = {
+        id: crypto.randomUUID(), hostname, tlsMode: "managed", dns: "automatic", state: "verified", verifiedAt,
+        revision: observed.revision + 1, createdAt: verifiedAt, updatedAt: verifiedAt, issue: "publication_pending",
+      };
+      yield* save(projectId, observed, [...entries, entry]);
+      if (!(yield* integration(() => routes.claimProjectHostname(ownerFor(projectId, entry), verifiedAt)))) {
+        const latest = yield* read(projectId);
+        yield* save(projectId, latest, latest.entries.filter(row => row.id !== entry.id));
+        return yield* unavailable();
+      }
+      return { entry, created: true };
+    }));
+    // Records and activation are retried by `verify`; what this attempt reached is what the customer sees.
+    const settled = yield* Effect.result(settle(projectId, added.entry));
+    if (settled._tag === "Success") return { domain: presentDomain(projectId, settled.success), created: added.created };
+    const latest = (yield* read(projectId)).entries.find(row => row.id === added.entry.id);
+    if (!latest) return yield* Effect.fail(settled.failure);
+    yield* Effect.logWarning("Hosted subdomain activation deferred", { projectId, hostname, error: describeFailure(settled.failure) });
+    return { domain: presentDomain(projectId, latest), created: added.created };
+  }));
 
   return {
     list: projectId => present(Effect.gen(function* () {
@@ -464,14 +617,14 @@ export function createProjectDomainController(options: {
       }), { concurrency: 4 });
       return { domains };
     })),
-    add: (projectId, input) => present(live(projectId, Effect.gen(function* () {
+    add: (projectId, input) => input.dns === "automatic" ? addHosted(projectId, input) : present(live(projectId, Effect.gen(function* () {
       const hostname = yield* normalize(input.hostname);
       const observed = yield* read(projectId);
       const previous = observed.entries.find(entry => entry.hostname === hostname);
       const claimed = yield* integration(() => routes.getHostname(hostname));
       if (claimed && !(previous && claimed.projectId === projectId && claimed.projectDomain?.domainId === previous.id)) return yield* unavailable();
       if (previous) {
-        if (previous.tlsMode !== input.tlsMode || previous.state === "removing") return yield* conflict();
+        if (previous.tlsMode !== input.tlsMode || automatic(previous) || previous.state === "removing") return yield* conflict();
         if (claimed || !expired(previous)) return { domain: presentDomain(projectId, previous), created: false };
       }
       const entries = observed.entries.filter(row => row.id !== previous?.id && !(pending(row) && expired(row)));
@@ -488,15 +641,12 @@ export function createProjectDomainController(options: {
     verify: (projectId, raw, { expectedRevision }) => present(Effect.gen(function* () {
       const hostname = yield* normalize(raw);
       const { entry } = yield* live(projectId, current(projectId, hostname, expectedRevision));
-      if (entry.state === "removing") return yield* conflict();
-      if (entry.state === "active") {
-        if ((yield* owned(ownerFor(projectId, entry)))?.projectDomain?.routing !== "active") return yield* conflict();
-        return presentDomain(projectId, entry);
-      }
-      const verified = yield* prove(projectId, entry);
-      const activation = yield* activationPermits.withPermitsIfAvailable(1)(activate(projectId, verified));
-      if (activation._tag === "None") return yield* failure("domain_verification_busy", "Ingress activation is busy. Try again shortly.", 5);
-      return presentDomain(projectId, activation.value);
+      return presentDomain(projectId, yield* settle(projectId, entry));
+    })),
+    hostedZones: projectId => present(Effect.gen(function* () {
+      if (!isCanonicalProjectId(projectId) || !(yield* integration(() => options.projects()?.view(projectId)))) return yield* missing();
+      const apexes = dns ? yield* dns.hostedApexes().pipe(Effect.mapError(fromDns)) : [];
+      return { zones: apexes.map(apex => ({ apex })) };
     })),
     remove: (projectId, raw, expectedRevision) => present(Effect.gen(function* () {
       const hostname = yield* normalize(raw);

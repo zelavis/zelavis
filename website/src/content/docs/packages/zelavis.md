@@ -108,10 +108,10 @@ const doc = await tenantDb.documents.insert({
   data: { title: "Hello" },
 });
 
-const account = await zv.auth.accounts.create({
-  id: "owner",
-  email: "owner@example.com",
-});
+// Who sent a request, and an account by id. Accounts are created through the
+// Auth API (sign-up, invitations, `POST /auth/accounts`), never written directly.
+const principal = await zv.auth.principalFor(request);
+const account = principal ? await zv.auth.accounts.get(principal.id) : undefined;
 ```
 
 ## When to use lower-level packages instead
@@ -119,8 +119,8 @@ const account = await zv.auth.accounts.create({
 Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
 - `zelavis/core`
-- `zelavis/app/db`
-- `zelavis/app/identity`
+- `zelavis/db`
+- `zelavis/auth`
 
 The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 
@@ -167,8 +167,8 @@ const client = createBrowserZelavisClient({
 const settings = await client.runtime.settings();
 ```
 
-The SDK surface also exposes runtime-neutral `zelavis/app/db` and
-`zelavis/app/identity` APIs. Browser database adapters such as IndexedDB or SQLite
+The browser SDK also carries the Auth browser helpers (OAuth redirect, passkey
+ceremonies and the cross-tab refresh lock) over `client.auth`. Browser database adapters such as IndexedDB or SQLite
 WASM should plug into the same database driver boundary later, so local-first
 browser apps and server runtimes share the same document/event model.
 

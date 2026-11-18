@@ -50,9 +50,8 @@ test("a budget spends nothing on a refusal and checks before it spends", () => {
 
 test("a bounded SQLite get refuses a value larger than what is left without copying it", () => run(Effect.gen(function* () {
   const stats = newStats();
-  const engine = yield* instrumentedSqliteEngine(stats);
-  const big = new Uint8Array(96 * MiB).fill(7);
-  yield* engine.write([{ op: "put", key: key(1), value: big }, { op: "put", key: key(2), value: bytes(9) }]);
+  const engine = yield* instrumentedSqliteEngine(stats, { zeroBlob: { key: key(1), size: 96 * MiB } });
+  yield* engine.write([{ op: "put", key: key(2), value: bytes(9) }]);
   const reader = yield* engine.snapshot;
   const budget = makeReadBudget({ bytes: MiB });
   const before = arrayBuffersMiB();

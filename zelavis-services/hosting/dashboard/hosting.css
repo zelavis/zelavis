@@ -1,0 +1,28 @@
+[hidden] { display: none !important; }
+.hosting-form, .hosting-cards { display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.hosting-form label { display: grid; gap: .35rem; min-width: 0; }
+.hosting-form :is(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: .55rem .65rem;
+  border: 1px solid var(--border, currentColor);
+  border-radius: .4rem;
+  color: inherit;
+  background: var(--background, transparent);
+  font: inherit;
+  box-sizing: border-box;
+}
+.hosting-form label.hosting-check { display: inline-flex; align-items: center; gap: .45rem; }
+.hosting-checkboxes { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.hosting-actions, .hosting-heading { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }
+.hosting-heading { justify-content: space-between; }
+.hosting-heading > * { margin: 0; }
+.hosting-form :is(.hosting-span, .hosting-status, .hosting-actions) { grid-column: 1 / -1; }
+.hosting-status { margin: 0; }
+.hosting-status:empty, .hosting-list:empty { display: none; }
+.hosting-error { color: var(--destructive, #b3261e); }
+.hosting-list { padding: 0; margin: 0; list-style: none; }
+.hosting-list li { border-bottom: 1px solid var(--border); padding: .55rem 0; overflow-wrap: anywhere; }
+.hosting-table { overflow-x: auto; }
+.hosting-table table { width: 100%; border-collapse: collapse; }
+.hosting-table :is(th, td) { padding: .55rem; text-align: left; border-bottom: 1px solid var(--border); }

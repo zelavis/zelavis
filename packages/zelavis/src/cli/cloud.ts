@@ -1,14 +1,15 @@
 import { Data, Effect } from "effect";
 import { integration, present } from "../core/runtime/effect-boundary.js";
+import { parseCloudPolicy } from "../platform/cloud-capacity.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis cloud <status|connect|disconnect|nodes|request|release|scaling> [node-id|request-id] " +
-  "[--provider NAME] [--label TEXT] [--region NAME] [--url URL] [--token API_TOKEN] [--json]. " +
+  "zelavis cloud <status|connect|disconnect|nodes|request|release|scaling|policy|set-policy> [node-id|request-id] " +
+  "[--endpoint HTTPS_URL] [--data JSON] [--expected-updated-at N] [--provider NAME] [--label TEXT] [--region NAME] [--url URL] [--token API_TOKEN] [--json]. " +
   "`scaling` shows whether Zelavis may request machines by itself; --enable or --disable changes it, with --max-machines N and --cooldown-minutes N. " +
   "The provider token is read from the ZELAVIS_CLOUD_TOKEN environment variable, never from an option.";
 
-const VALUE_FLAGS = ["--provider", "--label", "--region", "--url", "--token", "--max-machines", "--cooldown-minutes"];
+const VALUE_FLAGS = ["--endpoint", "--data", "--expected-updated-at", "--provider", "--label", "--region", "--url", "--token", "--max-machines", "--cooldown-minutes"];
 
 class CloudUsageError extends Data.TaggedError("CloudUsageError")<{ readonly message: string }> {}
 
@@ -16,6 +17,9 @@ interface CloudArgs {
   readonly action: string | undefined;
   readonly id: string | undefined;
   readonly provider: string;
+  readonly endpoint: string | undefined;
+  readonly data: string | undefined;
+  readonly expectedUpdatedAt: number | undefined;
   readonly label: string | undefined;
   readonly region: string | undefined;
   readonly url: string;
@@ -60,6 +64,7 @@ function parseCloudArgs(args: readonly string[]): CloudArgs {
   };
   return {
     action, id, json, help, consent,
+    endpoint: values.get("--endpoint"), data: values.get("--data"), expectedUpdatedAt: whole("--expected-updated-at"),
     maxMachines: whole("--max-machines"), cooldownMinutes: whole("--cooldown-minutes"),
     provider: values.get("--provider") ?? "hetzner",
     label: values.get("--label"), region: values.get("--region"),
@@ -96,6 +101,19 @@ export function runCloudCommand(args: readonly string[]): Promise<void> {
       console.log(parsed.json ? JSON.stringify(value, null, 2) : text());
 
     switch (parsed.action) {
+      case "policy": {
+        const result = yield* integration(() => client.cloud.policy());
+        print(result, () => JSON.stringify(result, null, 2));
+        return;
+      }
+      case "set-policy": {
+        const data = yield* need(parsed.data, "--data JSON");
+        const value = yield* Effect.try({ try: () => JSON.parse(data) as unknown, catch: () => new CloudUsageError({ message: "--data must be valid JSON." }) });
+        const policy = yield* parseCloudPolicy(value);
+        const result = yield* integration(() => client.cloud.setPolicy(policy, { ...(parsed.expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt: parsed.expectedUpdatedAt }) }));
+        print(result, () => "Machine policy saved.");
+        return;
+      }
       case "status": {
         const connection = yield* integration(() => client.cloud.connection());
         print({ connection }, () => connection
@@ -106,7 +124,7 @@ export function runCloudCommand(args: readonly string[]): Promise<void> {
       case "connect": {
         const token = yield* need(process.env.ZELAVIS_CLOUD_TOKEN, "The ZELAVIS_CLOUD_TOKEN environment variable");
         const connection = yield* integration(() => client.cloud.connect({
-          provider: parsed.provider, token, ...(parsed.label === undefined ? {} : { label: parsed.label }),
+          provider: parsed.provider, token, ...(parsed.endpoint === undefined ? {} : { endpoint: parsed.endpoint }), ...(parsed.label === undefined ? {} : { label: parsed.label }),
         }));
         print({ connection }, () => `Connected ${connection.provider} (${connection.label}); the token is sealed and will not be shown again.`);
         return;

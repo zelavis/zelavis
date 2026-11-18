@@ -8,6 +8,8 @@ import type { EcommerceService } from "../ecommerce-service.js";
 
 export interface EcommerceContext {
   config: Record<string, unknown>;
+  /** Opaque runtime identity for providers whose setup owns per-runtime credentials. */
+  runtimeScope?: object;
   providers: readonly EcommerceService[];
 }
 
@@ -22,7 +24,9 @@ export interface EcommerceContext {
 export interface EcommerceApi {
   context: EcommerceContext;
   repositories: EcommerceRepositories;
-  customers: Customers["Service"];
+  customers: Customers["Service"] & { portal: import("../services/checkouts.js").Checkouts["Service"]["portal"] };
+  fulfillment: import("../services/fulfillment.js").FulfillmentApi;
+  checkouts: import("../services/checkouts.js").Checkouts["Service"];
   coupons: Coupons["Service"];
   products: Products["Service"];
   orders: Orders["Service"];

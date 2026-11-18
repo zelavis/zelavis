@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
+const runtimes = [];
+afterEach(async () => { for (const runtime of runtimes.splice(0)) await runtime.close(); });
 import { loadEcommercePlugin } from "./load-plugin.mjs";
 import { stripeService } from "../plugins/stripe/dist/index.js";
 import { paypalService } from "../plugins/paypal/dist/index.js";
@@ -47,16 +49,18 @@ test("the gateways carry the manifest an install would validate", async () => {
     // Neither had a `zelavis` block at all, so installing one would have been
     // refused at validation — they only ever worked when composed in code.
     assert.equal(manifest.zelavis?.kind, "plugin", name);
-    assert.deepEqual(manifest.zelavis.capabilities, ["@zelavis/ecommerce:payments"], name);
+    assert.deepEqual(manifest.zelavis.capabilities, name === "stripe" ? ["@zelavis/ecommerce:payments", "api:routes", "dashboard:menu"] : ["@zelavis/ecommerce:payments"], name);
   }
 });
 
 async function platform(catalog) {
-  return zelavis({
+  const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
     serviceRegistry: { catalog },
   });
+  runtimes.push(runtime);
+  return runtime;
 }
 
 test("gateways are listed under the plugin they extend", async () => {

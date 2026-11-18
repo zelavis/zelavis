@@ -1,4 +1,5 @@
 export * from "./runtime/contracts.js";
+export * from "./runtime/client-address.js";
 export * from "./runtime/authentication.js";
 export * from "./runtime/basic-authentication.js";
 export * from "./runtime/jwt-authentication.js";

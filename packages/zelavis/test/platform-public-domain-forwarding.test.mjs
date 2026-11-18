@@ -90,7 +90,7 @@ test("a verified domain reaches the Project, anonymously", async () => {
       platform(site),
       new Request("http://example.com/about?q=1", {
         headers: {
-          cookie: "zelavis_session=platform_secret",
+          cookie: "zelavis_access=platform_secret; zelavis_refresh=platform_secret",
           authorization: "Bearer platform_secret",
         },
       }),
@@ -317,7 +317,7 @@ test('site ingress preserves login cookies and public Host, and rewrites private
   const server = createServer(async (request,response) => {
     if (request.url === '/redirect') {
       response.setHeader('location', `http://127.0.0.1:${server.address().port}/wp-admin/`);
-      response.setHeader('set-cookie', ['wordpress_logged_in=site; Path=/', 'zelavis_session=attack; Path=/']);
+      response.setHeader('set-cookie', ['wordpress_logged_in=site; Path=/', 'zelavis_access=attack; Path=/']);
       response.writeHead(302); response.end(); return;
     }
     const chunks=[]; for await (const chunk of request) chunks.push(chunk);
@@ -327,7 +327,7 @@ test('site ingress preserves login cookies and public Host, and rewrites private
   const site={url:`http://127.0.0.1:${server.address().port}`};
   try {
     const response=await forwardPublicRequest(platform(site),new Request('http://example.com:42000/wp-login.php',{
-      method:'POST',body:'log=owner',headers:{cookie:'zelavis_session=secret; wordpress_logged_in=site', 'x-forwarded-host':'evil.test', 'x-forwarded-proto':'https', 'x-zelavis-authority':'attack'},
+      method:'POST',body:'log=owner',headers:{cookie:'zelavis_access=secret; wordpress_logged_in=site', 'x-forwarded-host':'evil.test', 'x-forwarded-proto':'https', 'x-zelavis-authority':'attack'},
     }));
     const body=JSON.parse(new TextDecoder().decode(response.body));
     assert.equal(body.headers.host,'example.com:42000');
@@ -364,7 +364,10 @@ test("ingress cancels oversized request and response streams at its bound", asyn
 
 const authBase = "/zelavis/api/v1/auth";
 const appCookieName = (id) => `zelavis_app_${createHash("sha256").update(id).digest("hex").slice(0, 24)}`;
-const siteAuthCookie = (id) => `${appCookieName(id)}=zvs_app_${appCookieName(id).slice(12)}_${"a".repeat(43)}`;
+/** An access token shaped like one an App's Auth signs: only its issuer matters to the forwarder. */
+const accessToken = (issuer) => [{ alg: "ES256" }, { iss: issuer, sub: "s" }, "signature"]
+  .map((part) => Buffer.from(typeof part === "string" ? part : JSON.stringify(part)).toString("base64url")).join(".");
+const siteAuthCookie = (id) => `${appCookieName(id)}=${accessToken(`zelavis:project:${id}`)}`;
 
 test("only exact native App auth requests bypass a running server frontend", async () => {
   const options = platform({ url: "http://127.0.0.1:4001" }, {
@@ -379,10 +382,10 @@ test("only exact native App auth requests bypass a running server frontend", asy
   options.fetchSite = async (url, init) => {
     calls.push({ url, init });
     const headers = new Headers();
-    for (const cookie of [own, sibling, "custom_platform=secret", "zelavis_session=platform", "site_theme=dark"]) headers.append("set-cookie", `${cookie}; Path=/`);
+    for (const cookie of [own, sibling, "custom_platform=secret", "zelavis_access=platform", "site_theme=dark"]) headers.append("set-cookie", `${cookie}; Path=/`);
     return new Response("child", { headers });
   };
-  const headers = { cookie: `${own}; ${sibling}; custom_platform=secret; zelavis_session=secret; site_theme=dark`,
+  const headers = { cookie: `${own}; ${sibling}; custom_platform=secret; zelavis_access=secret; zelavis_refresh=secret; site_theme=dark`,
     authorization: `Bearer ${token}`, "x-zelavis-authority": "inbound", "x-forwarded-host": "wrong.example", "x-forwarded-proto": "http" };
   const request = (path, init) => new Request(`https://EXAMPLE.com:4443${path}`, { headers, ...init });
   const response = await guardControlPlaneHost(options, request(`${authBase}/session`), "/ops/panel");
@@ -404,6 +407,28 @@ test("only exact native App auth requests bypass a running server frontend", asy
   assert.equal(calls.at(-1).init.headers.get("authorization"), null);
   assert.deepEqual(site.headers.getSetCookie(), ["site_theme=dark; Path=/"]);
 
+  // Neither a Platform access token nor a sibling App's reaches the App.
+  for (const foreign of [accessToken("zelavis:platform:keys"), accessToken("zelavis:project:sibling")]) {
+    await guardControlPlaneHost(options, request(`${authBase}/session`, { headers: { ...headers, authorization: `Bearer ${foreign}` } }), "/ops/panel");
+    assert.equal(calls.at(-1).init.headers.get("authorization"), null);
+  }
+
+  for (const [method, path] of [
+    ["GET", "/zelavis/forgot-password"], ["GET", "/zelavis/reset-password"], ["GET", "/zelavis/verify-email"],
+    ["GET", "/zelavis/mfa"], ["GET", "/zelavis/oauth/callback"],
+    ["GET", `${authBase}/methods`], ["GET", `${authBase}/jwks`], ["GET", `${authBase}/oauth/google/callback`],
+    ["POST", `${authBase}/sign-up/password`], ["POST", `${authBase}/authenticate/password`], ["POST", `${authBase}/session/rotate`],
+    ["POST", `${authBase}/email-password/sign-in`], ["POST", `${authBase}/email-password/recovery/start`],
+    ["POST", `${authBase}/email-password/recovery/complete`], ["POST", `${authBase}/mfa/verify`],
+    ["POST", `${authBase}/oauth/google/start`], ["POST", `${authBase}/username-passkey/sign-in/finish`],
+    ["PATCH", `${authBase}/passkeys/key-1`], ["DELETE", `${authBase}/sessions/session-1`],
+  ]) {
+    const forwarded = await guardControlPlaneHost(options, request(path, { method }), "/ops/panel");
+    assert.equal(forwarded.status, 200, `${method} ${path}`);
+    assert.equal(calls.at(-1).url.pathname, `/zelavis/_site-auth/${method}${path.slice("/zelavis".length)}`);
+    assert.equal(calls.at(-1).url.port, "4001");
+  }
+
   const count = calls.length;
   for (const [method, path] of [
     ["GET", "/zelavis"], ["GET", "/zelavis/login/"], ["HEAD", "/zelavis/login"], ["POST", "/zelavis/login"],
@@ -411,11 +436,15 @@ test("only exact native App auth requests bypass a running server frontend", asy
     ["GET", "/Zelavis/Login"], ["GET", "/zelavis%2flogin"], ["GET", "/zelavis%5clogin"],
     ["GET", "/zelavis/auth-assets/other.js"], ["GET", "/zelavis/_site-auth/GET/login"], ["GET", "/ops/panel/login"],
     ["GET", `${authBase}/accounts`], ["GET", `${authBase}/registration/settings`],
-    ["POST", `${authBase}/sign-up/other`], ["GET", `${authBase}/oauth/oidc/callback`],
+    ["GET", `${authBase}/email/verify`], ["POST", `${authBase}/recovery/other`],
+    ["PUT", `${authBase}/registration/settings`], ["GET", "/zelavis/api/v1/email/settings"],
+    ["GET", `${authBase}/oauth/connections`], ["PUT", `${authBase}/oauth/connections/google`],
+    ["GET", `${authBase}/methods/settings`], ["GET", `${authBase}/passkeys/settings`], ["PATCH", `${authBase}/passkeys/settings`],
+    ["GET", `${authBase}/mfa/policy`], ["POST", `${authBase}/keys/rotate`], ["GET", `${authBase}/security/events`],
     ["PUT", `${authBase}/session`], ["GET", `${authBase}/session/rotate`],
   ]) assert.equal((await guardControlPlaneHost(options, request(path, { method }), "/ops/panel")).status, 404, `${method} ${path}`);
   assert.equal((await guardControlPlaneHost(options, request("/zelavis/login"), "/ops/panel", false)).status, 404);
-  const oversized = await guardControlPlaneHost(options, request(`${authBase}/sign-up/password`, { method: "POST", body: "x".repeat(8193) }), "/ops/panel");
+  const oversized = await guardControlPlaneHost(options, request(`${authBase}/username-password/sign-up`, { method: "POST", body: "x".repeat(8193) }), "/ops/panel");
   assert.equal(oversized.status, 413);
   assert.equal(calls.length, count);
 
@@ -430,10 +459,10 @@ test("only exact native App auth requests bypass a running server frontend", asy
   assert.equal(calls.length, count);
   const older = { ...options, fetchSite: async (url, init) => {
     assert.equal(init.method, "POST");
-    assert.equal(url.pathname, "/zelavis/_site-auth/POST/api/v1/auth/sign-up/password");
+    assert.equal(url.pathname, "/zelavis/_site-auth/POST/api/v1/auth/username-password/sign-up");
     return new Response("Not found", { status: 404 });
   } };
-  assert.equal((await guardControlPlaneHost(older, request(`${authBase}/sign-up/password`, { method: "POST", body: "{}" }), "/ops/panel")).status, 404);
+  assert.equal((await guardControlPlaneHost(older, request(`${authBase}/username-password/sign-up`, { method: "POST", body: "{}" }), "/ops/panel")).status, 404);
 });
 
 test("a verified HTTPS origin reaches the exact native engine, cookie and SDK session", async (t) => {
@@ -444,7 +473,7 @@ test("a verified HTTPS origin reaches the exact native engine, cookie and SDK se
   const adapter = defineAdapter({ ...node,
     async resolve(options) {
       const resolved = await node.resolve(options);
-      return { ...resolved, subsystems: { ...resolved.subsystems, auth: { authOptions: { sessionCookieName: "platform_custom" } } },
+      return { ...resolved,
         resources: { ...resolved.resources, domainBindings, publicSiteFetch: (url, init) => {
           forwardedCookies.push(new Headers(init.headers).get("cookie"));
           return fetchNodeSite(url, init);
@@ -465,7 +494,7 @@ test("a verified HTTPS origin reaches the exact native engine, cookie and SDK se
   const send = (path, init, host = origin) => runtime.fetch(new Request(`${host}${path}`, init));
   assert.equal((await send("/ops/panel/login")).status, 404);
   assert.equal((await send("/zelavis/sign-up")).status, 404);
-  await send("/", { headers: { cookie: "platform_custom=secret; site_theme=dark" } });
+  await send("/", { headers: { cookie: "zelavis_access=secret; zelavis_refresh=secret; site_theme=dark" } });
   assert.equal(forwardedCookies.at(-1), "site_theme=dark");
   const settings = "/ops/panel/api/v1/runtime/projects/site/auth/registration/settings";
   const change = await runtime.dispatch(new Request(`http://platform.local${settings}`, { method: "PUT",
@@ -476,31 +505,46 @@ test("a verified HTTPS origin reaches the exact native engine, cookie and SDK se
   assert.equal(login.status, 200);
   assert.match(login.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.match(await login.text(), /href="\/zelavis\/sign-up"/);
-  assert.equal((await send("/zelavis/sign-up", undefined, sibling)).status, 404);
+  const closedSibling = await send("/zelavis/sign-up", undefined, sibling);
+  assert.equal(closedSibling.status, 404, await closedSibling.text());
   const asset = await send("/zelavis/auth-assets/identity.js");
   assert.match(asset.headers.get("content-type"), /javascript/);
   assert.ok((await asset.text()).length > 100);
 
-  const input = { identifier: "app@example.com", password: "a long unique App password" };
-  const signUp = await send(`${authBase}/sign-up/password`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) });
-  assert.equal(signUp.status, 201);
+  assert.equal((await send(`${authBase}/authenticate/password`, { method: "POST" })).status, 404,
+    "Only a published worker can accept a published sign-in route");
+  const input = { username: "app-user", password: "a long unique App password" };
+  const json = { "content-type": "application/json" };
+  const signUp = await send(`${authBase}/username-password/sign-up`, { method: "POST", headers: { origin, ...json }, body: JSON.stringify(input) });
+  assert.equal(signUp.status, 200, await signUp.clone().text());
   const enrolled = await signUp.json();
-  assert.deepEqual(enrolled.account.roles, ["user"]);
-  const session = signUp.headers.get("set-cookie");
-  assert.match(session, new RegExp(`^${appCookieName("site")}=.+; Path=/zelavis; HttpOnly; SameSite=Lax; Secure;`));
-  assert.doesNotMatch(session, /Domain=/i);
-  const cookie = session.split(";", 1)[0];
-  const authClient = (baseUrl, token) => createZelavisClient({ baseUrl, headers: token ? { authorization: `Bearer ${token}` } : undefined,
-    fetch: (input, init) => runtime.fetch(new Request(input, init)) }).auth;
-  assert.equal((await authClient(origin, enrolled.session.token).getSession()).principal.id, enrolled.account.id);
-  assert.equal((await authClient(origin).signInWithPassword(input)).account.id, enrolled.account.id);
-  assert.equal((await send(`${authBase}/session`, { headers: { cookie } })).status, 200);
-  assert.equal((await send(`${authBase}/session`, { headers: { cookie, authorization: `Bearer ${enrolled.session.token}` } }, sibling)).status, 401);
-  assert.equal((await send(`${authBase}/session`, { method: "DELETE", headers: { cookie, origin: sibling } })).status, 401);
+  assert.equal(enrolled.tokens, undefined, "a page of the App's origin gets cookies, never tokens");
+  const [access, refresh] = signUp.headers.getSetCookie();
+  assert.match(access, new RegExp(`^${appCookieName("site")}=.+; Path=/zelavis/api/v1; HttpOnly; SameSite=Lax; Secure`, "i"));
+  assert.match(refresh, new RegExp(`^${appCookieName("site")}_refresh=.+; Path=/zelavis/api/v1/auth/session`, "i"));
+  for (const cookie of [access, refresh]) assert.doesNotMatch(cookie, /Domain=/i);
+  const cookie = access.split(";", 1)[0];
+  const session = await (await send(`${authBase}/session`, { headers: { cookie } })).json();
+  assert.equal(session.account.id, enrolled.userId);
+  assert.deepEqual(session.account.roles, ["user"]);
+  // A native client signs in with the token bundle, and its access token is the App's alone.
+  const bearerSignIn = await send(`${authBase}/username-password/sign-in`, {
+    method: "POST", headers: { ...json, origin, "x-zelavis-auth-mode": "bearer" }, body: JSON.stringify(input),
+  });
+  assert.equal(bearerSignIn.headers.has("set-cookie"), false);
+  const signedIn = await bearerSignIn.json();
+  assert.equal(signedIn.userId, enrolled.userId);
+  assert.equal((await send(`${authBase}/session`, { headers: { authorization: `Bearer ${signedIn.tokens.accessToken}` } })).status, 200);
+  assert.equal((await send(`${authBase}/session`, { headers: { cookie, authorization: `Bearer ${signedIn.tokens.accessToken}` } }, sibling)).status, 401);
+  assert.equal((await send(`${authBase}/session`, { method: "DELETE", headers: { cookie, origin: sibling } })).status, 403);
+  assert.equal((await send(`${authBase}/session`, { headers: { cookie } })).status, 200, "a sibling origin cannot end this App's session");
+  // The Platform's own Auth is not reachable on the App's origin, and an App token means nothing to the Platform.
   assert.equal((await send(`${authBase}/accounts`, { headers: { cookie } })).status, 404);
+  assert.equal((await runtime.fetch(new Request(`http://platform.local/ops/panel/api/v1/auth/session`, { headers: { authorization: `Bearer ${signedIn.tokens.accessToken}` } }))).status, 401);
   const logout = await send(`${authBase}/session`, { method: "DELETE", headers: { cookie, origin } });
   assert.equal(logout.status, 204);
-  assert.match(logout.headers.get("set-cookie"), new RegExp(`^${appCookieName("site")}=; .*Max-Age=0$`));
+  assert.match(logout.headers.getSetCookie()[0], new RegExp(`^${appCookieName("site")}=;.*Max-Age=0`, "i"));
+  assert.equal((await send(`${authBase}/session`, { headers: { cookie } })).status, 401);
   await projects.stop("site");
   assert.equal((await send("/zelavis/login")).status, 503);
 });
@@ -510,7 +554,10 @@ test("the packaged auth frontend uses the configured mount and exact assets", as
   const runtime = await zelavis({ rootPath: "/ops/identity", api: { prefix: "/endpoint", version: "v9" },
     frontend: context => zelavisUiIdentityFrontend({ ...context, fetch: async request => {
       calls.push(new URL(request.url).pathname);
-      return Response.json({ enabled: false, providers: [] });
+      return Response.json({
+        registration: { enabled: false },
+        methods: [{ name: "emailPassword", signIn: true, signUp: false, recovery: true }],
+      });
     } }), subsystems: { auth: false, database: false },
   });
   t.after(() => runtime.close());
@@ -524,7 +571,42 @@ test("the packaged auth frontend uses the configured mount and exact assets", as
   const closed = await get("/ops/identity/sign-up");
   assert.equal(closed.status, 404);
   assert.doesNotMatch(await closed.text(), /<form/);
-  assert.deepEqual(calls, Array(2).fill("/ops/identity/endpoint/v9/auth/registration"));
+  assert.deepEqual(calls, [
+    "/ops/identity/endpoint/v9/auth/methods",
+    "/ops/identity/endpoint/v9/auth/methods",
+  ]);
+  for (const page of ["forgot-password", "reset-password", "verify-email", "mfa", "oauth/callback"]) {
+    const response = await get(`/ops/identity/${page}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.text();
+    assert.ok(body.includes(`data-path="/${page}"`));
+    assert.ok(body.includes('href="/ops/identity/login"'));
+  }
   assert.match((await get("/ops/identity/auth-assets/identity.css")).headers.get("content-type"), /text\/css/);
   for (const path of ["/ops/identity/login/", "/ops/identity/projects", "/ops/identity/auth-assets/extra.js"]) assert.equal((await get(path)).status, 404);
+});
+
+test("native App provider callbacks preserve exact bytes and signatures without exposing service administration", async () => {
+  const { isProjectServiceWebhook, publicRequestFromPrivateAuth } = await import("../dist/platform/project-public-auth.js");
+  const path = "/zelavis/api/v1/plugins/payments/webhooks/gateway";
+  assert.ok(isProjectServiceWebhook("POST", path));
+  for (const [method, candidate] of [["GET", path], ["POST", path + "/extra"], ["POST", "/zelavis/api/v1/plugins/payments/settings"], ["POST", "/zelavis/api/v1/auth/admin/accounts"]]) assert.equal(isProjectServiceWebhook(method, candidate), false);
+  let received;
+  const options = {
+    rootPath: "/zelavis", project: { id: "app", recipe: { name: "@zelavis/app" }, runtime: { status: "running", url: "http://127.0.0.1:43210" } },
+    projects: { listOwned: async () => [] },
+    fetchSite: async (url, init) => {
+      const original = publicRequestFromPrivateAuth(new Request(url, init));
+      assert.ok(original);
+      received = { body: await original.text(), signature: original.headers.get("provider-signature"), authority: original.headers.get("authorization"), cookie: original.headers.get("cookie"), pathname: new URL(original.url).pathname };
+      return new Response("ok");
+    },
+  };
+  const body = " ".repeat(10000) + '{"id":"signed"}';
+  const response = await forwardProjectSiteRequest(options, new Request(`https://app.example${path}`, { method: "POST", headers: { "provider-signature": "exact-signature", authorization: "Bearer platform-secret", cookie: "zelavis_access=platform-secret" }, body }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(received, { body, signature: "exact-signature", authority: null, cookie: null, pathname: path });
+  assert.equal((await forwardProjectSiteRequest(options, new Request(`https://app.example${path}`, { method: "POST", body: "x".repeat(262145) }))).status, 413);
+  assert.equal((await forwardProjectSiteRequest(options, new Request("https://app.example/zelavis/api/v1/plugins/payments/settings", { method: "POST", body: "{}" }))).status, 404);
 });

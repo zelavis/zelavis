@@ -75,3 +75,57 @@ test("Stripe payment request failures remain visible to the caller", async () =>
   });
   await assert.rejects(provider.createPayment(input), (error) => error === failure);
 });
+
+test("Stripe hosted checkout, portal and signatures use the provider contract without network calls", async () => {
+  const { createRequire } = await import("node:module");
+  const Stripe = createRequire(new URL("../plugins/stripe/package.json", import.meta.url))("stripe");
+  const signer = new Stripe("sk_test_fixture");
+  const calls = [];
+  const provider = createStripePaymentProvider({ webhookSecret: "whsec_fixture", client: {
+    checkout: { sessions: { create: async (params, options) => { calls.push({ params, options }); return { id: "cs_hosted", url: "https://checkout.stripe.example/session", expires_at: 1900000000, customer: "cus_existing" }; } } },
+    billingPortal: { sessions: { create: async params => { calls.push(params); return { url: "https://billing.stripe.example/portal" }; } } },
+    webhooks: signer.webhooks,
+  } });
+  const checkout = await provider.createCheckout({ checkoutId: "checkout", mode: "subscription", customer: { id: "customer", email: "user@example.com", providerReferences: { stripe: "cus_existing" } }, lines: [{ name: "Hosting", amount: 1200, currency: "EUR", quantity: 2, interval: "month" }], successUrl: "https://shop.example/success", cancelUrl: "https://shop.example/cancel", metadata: { hostingPlan: "basic" } });
+  assert.equal(checkout.reference, "cs_hosted");
+  assert.equal(calls[0].options.idempotencyKey, "checkout:checkout");
+  assert.equal(calls[0].params.customer, "cus_existing");
+  assert.equal(calls[0].params.client_reference_id, "checkout");
+  assert.equal(calls[0].params.subscription_data.metadata.hostingPlan, "basic");
+  assert.equal(calls[0].params.line_items[0].price_data.recurring.interval_count, 1);
+  assert.equal((await provider.createPortal({ customer: {}, customerReference: "cus_existing", returnUrl: "https://shop.example" })).url, "https://billing.stripe.example/portal");
+  const payload = JSON.stringify({ id: "evt_signed", type: "checkout.session.completed", created: Math.floor(Date.now() / 1000), data: { object: { id: "cs_hosted", payment_status: "paid", customer: "cus_existing", subscription: "sub_existing" } } });
+  const signature = signer.webhooks.generateTestHeaderString({ payload, secret: "whsec_fixture" });
+  const events = await provider.parseWebhook({ rawBody: payload, headers: new Headers({ "stripe-signature": signature }) });
+  assert.equal(events[0].checkoutReference, "cs_hosted");
+  assert.equal(events[0].subscriptionReference, "sub_existing");
+  await assert.rejects(provider.parseWebhook({ rawBody: payload + " ", headers: new Headers({ "stripe-signature": signature }) }), error => error._tag === "InvalidWebhook");
+  const unknown = JSON.stringify({ id: "evt_unknown", type: "unhandled", created: Math.floor(Date.now() / 1000), data: { object: {} } });
+  assert.deepEqual(await provider.parseWebhook({ rawBody: unknown, headers: new Headers({ "stripe-signature": signer.webhooks.generateTestHeaderString({ payload: unknown, secret: "whsec_fixture" }) }) }), []);
+});
+
+test("Stripe without credentials composes lazily and refuses checkout with ProviderNotConfigured", async () => {
+  const provider = createStripePaymentProvider();
+  await assert.rejects(provider.createCheckout({}), error => error._tag === "ProviderNotConfigured");
+});
+
+test("Stripe normalizes subscription, invoice and delayed-checkout events with signed raw fixtures", async () => {
+  const { createRequire } = await import("node:module");
+  const Stripe = createRequire(new URL("../plugins/stripe/package.json", import.meta.url))("stripe");
+  const signer = new Stripe("sk_test_fixture");
+  const provider = createStripePaymentProvider({ client: { webhooks: signer.webhooks }, webhookSecret: "whsec_fixture", credentials: async () => { throw new Error("Code options must bypass credential lookup"); } });
+  const cases = [
+    ["customer.subscription.updated", { id: "sub_signed", status: "past_due", cancel_at_period_end: true, items: { data: [{ current_period_start: 1700000000, current_period_end: 1702592000 }] } }, "subscription.updated"],
+    ["customer.subscription.deleted", { id: "sub_signed", status: "canceled", cancel_at_period_end: false, items: { data: [] } }, "subscription.updated"],
+    ["invoice.paid", { id: "in_signed", amount_paid: 1200, currency: "eur", parent: { subscription_details: { subscription: "sub_signed" } } }, "payment.succeeded"],
+    ["invoice.payment_failed", { id: "in_signed", amount_due: 1200, currency: "eur", parent: { subscription_details: { subscription: "sub_signed" } } }, "payment.failed"],
+    ["checkout.session.async_payment_succeeded", { id: "cs_delayed", payment_status: "paid" }, "checkout.completed"],
+  ];
+  for (const [type, object, expected] of cases) {
+    const payload = JSON.stringify({ id: `evt_${type}`, type, created: Math.floor(Date.now()/1000), data: { object } });
+    const events = await provider.parseWebhook({ rawBody: payload, headers: new Headers({ "stripe-signature": signer.webhooks.generateTestHeaderString({ payload, secret: "whsec_fixture" }) }) });
+    assert.equal(events[0].type, expected);
+    if (type === "customer.subscription.deleted") assert.equal(events[0].status, "cancelled");
+    if (type.startsWith("invoice")) { assert.equal(events[0].subscriptionReference, "sub_signed"); assert.equal(events[0].currency, "EUR"); }
+  }
+});

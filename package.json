@@ -16,6 +16,7 @@
     "verify": "pnpm run check:effect-source && pnpm run check:effect-usage && pnpm run check:tigerstyle && pnpm run test:repo-rules && pnpm run build && pnpm run typecheck && pnpm run test",
     "check:effect-source": "node scripts/check-effect-source.mjs",
     "refs:sync": "node scripts/sync-reference-sources.mjs",
+    "auth:upstream": "node scripts/auth-upstream.mjs",
     "ci:runtime": "pnpm run verify",
     "ci:ui": "pnpm --filter @zelavis/ui test:browser",
     "ci:ui:local": "pnpm --filter @zelavis/ui test:browser",
@@ -58,9 +59,12 @@
     "release:qualify:history": "bash distribution/scripts/qualify-history.sh",
     "release:qualify:backups": "bash distribution/scripts/qualify-backups.sh",
     "check:tigerstyle": "node scripts/check-tigerstyle.mjs",
-    "test:repo-rules": "node --test scripts/test/check-effect-usage.test.mjs scripts/test/check-tigerstyle.test.mjs scripts/test/claude-folder.test.mjs",
+    "test:repo-rules": "node --test scripts/test/check-effect-usage.test.mjs scripts/test/check-tigerstyle.test.mjs scripts/test/claude-folder.test.mjs scripts/test/auth-provenance.test.mjs",
     "release:qualify:failover": "node distribution/scripts/qualify-failover.mjs",
-    "release:qualify:shards": "node distribution/scripts/qualify-shards.mjs"
+    "release:qualify:shards": "node distribution/scripts/qualify-shards.mjs",
+    "release:qualify:registrar": "node distribution/scripts/qualify-registrar.mjs",
+    "release:qualify:domains": "node distribution/scripts/qualify-domains.mjs",
+    "release:qualify:hosting": "node distribution/scripts/qualify-hosting.mjs"
   },
   "keywords": [],
   "author": "Ivan Jeremic",

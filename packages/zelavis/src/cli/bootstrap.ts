@@ -2,32 +2,35 @@ import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { resolveRuntimeApiBase } from "./services.js";
 
+/** `GET /auth/bootstrap`: whether the first owner is still to be created, and how. */
 export interface BootstrapStatus {
   required: boolean;
   available: boolean;
   tokenRequired: boolean;
-  providers: readonly string[];
-  enrollmentProviders: readonly string[];
+  methods: readonly string[];
 }
 
+/** The first owner signs in with a username and password; an email, when given, is verified once email is configured. */
 export interface BootstrapOwnerInput {
   bootstrapToken: string;
-  provider: string;
-  email?: string;
-  username?: string;
-  displayName?: string;
+  username: string;
   password: string;
+  displayName?: string;
+  email?: string;
 }
 
 export interface BootstrapOwnerResult {
+  status: string;
+  userId: string;
   account: {
     id: string;
-    email?: string;
     username?: string;
     displayName?: string;
     roles?: readonly string[];
   };
-  session: { token: string };
+  /** The owner's first session; never printed. */
+  tokens: { accessToken: string; refreshToken: string };
+  emailVerification?: { status: string };
 }
 
 export interface BootstrapClientOptions {
@@ -67,8 +70,8 @@ export function bootstrapPlatformOwner(
   options: BootstrapClientOptions = {},
 ): Promise<BootstrapOwnerResult> {
     return present(Effect.gen(function* (): Effect.fn.Return<BootstrapOwnerResult, IntegrationFailure> {
-  if (!input.email && !input.username) {
-    throw new Error("Platform owner bootstrap requires --email or --username.");
+  if (!input.username) {
+    throw new Error("Platform owner bootstrap requires --username.");
   }
   if (!input.password) {
     throw new Error("Platform owner bootstrap requires a password.");
@@ -76,19 +79,16 @@ export function bootstrapPlatformOwner(
 
   const url = `${resolveRuntimeApiBase(options.url)}/auth/bootstrap`;
   const fetcher = options.fetch ?? fetch;
-  const identifier = input.email ?? input.username!;
   const response = (yield* integrationValue(fetcher(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    // No Origin header: the answer carries the tokens, which this command deliberately never prints.
     body: JSON.stringify({
       bootstrapToken: input.bootstrapToken,
-      provider: input.provider,
-      account: {
-        ...(input.email ? { email: input.email } : {}),
-        ...(input.username ? { username: input.username } : {}),
-        ...(input.displayName ? { displayName: input.displayName } : {}),
-      },
-      credential: { identifier, password: input.password },
+      username: input.username,
+      password: input.password,
+      ...(input.displayName ? { displayName: input.displayName } : {}),
+      ...(input.email ? { email: input.email } : {}),
     }),
   })));
 
@@ -104,11 +104,7 @@ export function formatBootstrapStatus(status: BootstrapStatus): string {
     status.available
       ? "Bootstrap token: configured"
       : "Bootstrap token: not configured (set ZELAVIS_BOOTSTRAP_TOKEN and restart)",
-    `Enrollment providers: ${
-      status.enrollmentProviders.length
-        ? status.enrollmentProviders.join(", ")
-        : "none installed"
-    }`,
+    `Owner sign-in: ${status.methods.length ? status.methods.join(", ") : "none"}`,
   ];
   return lines.join("\n");
 }

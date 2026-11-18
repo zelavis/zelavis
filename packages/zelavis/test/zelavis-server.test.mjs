@@ -90,7 +90,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   );
   assert.equal(payload.capabilities.server.available, true);
   assert.equal(payload.capabilities.database.available, true);
-  assert.equal(payload.capabilities.identity.available, true);
+  assert.equal(payload.capabilities.auth.available, true);
   assert.deepEqual(payload.serviceRegistry, []);
 });
 
@@ -107,13 +107,13 @@ test("zelavis includes its native subsystems by default", async (t) => {
   for (const pseudoService of [
     "zelavis/platform",
     "zelavis/fabric",
-    "zelavis/identity",
+    "zelavis/auth",
     "@zelavis/db",
     "@zelavis/frontend",
   ]) {
     assert.equal(runtime.services[pseudoService], undefined, pseudoService);
   }
-  for (const group of ["platform.control-plane", "fabric", "identity", "database"]) {
+  for (const group of ["platform.control-plane", "fabric", "auth", "database"]) {
     assert.ok(runtime.endpointGroups[group], `${group} endpoint group`);
   }
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
@@ -131,14 +131,14 @@ test("zelavis includes its native subsystems by default", async (t) => {
     ),
   );
   assert.ok(
-    routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/providers"),
+    routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/methods"),
   );
   assert.ok(
     routes.some(
       (route) => route.fullPath === "/zelavis/api/v1/database/health",
     ),
   );
-  assert.ok(routes.some((route) => route.route.id === "auth.providers.list"));
+  assert.ok(routes.some((route) => route.route.id === "auth.methods.list"));
   assert.ok(routes.some((route) => route.route.id === "database.health"));
   assert.ok(
     routes.some((route) => route.route.id === "database.collections.list"),
@@ -450,49 +450,32 @@ test("privileged project control routes declare explicit access requirements", a
   await runtime.close();
 });
 
-test("auth method plugins register through the public auth capability", async () => {
+test("authenticator plugins resolve a bearer independently of interactive sign-in", async (t) => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    serviceRegistry: {
-      catalog: [
-        {
-          service: {
-            name: "@example/test-auth-provider",
-            kind: "plugin",
-            capabilities: ["zelavis/identity:credentials"],
-            service: {
-              name: "test-auth",
-              register(api) {
-                api.authentication.registerProvider({
-                  name: "@example/test-auth-provider",
-                  async authenticate() {
-                    throw new Error("not used by this provider discovery test");
-                  },
-                });
-              },
-            },
-          },
-          status: "installed",
-        },
-      ],
-    },
+    serviceRegistry: { catalog: [{
+      service: {
+        name: "@example/test-authenticator",
+        kind: "plugin",
+        capabilities: ["zelavis/auth:authenticator"],
+        service: { name: "@example/test-authenticator" },
+        authenticators: [{
+          name: "test-bearer",
+          authenticate: ({ request }) => request.headers.get("authorization") === "Bearer disposable-fixture"
+            ? { id: "external-user", type: "user" } : undefined,
+        }],
+      },
+      status: "installed",
+    }] },
   });
-
-  const providersResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/auth/providers"),
-  );
-  const providers = await providersResponse.json();
-
-  assert.equal(providersResponse.status, 200);
-  // Alongside the providers core ships: an installed plugin adds to them
-  // rather than replacing them.
-  assert.ok(providers.includes("@example/test-auth-provider"));
-  assert.ok(providers.includes("password"));
-  assert.equal(
-    runtime.routes.some((route) => route.route.id === "@example/test-auth-provider"),
-    false,
-    "auth method plugins need no private top-level route",
-  );
+  t.after(() => runtime.close());
+  const access = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/access", {
+    headers: { authorization: "Bearer disposable-fixture" },
+  }));
+  assert.equal(access.status, 200);
+  assert.equal((await access.json()).principal.id, "external-user");
+  const methods = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/auth/methods"));
+  assert.ok((await methods.json()).methods.some(method => method.name === "usernamePassword"));
 });
 
 test("service registry install state controls service activation on boot", async () => {
@@ -1087,7 +1070,7 @@ test("zelavis can disable the database subsystem", async () => {
     },
   });
 
-  assert.ok(runtime.endpointGroups.identity);
+  assert.ok(runtime.endpointGroups.auth);
   assert.equal(runtime.endpointGroups.database, undefined);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("database.")),
@@ -1104,7 +1087,7 @@ test("zelavis can disable the auth subsystem", async (t) => {
   });
   t.after(() => runtime.close());
 
-  assert.equal(runtime.endpointGroups.identity, undefined);
+  assert.equal(runtime.endpointGroups.auth, undefined);
   assert.ok(runtime.endpointGroups.database);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("auth.")),
@@ -1126,7 +1109,7 @@ test("the frontend cannot be switched off in code", async () => {
       new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
     assert.equal(config.status, 200);
-    assert.ok(runtime.endpointGroups.identity);
+    assert.ok(runtime.endpointGroups.auth);
   }
 
   assert.match(await (await withFrontend.fetch(
@@ -1158,7 +1141,7 @@ test("zelavis uses a configurable root path for dashboard and APIs", async (t) =
     routes.some((route) => route.fullPath === "/admin/api/v2/runtime/config"),
   );
   assert.ok(
-    routes.some((route) => route.fullPath === "/admin/api/v2/auth/providers"),
+    routes.some((route) => route.fullPath === "/admin/api/v2/auth/methods"),
   );
   assert.ok(
     routes.some((route) => route.fullPath === "/admin/api/v2/database/health"),
@@ -1299,6 +1282,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
     subsystems: {
       auth: false,
       database: false,
+      email: false,
       site: false,
       workloads: false,
     },
@@ -1383,6 +1367,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.cloud.read",
       "runtime.cloud.connect",
       "runtime.cloud.disconnect",
+      "runtime.cloud.policy.read",
+      "runtime.cloud.policy.set",
     "runtime.cloud.scaling.read",
     "runtime.cloud.scaling.set",
       "runtime.cloud.nodes.list",
@@ -1439,6 +1425,27 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.assistant.threads.delete",
       "runtime.assistant.approvals.decide",
       "runtime.assistant.messages.stream",
+      "runtime.registrar.providers",
+      "runtime.registrar.connection",
+      "runtime.registrar.connect",
+      "runtime.registrar.disconnect",
+      "runtime.registrar.contact",
+      "runtime.registrar.set-contact",
+      "runtime.registrar.availability",
+      "runtime.registrar.quote",
+      "runtime.registrar.order",
+      "runtime.registrar.orders",
+      "runtime.registrar.order-status",
+      "runtime.registrar.domains",
+      "runtime.registrar.nameservers",
+      "runtime.edge.dns.providers",
+      "runtime.edge.dns.connect",
+      "runtime.edge.dns.disconnect",
+      "runtime.edge.dns.provider-zones",
+      "runtime.edge.dns.zones",
+      "runtime.edge.dns.adopt-zone",
+      "runtime.edge.dns.release-zone",
+      "runtime.edge.dns.wildcard",
       "runtime.projects.list",
       "runtime.projects.versions.catalog",
       "runtime.projects.versions.list",
@@ -1458,6 +1465,28 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.projects.logs",
       "runtime.projects.auth.registration.settings.get",
       "runtime.projects.auth.registration.settings.set",
+      "runtime.projects.auth.methods.settings.get",
+      "runtime.projects.auth.methods.settings.set",
+      "runtime.projects.auth.passkeys.settings.get",
+      "runtime.projects.auth.passkeys.settings.set",
+      "runtime.projects.auth.oauth.connections.list",
+      "runtime.projects.auth.oauth.connections.configure",
+      "runtime.projects.auth.oauth.connections.remove",
+      "runtime.projects.auth.mfa.policy.get",
+      "runtime.projects.auth.mfa.policy.set",
+      "runtime.projects.auth.keys.rotate",
+      "runtime.projects.email.settings.get",
+      "runtime.projects.email.settings.set",
+      "runtime.projects.email.test.send",
+      "runtime.projects.email.deliveries.list",
+      "runtime.projects.auth.invitations.list",
+      "runtime.projects.auth.invitations.create",
+      "runtime.projects.auth.invitations.resend",
+      "runtime.projects.auth.invitations.revoke",
+      "runtime.projects.auth.roles.list",
+      "runtime.projects.auth.roles.create",
+      "runtime.projects.auth.roles.update",
+      "runtime.projects.auth.roles.delete",
       "runtime.projects.auth.accounts.access.set",
       "runtime.projects.proxy.get",
       "runtime.projects.proxy.post",

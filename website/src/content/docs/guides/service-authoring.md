@@ -15,7 +15,7 @@ For core packages, the service definition should live in a named file near the t
 
 Examples:
 
-- `packages/zelavis/src/app/identity/identity-service.ts`
+- `packages/zelavis/src/auth/subsystem.ts`
 - `packages/zelavis/src/db/database-service.ts`
 
 For service packages, the service definition should also live in a named file near the top of the package source.
@@ -24,7 +24,6 @@ Examples:
 
 - `zelavis-services/ecommerce/src/ecommerce-service.ts`
 - `zelavis-services/ecommerce/plugins/stripe/src/stripe-service.ts`
-- `packages/zelavis/src/app/identity/providers/password.ts`
 
 Avoid hiding the real definition under paths like:
 
@@ -139,7 +138,7 @@ export function stripeService(): ZelavisRuntimeService {
 }
 ```
 
-Provider plugins declare a capability owned by the service they extend — `zelavis/identity:credentials`, `@zelavis/ecommerce:payments` — and expose that service's public registration contract as their service value. The owner discovers them by capability.
+Provider plugins declare a capability owned by the service they extend — `zelavis/auth:authenticator`, `@zelavis/ecommerce:payments` — and expose that service's public registration contract as their service value. The owner discovers them by capability.
 
 The owner is named because a bare domain such as `provider:payments` says what a plugin implements and never whose contract it satisfies, so two commerce plugins scanning for it would each collect the other's gateways. There is still no parent/child graph: discovery is a flat scan, naming an owner asks to be considered by it and grants nothing, and the owner validates every provider against its own contract.
 
@@ -185,6 +184,9 @@ zelavis.routes.create({
   handler: () => ({ status: 200, body: { ok: true } }),
 });
 ```
+
+A handler may also read `client.address`, the caller's network address as the runtime trusted it (`undefined` when
+unknown), for example to rate-limit per client. See [Access Control](/architecture/access-control/#client-address).
 
 The installed service bundle should include `dashboard.html`. That file can be
 plain HTML or boot a client app:
@@ -491,3 +493,63 @@ Avoid names that make the entrypoint harder to spot:
 - [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
 - [zelavis/core](../packages/core.md)
+
+## Calling Platform operations as a service
+
+A Platform service can request its own account through its package manifest:
+
+```json
+{
+  "zelavis": {
+    "kind": "plugin",
+    "namespace": "provisioner",
+    "principal": { "permissions": ["projects.create", "projects.list"] }
+  }
+}
+```
+
+List 1–30 distinct concrete permission names, each at most 128 characters. Wildcards
+are refused. This declaration does not change extension scope or grant authority by
+itself. Folder discovery leaves an unapproved service available until an operator
+installs it. Project runtimes refuse these requests with `principal_unsupported`.
+
+Every install requires `approvePermissions` equal to the declared set. An update
+can keep or reduce its approved permissions; a larger request requires fresh approval.
+The installing operator must hold every permission they grant. Without exact approval,
+the server answers HTTP 409 `principal_approval_required` with the requested `permissions`.
+The Marketplace displays them before its **Approve and install** action.
+
+The same approval is available through HTTP, SDK and CLI:
+
+```ts
+await client.services.update("@acme/provisioner", {
+  status: "installed",
+  approvePermissions: ["projects.create", "projects.list"],
+});
+await client.marketplace.update("@acme/provisioner", {
+  approvePermissions: ["projects.create", "projects.list"],
+});
+```
+
+```sh
+zelavis services install @acme/provisioner --approve-permission projects.create --approve-permission projects.list
+zelavis marketplace update @acme/provisioner --approve-permission projects.create --approve-permission projects.list
+```
+
+For HTTP, send the same field with `POST /runtime/services`,
+`PATCH /runtime/services/:name` or `POST /runtime/services/:name/update`, relative
+to the runtime API base. SDK registration (`client.services.register`) and
+`zelavis services register --install` also accept approval.
+
+In a setup hook, use `context.core.fetch(new Request(...))` to call routes under
+`context.api.basePath`. The URL's origin is only an in-process request origin; no
+network connection is opened. It acts as the service's approved account, and supplied
+cookies or authorization headers are discarded. The internal bearer credential is
+consumed before endpoint code runs, so plugin handlers cannot read it. There is no token to store in the
+service. A service without a principal calls anonymously. Before runtime startup
+finishes, fetch returns HTTP 503 `runtime_starting`; Project setup has no `core.fetch`.
+
+The account is visible in Access → Service accounts with `metadata.ownerService`
+naming its package. Disabling or uninstalling deletes the account and revokes its
+tokens. Reinstallation asks for approval again. Disable an installed extender before
+disabling the service whose capability it extends.

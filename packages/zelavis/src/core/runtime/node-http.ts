@@ -4,6 +4,7 @@ import { integration } from "./effect-boundary.js";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { ZelavisServerRuntime } from "./contracts.js";
 import { sendNodeLikeResponse, toNodeLikeWebRequest } from "./node-http-shared.js";
+import { normalizeClientAddress, setRequestClientAddress } from "./client-address.js";
 
 /**
  * Connection budgets for a directly exposed Node HTTP server.
@@ -51,8 +52,55 @@ function failClosed(response: ServerResponse, status: number): void {
   }
 }
 
+/** The header Zelavis's own ingress sets, from the address it computed, for the engine behind it. */
+export const ZELAVIS_CLIENT_ADDRESS_HEADER = "x-zelavis-client-address";
+
+export interface NodeHttpClientAddressOptions {
+  /** Read the rightmost `x-forwarded-for` entry when the peer is loopback (the installation's Edge proxy). Default false. */
+  readonly trustForwardedFor?: boolean;
+  /** Read `x-zelavis-client-address` when the peer is loopback (Zelavis's own ingress). Default true. */
+  readonly trustClientAddressHeader?: boolean;
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  return address !== undefined && (address === "::1" || address.startsWith("127."));
+}
+
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.at(-1) : value;
+}
+
+/**
+ * The caller's address for a request this listener accepted. Only a loopback
+ * peer (Zelavis's own ingress, or the installation's proxy on the same host)
+ * may name another address; any other peer is the address itself, whatever
+ * headers it sent.
+ */
+export function nodeClientAddress(
+  request: Pick<IncomingMessage, "headers" | "socket">,
+  options: NodeHttpClientAddressOptions = {},
+): string | undefined {
+  const raw = request.socket.remoteAddress;
+  const peer = raw === undefined ? undefined : normalizeClientAddress(raw);
+  if (!isLoopbackAddress(peer)) return peer;
+  if (options.trustClientAddressHeader !== false) {
+    const named = singleHeader(request.headers[ZELAVIS_CLIENT_ADDRESS_HEADER]);
+    const address = named === undefined ? undefined : normalizeClientAddress(named);
+    if (address !== undefined) return address;
+  }
+  if (options.trustForwardedFor === true) {
+    const forwarded = singleHeader(request.headers["x-forwarded-for"]);
+    // The rightmost entry is the one the nearest proxy appended; the leftmost is whatever the client claimed.
+    const last = forwarded?.split(",").at(-1);
+    const address = last === undefined ? undefined : normalizeClientAddress(last);
+    if (address !== undefined) return address;
+  }
+  return peer;
+}
+
 export function createNodeHttpServer<TService = unknown>(
   runtime: Pick<ZelavisServerRuntime<TService>, "fetch">,
+  addressing: NodeHttpClientAddressOptions = {},
 ): Server {
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
@@ -84,6 +132,7 @@ export function createNodeHttpServer<TService = unknown>(
           Effect.catchCause(() => Effect.sync(() => { failClosed(response, 400); return undefined; })),
         );
         if (!webRequest) return;
+        setRequestClientAddress(webRequest.value, nodeClientAddress(request, addressing));
 
         yield* Effect.gen(function* () {
           const webResponse = yield* integration(() => runtime.fetch(webRequest.value, {

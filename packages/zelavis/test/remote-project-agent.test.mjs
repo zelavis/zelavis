@@ -14,7 +14,7 @@ import { createHttpsProjectDispatcher } from "../dist/adapters/_project-dispatch
 import { createProjectPlacementAuthority } from "../dist/platform/project-placement-authority.js";
 import { createServer } from "node:http";
 import { createWriterLeaseRoutes } from "../dist/platform/writer-lease-routes.js";
-import { mintLeaseCapability } from "../dist/platform/lease-capability.js";
+import { projectLeaseEnvironment } from "../dist/adapters/_project-lease-environment.js";
 import { acquireWriter, memoryLeaseStore } from "../dist/db/writer-lease.js";
 
 const run = promisify(execFile);
@@ -120,11 +120,12 @@ test("a remote Agent runs a Project as its writer's standby from a signed, place
     agent = await createRemoteProjectAgent({ dataDirectory: join(root, "agent"), host: "localhost", port: 0, keyPem, certPem, trust: () => trust, agentId: "agent-b", nodeId: "node-b" });
     const dispatcher = createHttpsProjectDispatcher({ localNodeId: "node-a", projectsDirectory: join(root, "platform", "projects"), keyId: "platform-test", privateKey,
       destinations: { "node-b": { url: agent.address, caPem: certPem, agentId: "agent-b" } } });
-    const lease = {
-      ZELAVIS_LEASE_AUTHORITY: `http://127.0.0.1:${authority.address().port}/zelavis/api/v1`, ZELAVIS_LEASE_TOKEN: await mintLeaseCapability("secret", { scope: "standby-app", node: "node-b" }),
-      ZELAVIS_LEASE_NODE: "node-b", ZELAVIS_LEASE_STANDBY: "node-a", ZELAVIS_LEASE_ROLE: "standby", ZELAVIS_LEASE_TTL_MILLIS: "3000",
-      ZELAVIS_LEASE_ENDPOINT: "http://127.0.0.1:1/zelavis",
-    };
+    const store = createMemorySystemStore();
+    await store.set("platform", "master-secret", "secret");
+    const lease = await projectLeaseEnvironment({
+      authority: `http://127.0.0.1:${authority.address().port}/zelavis/api/v1`,
+      node: "node-a", standby: "node-b", ttlMillis: 3000,
+    }, store, "standby-app", "standby");
     // No placement was ever committed on node-b, and none is asked for.
     await dispatcher.dispatchStandbyFenced({ projectId: "standby-app", nodeId: "node-b", ownerSession: "session-a", epoch: 1, lease });
     assert.equal((await agent.status("standby-app")).status, "standby", "the Agent runs the Project as a standby");

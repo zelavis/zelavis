@@ -1,31 +1,30 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Effect } from "effect";
-import { claimCloudAuthority, composeCloudCapacity, readCloudPolicy } from "../dist/platform/cloud-engine.js";
+import { claimCloudAuthority, composeCloudCapacity } from "../dist/platform/cloud-engine.js";
+import { parseCloudPolicy } from "../dist/platform/cloud-capacity.js";
 import { createNodeEnrollmentAuthority } from "../dist/platform/node-enrollment.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 import { generateAgentCertificate } from "../dist/adapters/_agent-certificate.js";
-import { startFakeHetzner } from "../services/zelavis-cloud/test/fake-hetzner.mjs";
+import { startFakeHetzner } from "./_fake-hetzner.mjs";
 
-const bundlePath = fileURLToPath(new URL("../services/zelavis-cloud/bundle/index.js", import.meta.url));
+const bundlePath = fileURLToPath(new URL("../dist/adapters/capacity/bundle.js", import.meta.url));
 const GB = 1024 ** 3;
 const POLICY = { location: "nbg1", image: "ubuntu-24.04", maxNodes: 2, machineClasses: [{ name: "cpx11", cpuCores: 2, memoryBytes: 2 * GB, diskBytes: 40 * GB }] };
 const FINGERPRINT = "ab".repeat(32);
 const run = (effect) => Effect.runPromise(effect);
 
-test("a policy file is validated, not guessed at", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "zelavis-cloud-policy-"));
-  const write = async (name, value) => { const file = join(directory, name); await writeFile(file, typeof value === "string" ? value : JSON.stringify(value)); return file; };
-  assert.deepEqual(await run(readCloudPolicy(await write("ok.json", POLICY))), POLICY);
-  for (const bad of ["{", {}, { ...POLICY, maxNodes: 0 }, { ...POLICY, maxNodes: 1000 }, { ...POLICY, machineClasses: [] },
+test("a policy is validated, not guessed at", async () => {
+  assert.deepEqual(await run(parseCloudPolicy(POLICY)), POLICY);
+  assert.equal((await run(parseCloudPolicy({ ...POLICY, machineClasses: [{ ...POLICY.machineClasses[0], cpuCores: 0.5 }] }))).machineClasses[0].cpuCores, 0.5);
+  for (const bad of [null, {}, { ...POLICY, maxNodes: 0 }, { ...POLICY, maxNodes: 101 }, { ...POLICY, machineClasses: [] },
     { ...POLICY, machineClasses: [{ name: "x", cpuCores: 0, memoryBytes: 1, diskBytes: 1 }] }, { ...POLICY, image: "" }]) {
-    await assert.rejects(run(readCloudPolicy(await write("bad.json", bad))), /cloud policy/, JSON.stringify(bad));
+    await assert.rejects(run(parseCloudPolicy(bad)), /cloud policy/);
   }
-  await assert.rejects(run(readCloudPolicy(join(directory, "missing.json"))), /could not be read/);
 });
 
 test("the composed controller connects, creates a machine whose first-boot data carries a real single-use token, and sees it enrol", async (t) => {
@@ -34,11 +33,12 @@ test("the composed controller connects, creates a machine whose first-boot data 
   const store = createMemorySystemStore();
   const authority = createNodeEnrollmentAuthority({ store });
   const controller = await run(composeCloudCapacity({
-    store, masterSecret: "master-secret", platformId: "platform-1", bundlePath, policy: POLICY,
+    store, masterSecret: "master-secret", platformId: "platform-1", bundlePath,
     endpoint: { url: "https://203.0.113.5:8444", fingerprint: FINGERPRINT },
-    workDir: await mkdtemp(join(tmpdir(), "zelavis-cloud-work-")), authority, apiEndpoint: fake.url,
+    workDir: await mkdtemp(join(tmpdir(), "zelavis-capacity-work-")), authority, apiEndpoint: fake.url,
   }));
 
+  await run(controller.setPolicy(POLICY, "owner"));
   await run(controller.connect({ provider: "hetzner", token: fake.token, principalId: "owner" }));
   const node = await run(controller.request({ requestId: "r1", principalId: "owner" }));
   assert.equal(node.state, "provisioning");
@@ -64,11 +64,16 @@ test("the composed controller connects, creates a machine whose first-boot data 
   await run(controller.disconnect("owner"));
 });
 
-test("an installation without the bundle says so instead of starting", async () => {
-  await assert.rejects(run(composeCloudCapacity({
-    store: createMemorySystemStore(), masterSecret: "s", platformId: "p", bundlePath: join(tmpdir(), "no-such-bundle.js"), policy: POLICY,
+test("a missing bundle fails only on first provider use", async () => {
+  const controller = await run(composeCloudCapacity({
+    store: createMemorySystemStore(), masterSecret: "s", platformId: "p", bundlePath: join(tmpdir(), "no-such-bundle.js"),
     endpoint: { url: "https://203.0.113.5:8444", fingerprint: FINGERPRINT }, workDir: tmpdir(),
-  })), /could not be loaded/);
+  }));
+  assert.equal(await run(controller.connection()), undefined);
+  assert.deepEqual(await run(controller.policy()), { policy: null });
+  await assert.rejects(run(controller.connect({ provider: "hetzner", token: "0123456789abcdef", principalId: "owner" })), error => error.code === "policy-missing");
+  await run(controller.setPolicy(POLICY, "owner"));
+  await assert.rejects(run(controller.connect({ provider: "hetzner", token: "0123456789abcdef", principalId: "owner" })), /could not be loaded/);
 });
 
 test("a later Platform process claims cloud authority and the earlier one stops being current", async () => {
@@ -81,4 +86,14 @@ test("a later Platform process claims cloud authority and the earlier one stops 
   assert.equal(await first.isCurrent(), false, "the deposed process is no longer current");
   assert.equal(await second.isCurrent(), true);
   assert.equal((await run(claimCloudAuthority(store, "platform-2"))).epoch, 1, "authority is per Platform id");
+});
+
+
+test("cloud authority refuses corrupt state and exhausted epochs", async () => {
+  for (const epoch of [0, -1, "bad", Number.MAX_SAFE_INTEGER]) {
+    const store = createMemorySystemStore();
+    store.set("fabric.cloud-authority.v1", "p", { epoch });
+    await assert.rejects(run(claimCloudAuthority(store, "p")), /malformed|exhausted/);
+    assert.deepEqual(store.get("fabric.cloud-authority.v1", "p").value, { epoch });
+  }
 });

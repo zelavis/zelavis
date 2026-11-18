@@ -26,6 +26,7 @@ Architecture docs should describe real current behavior and stable design constr
 ## Access and assistants
 
 - [Access Control](./access-control.md): principals, permissions and scoped grants.
+- [Zelavis Auth](./auth.md): accounts, sessions and sign-in methods per runtime, transactional guarantees, and limits.
 - [Assistant Runtime](./assistant-runtime.md): the Admin Agent, its tools and its limits.
 
 ## Dashboard

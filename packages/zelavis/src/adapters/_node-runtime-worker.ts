@@ -12,6 +12,8 @@ import { acquireNodeRuntimeOwnership } from "./_node-runtime-ownership.js";
 
 /** Engine modules prepare immutable code/configuration without taking live ownership. */
 export interface NodeRuntimeEngine {
+  /** False when the engine takes the caller's address only from its own verified envelope (a Project runtime). Default true. */
+  readonly trustClientAddressHeader?: boolean;
   open(generation: number): Effect.Effect<NodeRuntimeEngineOwner, TaggedFailure>;
 }
 export interface NodeRuntimeEngineOwner {
@@ -86,7 +88,7 @@ const run = Effect.gen(function* () {
       requestOwnership.enter,
       () => integration(() => owner.runtime.fetch(...args)),
       release => Effect.sync(release),
-    )); } });
+    )); } }, { trustClientAddressHeader: engine.trustClientAddressHeader !== false });
     yield* Effect.callback<void, IntegrationFailure>(resume => {
       const fail = (cause: Error) => resume(Effect.fail(new IntegrationFailure(cause)));
       server!.once("error", fail);

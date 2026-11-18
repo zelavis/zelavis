@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { normalizeClientAddress } from "../core/runtime/client-address.js";
 import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Signed authority envelope for the Project Gateway.
@@ -20,6 +21,7 @@ import { present, integration, integrationValue, type IntegrationFailure } from 
  */
 
 export const ZELAVIS_GATEWAY_AUTHORITY_HEADER = "x-zelavis-authority";
+export const ZELAVIS_GATEWAY_CLIENT_ADDRESS_HEADER = "x-zelavis-authority-client-address";
 
 /** How long a signed envelope stays valid. Requests are loopback and immediate. */
 export const ZELAVIS_GATEWAY_AUTHORITY_TTL_MS = 30_000;
@@ -47,6 +49,8 @@ export interface ZelavisGatewayAuthorityClaims {
   readonly permissions: readonly string[];
   /** Optional proof for a single conditional App account access edit. */
   readonly accountAccessDigest?: string;
+  /** The caller's network address as the Platform saw it. Signed, so a Project runtime can rate-limit by client. */
+  readonly clientAddress?: string;
   /** Milliseconds since the epoch after which this envelope is refused. */
   readonly expiresAt: number;
   /** Single-use value so a captured envelope cannot be replayed inside its window. */
@@ -116,6 +120,52 @@ export function signGatewayAuthority(
   )}`;
 }));
   }
+
+const addressProofBytes = (token: string, address: string) =>
+  new TextEncoder().encode(JSON.stringify(["zelavis-gateway-client-address", token, address]));
+
+/**
+ * Return the Project driver transport value. The established authority token
+ * stays byte-for-byte valid for a Project locked to a published engine. Address
+ * metadata is signed separately and bound to that exact single-use token.
+ */
+export function signGatewayDispatch(secret: string, claims: ZelavisGatewayAuthorityClaims): Promise<string> {
+  return present(Effect.gen(function* () {
+    const token = yield* integrationValue(signGatewayAuthority(secret, claims));
+    const { clientAddress } = claims;
+    if (clientAddress === undefined || normalizeClientAddress(clientAddress) !== clientAddress) return token;
+    const tokenKey = yield* integrationValue(importSigningKey(secret));
+    const signature = yield* integration(() => crypto.subtle.sign("HMAC",
+      // Use the same Project key with a domain-separated payload.
+      tokenKey, addressProofBytes(token, clientAddress)));
+    return `${token};${clientAddress}.${base64UrlEncode(new Uint8Array(signature))}`;
+  }));
+}
+
+export function splitGatewayDispatch(value: string): { authority: string; addressProof?: string } {
+  const boundary = value.indexOf(";");
+  return boundary === -1 ? { authority: value } : { authority: value.slice(0, boundary), addressProof: value.slice(boundary + 1) };
+}
+
+export function setGatewayDispatchHeaders(headers: Headers, dispatch: string): void {
+  const { authority, addressProof } = splitGatewayDispatch(dispatch);
+  headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
+  if (addressProof !== undefined) headers.set(ZELAVIS_GATEWAY_CLIENT_ADDRESS_HEADER, addressProof);
+}
+
+export function verifyGatewayClientAddress(secret: string, token: string, proof: string | null | undefined): Promise<string | undefined> {
+  return present(Effect.gen(function* () {
+    if (!proof || proof.length > 128) return undefined;
+    const boundary = proof.lastIndexOf(".");
+    if (boundary < 1) return undefined;
+    const address = proof.slice(0, boundary);
+    const signature = proof.slice(boundary + 1);
+    if (normalizeClientAddress(address) !== address || !/^[A-Za-z0-9_-]{43}$/u.test(signature)) return undefined;
+    const key = yield* integrationValue(importSigningKey(secret));
+    const valid = yield* integration(() => crypto.subtle.verify("HMAC", key, base64UrlDecode(signature), addressProofBytes(token, address)));
+    return valid ? address : undefined;
+  }));
+}
 
 export interface VerifyGatewayAuthorityOptions {
   /** Only envelopes issued for this Project are accepted. */
@@ -227,7 +277,7 @@ export function verifyGatewayAuthority(
     permissions: permissions as readonly string[],
     expiresAt,
     nonce,
-    ...(accountAccessDigest === undefined ? {} : { accountAccessDigest }),
+    ...(typeof accountAccessDigest === "string" ? { accountAccessDigest } : {}),
   };
 }));
   }

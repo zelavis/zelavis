@@ -202,14 +202,14 @@ function streamEvents(open: () => Promise<Response>): AsyncIterable<ZelavisAssis
 
 /** What registering or changing a service answers: the registry as it now is, and whether the change is live. */
 export interface ZelavisServiceChange { readonly services: readonly PublicServiceRegistryIdentity[]; readonly activation: ZelavisServiceActivationResult }
-export interface ZelavisServiceRegistration { readonly specifier: string; readonly name?: string; readonly status?: "available" | "installed"; readonly source?: string; readonly order?: number }
+export interface ZelavisServiceRegistration { readonly specifier: string; readonly approvePermissions?: readonly string[]; readonly name?: string; readonly status?: "available" | "installed"; readonly source?: string; readonly order?: number }
 
 /** The service registry beyond the list `client.marketplace.services()` returns, over `/runtime/services`. Same contract as `zelavis services`. */
 export interface ZelavisServicesClient {
   /** Register an ESM service: `{ specifier, name?, status?: "available" | "installed", source?, order? }`. */
   register(input: ZelavisServiceRegistration): Promise<ZelavisServiceChange>;
   /** Install or disable a registered service, or change its order: `{ status?, order? }`. */
-  update(name: string, input: { readonly status?: "available" | "installed"; readonly order?: number }): Promise<ZelavisServiceChange>;
+  update(name: string, input: { readonly status?: "available" | "installed"; readonly order?: number; readonly approvePermissions?: readonly string[] }): Promise<ZelavisServiceChange>;
   /** Services that extend another, grouped by what they extend; `owner` limits it to one service. */
   extensions(owner?: string): Promise<{ readonly extensionPoints: readonly ServiceExtensionPoint[] }>;
 }

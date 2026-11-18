@@ -119,6 +119,11 @@ export function mount(host: HTMLElement) {
     errors.replaceChildren();
     fork(work.pipe(Effect.ensuring(Effect.sync(() => { mutating = false; host.removeAttribute("aria-busy"); controls.forEach(control => { control.disabled = false; }); })), Effect.tap(value => Effect.sync(() => { if (!disposed) { if (success) success(value); else refreshPage(); } })), Effect.catch(error => Effect.sync(() => {
       if (disposed) return;
+      if (error.status === 401 && error.code === "not_signed_in") {
+        const url = new URL(router!.url());
+        const path = unmounted(url.pathname);
+        if (!isPublicAuthPath(path)) { navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`); return; }
+      }
       // Even a failed mutation may have persisted lifecycle state or a deletion tombstone.
       refreshPage();
       errors.replaceChildren(message(error.message, true));
@@ -142,6 +147,7 @@ export function mount(host: HTMLElement) {
     title.textContent = matched?.pageLabel ?? "Workspace";
   }
 
+  let serverViewRetry: string | undefined;
   const isServerView = () => /\/projects\/[^/]+\/database\/?$/.test(new URL(router!.url()).pathname) && router!.route()?.kind === "page";
   function refreshPage() {
     if (isServerView()) void router!.navigate(router!.url(), { focus: "preserve", scroll: "preserve" }).catch(cause => errors.replaceChildren(message(String(cause), true)));
@@ -166,7 +172,23 @@ export function mount(host: HTMLElement) {
     outlet.classList.toggle("server-workspace", serverView);
     legacyContent.hidden = serverView;
     if (serverView) {
-      if (outlet.querySelector("[data-requires-login]")) { navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`); return; }
+      if (outlet.querySelector("[data-requires-login]")) {
+        const signIn = () => navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`);
+        if (!config || serverViewRetry === url.href) { signIn(); return; }
+        serverViewRetry = url.href;
+        // Refresh uses the cookie-only session endpoint in the browser. The server
+        // document that was already drawn may have seen the expired access token.
+        pageFiber = fork(request(`${config.api.basePath}/runtime/access`).pipe(
+          Effect.tap(() => Effect.sync(() => { if (!disposed && version === generation) refreshPage(); })),
+          Effect.catch(error => Effect.sync(() => {
+            if (disposed || version !== generation) return;
+            if (error.status === 401) signIn();
+            else errors.replaceChildren(message(error.message, true));
+          })),
+        ));
+        return;
+      }
+      serverViewRetry = undefined;
       shellReady();
       const raw = outlet.querySelector<HTMLElement>("[data-project-context]")?.dataset.projectContext;
       if (raw) {
@@ -181,7 +203,7 @@ export function mount(host: HTMLElement) {
     navigation(path, projectId);
     legacyContent.replaceChildren(message("Loading…"));
     const context: ScreenContext | undefined = config ? {
-      config, url, path, projectId, section, navigate, run, refresh: refreshPage,
+      config, url, path, projectId, section, navigate, run, refresh: refreshPage, signOut,
       projectsNavigation(list) { if (version === generation) sidebarController.setProjects(list); },
       projectNavigation(project, runtime, menu) { if (version === generation) { navigation(path, projectId, project, runtime, menu); loadMenu(projectId, project, runtime); } },
       setSearch(values) { const next = new URL(router!.url()); for (const [key, value] of Object.entries(values)) { if (value === undefined) next.searchParams.delete(key); else next.searchParams.set(key, value); } navigate(`${path}${next.search}${next.hash}`); }

@@ -1,9 +1,28 @@
-import type { AddProjectDomainInput, ProjectDomain, ProjectDomainList, RemoveProjectDomainResult, VerifyProjectDomainInput } from "../edge/project-domains.js";
-import type { RegistrationSettings, RegistrationStatus, SetRegistrationSettingsInput } from "../app/identity/domain/registration.js";
-export type { RegistrationSettings, RegistrationStatus, SetRegistrationSettingsInput } from "../app/identity/domain/registration.js";
-import type { AccountAccessResult, SetAccountAccessInput } from "../app/identity/domain/account-access.js";
-export type { AccountAccessResult, SetAccountAccessInput, ConcreteAccountGrant, HumanAccountRole } from "../app/identity/domain/account-access.js";
-import type { AccountImportInput, AccountImportResult } from "../app/identity/account-import.js";
+import type { CloudCapacityPolicy } from "../platform/cloud-capacity.js";
+export type { CloudCapacityPolicy } from "../platform/cloud-capacity.js";
+import type { RegistrarController, RegistrarOrder, RegistrarOrderInput } from "../edge/registrar.js";
+export type { RegistrarOrder, RegistrarOrderInput, ConnectRegistrarInput, SetRegistrarContactInput } from "../edge/registrar.js";
+export type { RegistrarContact, RegistrarPrice } from "../edge/registrar-provider.js";
+export interface ZelavisRegistrarClient extends Pick<RegistrarController, "providers" | "connection" | "connect" | "disconnect" | "contact" | "setContact" | "check" | "quote" | "orders" | "getOrder" | "domains" | "setNameservers"> {
+  order(input: RegistrarOrderInput): Promise<RegistrarOrder>;
+}
+import { createBrowserAuthSession, isAuthTokenBundle, type BrowserAuthSessionOptions } from "./auth-session.js";
+import type { AddProjectDomainInput, ProjectDomain, ProjectDomainList, ProjectHostedZones, RemoveProjectDomainResult, VerifyProjectDomainInput } from "../edge/project-domains.js";
+import type { AdoptDnsZoneInput, ConnectDnsProviderInput, EdgeDnsProviderSummary, EdgeDnsZoneSummary } from "../edge/dns-connections.js";
+import type { DnsProviderZone } from "../edge/dns-provider.js";
+import type { RegistrationSettings, SetRegistrationSettingsInput } from "../auth/registration/policy.js";
+export type { RegistrationSettings, RegistrationStatus, SetRegistrationSettingsInput } from "../auth/registration/policy.js";
+import type { AccountAccessResult, SetAccountAccessInput } from "../auth/access/access.js";
+import { createAuthClient, invitationPageQuery, revisionQuery, type ZelavisAuthClient } from "./auth-client.js";
+import type { RoleCatalogueView, RoleDefinitionInput } from "../auth/roles/catalogue.js";
+export type * from "./auth-client.js";
+import type { CreateInvitationInput, InvitationListOptions, InvitationPage, PublicInvitation } from "../auth/invitations/tables.js";
+export type { AcceptInvitationInput, CreateInvitationInput, InvitationListOptions, InvitationPage, PublicInvitation } from "../auth/invitations/tables.js";
+export type { RoleCatalogueView, RoleDefinition, RoleDefinitionInput } from "../auth/roles/catalogue.js";
+import type { EmailDeliveryPage, EmailSettings, EmailSettingsInput } from "../app/email/contracts.js";
+export type { EmailDelivery, EmailDeliveryPage, EmailSettings, EmailSettingsInput } from "../app/email/contracts.js";
+export type { AccountAccessResult, SetAccountAccessInput, ConcreteAccountGrant, HumanAccountRole } from "../auth/access/access.js";
+export type { AccountImportInput, AccountImportResult } from "../auth/admin/import.js";
 import {
   createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient, createWriterLeasesClient,
   type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient, type ZelavisWriterLeasesClient,
@@ -41,8 +60,6 @@ import { Data, Duration, Effect, Schedule } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
 import { present, integration, evaluate, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
-import type { IdentityApi } from "../app/identity/index.js";
-import type { IdentityBootstrapCapability } from "../app/identity/core/types.js";
 import type { ZelavisUpdateRun, ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
 import type { PublicServiceRegistryIdentity, ServiceSourceDiagnostic, ServiceUpdateResult } from "../platform/service-registry-view.js";
@@ -99,8 +116,6 @@ import {
 } from "../core/service/context.js";
 import type {
   ZelavisServerRoute,
-  ZelavisPrincipal,
-  ZelavisPrincipalGrant,
 } from "../core/runtime/contracts.js";
 import { createPluginClients, validateOperationName, type RegisteredPluginClients, type PluginOperation } from "./plugins.js";
 export type { PluginClients, PluginApiRegistry, RegisteredPluginClients, PluginOperation, PluginOperationOptions } from "./plugins.js";
@@ -109,13 +124,7 @@ export { createAPI, type CreateApiOptions, type PluginApiTree, type RegisteredPl
 export type { PluginAuthoringApiRegistry, ZelavisCreateApiFunction, ZelavisMenuApi } from "./create-api.js";
 import { isSandboxedServicePage, createServicePageFetch } from "./service-page.js";
 
-export type { IdentityApi, DatabaseRuntimeApi, DatabaseJsonObject };
-export {
-  IdentityDomainError,
-  IdentityNotFoundError,
-  IdentityValidationError,
-  identityEndpointGroup,
-} from "../app/identity/index.js";
+export type { DatabaseRuntimeApi, DatabaseJsonObject };
 // The database is reached through `zelavis/db`, not re-exported here: its
 // store is a host resource that opens files, and an SDK bundle a browser can
 // load must not carry one.
@@ -130,7 +139,7 @@ export type { GeneratedSchemaTypes, LogicalSchemaBundle, SchemaExportOptions, Sc
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";
 export type ZelavisSdkServiceName =
-  | "zelavis/app/identity"
+  | "zelavis/auth"
   | "zelavis/db"
   | "zelavis/app/workloads"
   | "zelavis/runtime"
@@ -152,6 +161,8 @@ export interface ZelavisSdkSurfaceManifest {
 }
 
 export interface ZelavisClientOptions {
+  /** Manage bearer sessions and transparently refresh an expired access token. */
+  authSession?: BrowserAuthSessionOptions;
   baseUrl?: string | URL;
   rootPath?: string;
   apiPrefix?: string;
@@ -283,133 +294,6 @@ export interface ZelavisRuntimeAccessResponse {
   };
 }
 
-export interface ZelavisAuthAccount {
-  readonly id: string;
-  readonly email?: string;
-  readonly username?: string;
-  readonly displayName?: string;
-  readonly verified: boolean;
-  readonly roles?: readonly string[];
-  readonly permissions?: readonly string[];
-  readonly grants?: readonly ZelavisPrincipalGrant[];
-  readonly metadata?: Readonly<Record<string, unknown>>;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export interface ZelavisAdministrativeAuthAccount extends ZelavisAuthAccount {
-  readonly accessRevision: number;
-}
-
-export interface ZelavisAuthSession {
-  readonly id: string;
-  readonly accountId: string;
-  readonly status: "active" | "revoked" | "expired";
-  readonly expiresAt: string;
-  readonly metadata?: Readonly<Record<string, unknown>>;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export interface ZelavisAuthSessionResult {
-  readonly account: ZelavisAuthAccount;
-  readonly session?: {
-    readonly token: string;
-    readonly session: ZelavisAuthSession;
-  };
-}
-
-export interface ZelavisOAuthConnection {
-  readonly provider: string;
-  readonly title?: string;
-  readonly issuer?: string;
-  readonly clientId: string;
-  readonly redirectUri: string;
-  readonly scopes?: readonly string[];
-  readonly enabled: boolean;
-  readonly configured: boolean;
-  readonly hasClientSecret: boolean;
-  readonly updatedAt: string;
-}
-
-export interface ZelavisServiceAccountCreateInput {
-  readonly name: string;
-  readonly permissions?: readonly string[];
-  readonly grants?: readonly ZelavisPrincipalGrant[];
-  readonly expiresInDays?: number;
-  /**
-   * The App Tenant this account acts in.
-   *
-   * Omitted, the account is its own Tenant — a generated id no operator will
-   * recognise, and one no second client can ever join. Name it when more than
-   * one credential belongs to the same customer.
-   */
-  readonly tenantId?: string;
-}
-
-export interface ZelavisAuthClient {
-  registrationStatus(): Promise<RegistrationStatus>;
-  providers(): Promise<readonly string[]>;
-  oauthProviders(): Promise<readonly string[]>;
-  signUp(provider: string, input: { identifier: string; password?: string; displayName?: string; [key: string]: unknown }): Promise<ZelavisAuthSessionResult>;
-  signUpWithPassword(input: { identifier: string; password: string; displayName?: string }): Promise<ZelavisAuthSessionResult>;
-  signIn(provider: string, input: { identifier: string; password?: string; [key: string]: unknown }): Promise<ZelavisAuthSessionResult>;
-  signInWithPassword(input: { identifier: string; password: string }): Promise<ZelavisAuthSessionResult>;
-  signInWithOAuth(provider: string): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }>;
-  linkIdentity(provider: string): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }>;
-  getSession(): Promise<{ readonly principal: ZelavisPrincipal }>;
-  refreshSession(): Promise<{ readonly token: string; readonly session: ZelavisAuthSession }>;
-  signOut(): Promise<void>;
-  /** The signed-in account's own sessions, and ending one of them. */
-  sessions(): Promise<{ readonly sessions: readonly ZelavisAuthSession[]; readonly currentSessionId?: string }>;
-  revokeSession(sessionId: string): Promise<void>;
-  /** The providers that can recover a credential, and the two steps of a recovery: ask, then complete with what was sent. */
-  recoveryProviders(): Promise<ZelavisIdentityResult<"authentication", "listRecoveryProviders">>;
-  beginRecovery(provider: string, input: Parameters<IdentityApi["authentication"]["beginRecovery"]>[1]): Promise<ZelavisIdentityResult<"authentication", "beginRecovery">>;
-  completeRecovery(provider: string, input: Parameters<IdentityApi["authentication"]["completeRecovery"]>[1]): Promise<void>;
-  /** Whether a first owner still has to be created, and creating one with the bootstrap token (`{ bootstrapToken, … }`). */
-  bootstrapStatus(): Promise<Awaited<ReturnType<IdentityBootstrapCapability["status"]>> & { readonly available: boolean; readonly tokenRequired: boolean }>;
-  bootstrap(input: Parameters<IdentityBootstrapCapability["bootstrap"]>[0]): Promise<{ readonly account: Awaited<ReturnType<IdentityBootstrapCapability["bootstrap"]>>["account"]; readonly session: { readonly token: string; readonly session: ZelavisAuthSession } }>;
-  readonly admin: {
-    registrationSettings(): Promise<RegistrationSettings>;
-    setRegistrationSettings(input: SetRegistrationSettingsInput): Promise<RegistrationSettings>;
-    accounts(accountId?: string): Promise<readonly ZelavisAdministrativeAuthAccount[]>;
-    setAccountAccess(accountId: string, input: SetAccountAccessInput): Promise<AccountAccessResult>;
-    createAccount(input: Parameters<IdentityApi["accounts"]["create"]>[0]): Promise<ZelavisAdministrativeAuthAccount>;
-    /** Import accounts from another system; see `AccountImportInput`. Same contract as `zelavis auth import-accounts`. */
-    importAccounts(input: AccountImportInput): Promise<AccountImportResult>;
-    /** Credentials for an account: `{ accountId, provider, … }`, as the provider defines them. */
-    createCredentials(input: Parameters<IdentityApi["credentials"]["create"]>[0]): Promise<Omit<ZelavisIdentityResult<"credentials", "create">, "secretHash">>;
-    accountSessions(accountId: string): Promise<readonly ZelavisAuthSession[]>;
-    revokeAccountSessions(accountId: string): Promise<{ readonly revoked: readonly ZelavisAuthSession[] }>;
-    revokeAccountSession(accountId: string, sessionId: string): Promise<void>;
-    securityEvents(): Promise<{ readonly events: ZelavisIdentityResult<"security", "listEvents"> }>;
-    oauthConnections(): Promise<readonly ZelavisOAuthConnection[]>;
-    configureOAuth(provider: string, input: {
-      readonly issuer?: string;
-      readonly clientId: string;
-      readonly clientSecret?: string;
-      readonly redirectUri: string;
-      readonly scopes?: readonly string[];
-      readonly enabled?: boolean;
-    }): Promise<ZelavisOAuthConnection>;
-    removeOAuth(provider: string): Promise<void>;
-    serviceAccounts(): Promise<readonly ZelavisAuthAccount[]>;
-    createServiceAccount(input: ZelavisServiceAccountCreateInput): Promise<{
-      readonly serviceAccount: ZelavisAuthAccount;
-      readonly token: string;
-      readonly session: ZelavisAuthSession;
-    }>;
-    rotateServiceAccountToken(accountId: string, expiresInDays?: number): Promise<{
-      readonly token: string;
-      readonly session: ZelavisAuthSession;
-    }>;
-    /** Names the App Tenant an existing service account acts in. */
-    setServiceAccountTenant(accountId: string, tenantId: string): Promise<ZelavisAuthAccount>;
-    revokeServiceAccount(accountId: string): Promise<void>;
-  };
-}
-
 export interface ZelavisClient {
   readonly plugins: RegisteredPluginClients;
   readonly baseUrl: URL;
@@ -436,6 +320,9 @@ export interface ZelavisClient {
   readonly shardPlacement: ZelavisShardPlacementClient;
   /** Cloud capacity, over `/runtime/cloud`. Same contract as `zelavis cloud`. */
   readonly cloud: ZelavisCloudClient;
+  /** The Platform's own email delivery, over `/email` (`system.settings.manage`). Same contract as `zelavis email`. */
+  readonly email: ZelavisEmailClient;
+  readonly registrar: ZelavisRegistrarClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -1099,9 +986,6 @@ export interface ZelavisWorkloadsClient {
 /** What a database operation answers on success, taken from the server's own signature so the two cannot drift. */
 export type ZelavisDataSuccess<Operation extends keyof DocumentsApi> =
   DocumentsApi[Operation] extends (...args: never[]) => Effect.Effect<infer Success, unknown> ? Success : never;
-/** What an identity operation answers, taken from the identity API's own signature. */
-export type ZelavisIdentityResult<Group extends keyof IdentityApi, Operation extends keyof IdentityApi[Group]> =
-  IdentityApi[Group][Operation] extends (...args: never[]) => infer Result ? Awaited<Result> : never;
 /** What the Project's database reports about itself. */
 export interface ZelavisDataHealth {
   readonly status: "ok"; readonly nodeId: string; readonly shards: number; readonly virtualRanges: number; readonly partitionMapVersion: number;
@@ -1260,7 +1144,7 @@ export interface ZelavisMarketplaceClient {
    * Installs the newer version the list offers for an installed service; needs `system.services.manage`.
    * The Platform chooses the version from the list; a recipe's Projects then offer its upgrade.
    */
-  update(name: string): Promise<ServiceUpdateResult>;
+  update(name: string, options?: { readonly approvePermissions?: readonly string[] }): Promise<ServiceUpdateResult>;
 }
 
 /** Whether a terminal can be opened on this server, and the caller's own open sessions. */
@@ -1498,7 +1382,13 @@ export interface ZelavisNodesClient {
   remove(nodeId: string): Promise<{ readonly removed: boolean }>;
 }
 
+export interface ZelavisCloudPolicy {
+  readonly policy: CloudCapacityPolicy | null;
+  readonly updatedAt?: number;
+}
+
 export interface ZelavisCloudConnection {
+  readonly endpoint?: string;
   readonly provider: string;
   readonly label: string;
   readonly connectedAt: number;
@@ -1530,7 +1420,23 @@ export interface ZelavisCloudScaling {
   readonly last?: { readonly outcome: string; readonly at: number };
 }
 
+/** One runtime's email delivery: SMTP settings, a test send and the deliveries listing. */
+export interface ZelavisEmailClient {
+  /** The settings; the SMTP password only as `smtp.hasPassword`. */
+  settings(): Promise<EmailSettings>;
+  /** Replaces the settings; pass `expectedRevision` from the last read (409 when it changed). */
+  setSettings(input: EmailSettingsInput): Promise<EmailSettings>;
+  /** Queues a test message to one address (202); follow it in `deliveries`. */
+  sendTest(to: string): Promise<{ readonly id: string }>;
+  /** Deliveries oldest first, a page at a time; content is never returned. */
+  deliveries(options?: { readonly limit?: number; readonly after?: string }): Promise<EmailDeliveryPage>;
+}
+
 export interface ZelavisCloudClient {
+  /** Machine policy; needs server.cloud.view. */
+  policy(): Promise<ZelavisCloudPolicy>;
+  /** Save a machine policy, refusing a stale revision; needs server.cloud.connect. */
+  setPolicy(policy: CloudCapacityPolicy, options?: { readonly expectedUpdatedAt?: number }): Promise<ZelavisCloudPolicy>;
   /** Whether automatic machine requests are allowed, and the last decision; needs `server.cloud.view`. */
   scaling(): Promise<ZelavisCloudScaling>;
   /** Allows or forbids automatic machine requests, with limits; 409 when not connected; needs `server.cloud.connect`. */
@@ -1538,7 +1444,7 @@ export interface ZelavisCloudClient {
   /** The provider connection, or null; needs `server.cloud.view`. */
   connection(): Promise<ZelavisCloudConnection | null>;
   /** Connects a provider. The token is proved by use, sealed, and never returned; needs `server.cloud.connect`. */
-  connect(input: { readonly provider: string; readonly token: string; readonly label?: string }): Promise<ZelavisCloudConnection>;
+  connect(input: { readonly provider: string; readonly token: string; readonly label?: string; readonly endpoint?: string }): Promise<ZelavisCloudConnection>;
   /** Forgets the token; 409 while machines this Platform created still exist; needs `server.cloud.connect`. */
   disconnect(): Promise<{ readonly disconnected: boolean }>;
   /** Machines this Platform created in its cloud; needs `server.cloud.view`. */
@@ -1561,11 +1467,38 @@ export interface ZelavisProjectSetupReveal {
 export interface ZelavisProjectsClient {
   domains(projectId: string): Promise<ProjectDomainList>;
   addDomain(projectId: string, input: AddProjectDomainInput): Promise<ProjectDomain>;
+  /** The operator zones this Project may take a hosted subdomain under (`project.domains.manage`). */
+  hostedZones(projectId: string): Promise<ProjectHostedZones>;
   verifyDomain(projectId: string, hostname: string, input: VerifyProjectDomainInput): Promise<ProjectDomain>;
   removeDomain(projectId: string, hostname: string, expectedRevision: number): Promise<RemoveProjectDomainResult>;
   registrationSettings(projectId: string): Promise<RegistrationSettings>;
   setRegistrationSettings(projectId: string, input: SetRegistrationSettingsInput): Promise<RegistrationSettings>;
+  /** An App's own Auth settings, through the Gateway (`project.settings.manage` on that Project). */
+  authMethodSettings(projectId: string): Promise<{ readonly enabled: readonly string[]; readonly revision: number }>;
+  setAuthMethodSettings(projectId: string, input: { readonly enabled: readonly string[]; readonly expectedRevision: number }): Promise<unknown>;
+  passkeySettings(projectId: string): Promise<unknown>;
+  setPasskeySettings(projectId: string, input: Readonly<Record<string, unknown>>): Promise<unknown>;
+  oauthConnections(projectId: string): Promise<unknown>;
+  configureOAuthConnection(projectId: string, provider: string, input: Readonly<Record<string, unknown>>): Promise<unknown>;
+  removeOAuthConnection(projectId: string, provider: string): Promise<void>;
+  mfaPolicy(projectId: string): Promise<unknown>;
+  setMfaPolicy(projectId: string, input: Readonly<Record<string, unknown>>): Promise<unknown>;
+  rotateAuthKeys(projectId: string): Promise<unknown>;
+  /** An App's own email settings, through the Gateway (`project.settings.manage` on that Project). */
+  emailSettings(projectId: string): Promise<EmailSettings>;
+  setEmailSettings(projectId: string, input: EmailSettingsInput): Promise<EmailSettings>;
+  sendTestEmail(projectId: string, to: string): Promise<{ readonly id: string }>;
+  emailDeliveries(projectId: string, options?: { readonly limit?: number; readonly after?: string }): Promise<EmailDeliveryPage>;
+  invitations(projectId: string, options?: InvitationListOptions): Promise<InvitationPage>;
+  invite(projectId: string, input: CreateInvitationInput): Promise<PublicInvitation>;
+  resendInvitation(projectId: string, id: string): Promise<PublicInvitation>;
+  revokeInvitation(projectId: string, id: string): Promise<PublicInvitation>;
   setAccountAccess(projectId: string, accountId: string, input: SetAccountAccessInput): Promise<AccountAccessResult>;
+  /** An App's own custom roles, through the Gateway (`project.users.manage` on that Project). */
+  roles(projectId: string): Promise<RoleCatalogueView>;
+  createRole(projectId: string, input: RoleDefinitionInput): Promise<RoleCatalogueView>;
+  updateRole(projectId: string, roleId: string, input: RoleDefinitionInput): Promise<RoleCatalogueView>;
+  deleteRole(projectId: string, roleId: string, expectedRevision: number): Promise<RoleCatalogueView>;
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
   /** What a person needs to finish the application's own setup; a secret carries no value. Needs `project.view`. */
   setup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
@@ -1976,6 +1909,19 @@ export interface ZelavisEdgeClient {
   renewCertificates(
     input?: ZelavisEdgeRenewCertificatesInput,
   ): Promise<ZelavisEdgeRenewCertificatesResponse>;
+  /** Operator DNS automation: provider connections, adopted zones, wildcard certificates. */
+  dns: ZelavisEdgeDnsClient;
+}
+
+export interface ZelavisEdgeDnsClient {
+  providers(): Promise<{ readonly providers: readonly EdgeDnsProviderSummary[] }>;
+  connect(provider: string, input: ConnectDnsProviderInput): Promise<{ readonly provider: string; readonly revision: number; readonly connected: true }>;
+  disconnect(provider: string): Promise<void>;
+  providerZones(provider: string, cursor?: string): Promise<{ readonly zones: readonly DnsProviderZone[]; readonly next?: string }>;
+  zones(): Promise<{ readonly zones: readonly EdgeDnsZoneSummary[] }>;
+  adoptZone(apex: string, input: AdoptDnsZoneInput): Promise<EdgeDnsZoneSummary>;
+  releaseZone(apex: string): Promise<void>;
+  orderWildcard(apex: string): Promise<{ readonly certificate: ZelavisEdgeCertificateSummary }>;
 }
 
 export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
@@ -1984,7 +1930,7 @@ export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
     contracts: true,
     fetchClient: true,
     localDatabaseCore: true,
-    services: ["zelavis/app/identity", "zelavis/db"],
+    services: ["zelavis/auth", "zelavis/db"],
   },
   excludes: {
     ui: true,
@@ -2040,7 +1986,7 @@ export function createZelavisClient(
   }));
   }
 
-  function request(
+  function requestTransport(
     path: string,
     requestOptions: ZelavisClientRequestOptions = {},
   ): Promise<Response> {
@@ -2114,12 +2060,13 @@ export function createZelavisClient(
     return new URL(`${prefix}${path.startsWith("/") ? path : `/${path}`}`.replace(/\/+/g, "/"), baseUrl).toString();
   }
 
-  function json<T = unknown>(
+  function rawJson<T = unknown>(
     path: string,
     requestOptions?: ZelavisClientRequestOptions,
+    send = requestTransport,
   ): Promise<T> {
     return present(Effect.gen(function* (): Effect.fn.Return<T, IntegrationFailure> {
-    const response = (yield* integrationValue(request(path, requestOptions)));
+    const response = (yield* integrationValue(send(path, requestOptions)));
     if (!response.ok) {
       const body = (yield* integrationValue(response.clone().json().catch(() => undefined)));
       throw new ZelavisClientHttpError(response, body, `${(requestOptions?.method ?? "GET").toUpperCase()} ${path.startsWith("/") ? path : `/${path}`}`);
@@ -2128,6 +2075,61 @@ export function createZelavisClient(
     return (yield* integrationValue(response.json() as Promise<T>));
   }));
   }
+
+  const bearerHeaders = { "x-zelavis-auth-mode": "bearer" };
+  const bearerApi = createAuthClient(<T>(path: string, requestOptions?: ZelavisClientRequestOptions) =>
+    rawJson<T>(path, { ...requestOptions, credentials: "omit", headers: bearerHeaders }));
+  const session = options.authSession === undefined ? undefined
+    : createBrowserAuthSession(absoluteUrl("/auth"), bearerApi.session, options.authSession);
+
+  function request(path: string, requestOptions?: ZelavisClientRequestOptions): Promise<Response> {
+    if (session === undefined) return requestTransport(path, requestOptions);
+    return present(Effect.gen(function* () {
+      const headers = yield* integration(() => resolveHeaders(requestOptions?.headers));
+      if (headers.has("authorization")) return yield* integration(() => requestTransport(path, { ...requestOptions, headers }));
+      const tokens = yield* integration(() => Effect.runPromise(session.load()));
+      const attempt = (accessToken?: string) => integration(() => {
+        if (accessToken === undefined) headers.delete("authorization");
+        else headers.set("authorization", `Bearer ${accessToken}`);
+        headers.set("x-zelavis-auth-mode", "bearer");
+        return requestTransport(path, { ...requestOptions, headers, credentials: "omit" });
+      });
+      let response = yield* attempt(tokens?.accessToken);
+      const replayable = typeof ReadableStream === "undefined" || !(requestOptions?.body instanceof ReadableStream);
+      if (tokens !== undefined && replayable && response.status === 401) {
+        const error: unknown = yield* integration(() => response.clone().json().catch(() => undefined));
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "access_token_expired" &&
+            (yield* integration(() => Effect.runPromise(session.refresh(tokens.accessToken))))) {
+          const current = yield* integration(() => Effect.runPromise(session.load()));
+          if (current !== undefined) response = yield* attempt(current.accessToken);
+        }
+      }
+      // Auth methods that establish a bearer session return its tokens in the same envelope.
+      if (response.ok && /^\/?auth\//u.test(path) && requestOptions?.method?.toUpperCase() === "POST" &&
+          response.headers.get("content-type")?.includes("application/json")) {
+        const result: unknown = yield* integration(() => response.clone().json());
+        if (typeof result === "object" && result !== null && "status" in result && result.status === "complete" &&
+            "tokens" in result && isAuthTokenBundle(result.tokens)) {
+          const fresh = result.tokens;
+          yield* integration(() => Effect.runPromise(session.accept(fresh)));
+        }
+      }
+      return response;
+    }));
+  }
+
+  const json = <T = unknown>(path: string, requestOptions?: ZelavisClientRequestOptions): Promise<T> => rawJson<T>(path, requestOptions, request);
+  const authClient = createAuthClient(json);
+  const auth = session === undefined ? authClient : {
+    ...authClient,
+    session: {
+      ...authClient.session,
+      refresh: (input?: { readonly refreshToken?: string }) =>
+        input?.refreshToken === undefined ? Effect.runPromise(session.refreshCurrent()) : bearerApi.session.refresh(input),
+      signOut: (input?: { readonly refreshToken?: string }) =>
+        input?.refreshToken === undefined ? Effect.runPromise(session.signOut()) : bearerApi.session.signOut(input),
+    },
+  };
 
   // The last catalogue and its ETag. Every discovery still asks the server,
   // so revocation is immediate; an unchanged catalogue answers 304 and is not
@@ -2163,7 +2165,7 @@ export function createZelavisClient(
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
       services: () => json<{ services: readonly PublicServiceRegistryIdentity[] }>("/runtime/services").then((result) => result.services),
-      update: (name) => json<ServiceUpdateResult>(`/runtime/services/${encodeURIComponent(name)}/update`, { method: "POST", body: {} }),
+      update: (name, options = {}) => json<ServiceUpdateResult>(`/runtime/services/${encodeURIComponent(name)}/update`, { method: "POST", body: options }),
     },
     terminal: {
       status: () => json<ZelavisTerminalOverview>("/runtime/terminal"),
@@ -2192,7 +2194,35 @@ export function createZelavisClient(
       check: () => json<ZelavisUpdateStatus>("/runtime/updates/check", { method: "POST" }),
       apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
     },
+    registrar: {
+      providers: () => json("/runtime/registrar/providers"),
+      connection: () => json("/runtime/registrar/connection"),
+      connect: input => json("/runtime/registrar/connection", { method: "PUT", body: input }),
+      disconnect: () => json("/runtime/registrar/connection", { method: "DELETE" }),
+      contact: () => json("/runtime/registrar/contact"),
+      setContact: input => json("/runtime/registrar/contact", { method: "PUT", body: input }),
+      check: domains => json("/runtime/registrar/availability", { method: "POST", body: { domains } }),
+      quote: input => json("/runtime/registrar/quote", { method: "POST", body: input }),
+      order: input => json("/runtime/registrar/orders", { method: "POST", body: input }),
+      orders: (page = {}) => {
+        const query = new URLSearchParams();
+        if (page.limit !== undefined) query.set("limit", String(page.limit));
+        if (page.after !== undefined) query.set("after", page.after);
+        return json(`/runtime/registrar/orders${query.size ? `?${query}` : ""}`);
+      },
+      getOrder: id => json(`/runtime/registrar/orders/${encodeURIComponent(id)}`),
+      domains: cursor => json(`/runtime/registrar/domains${cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`}`),
+      setNameservers: (domain, nameservers) => json(`/runtime/registrar/domains/${encodeURIComponent(domain)}/nameservers`, { method: "PUT", body: { nameservers } }),
+    },
+    email: {
+      settings: () => json<EmailSettings>("/email/settings"),
+      setSettings: (input) => json<EmailSettings>("/email/settings", { method: "PUT", body: input }),
+      sendTest: (to) => json<{ readonly id: string }>("/email/test", { method: "POST", body: { to } }),
+      deliveries: (options) => json<EmailDeliveryPage>(`/email/deliveries${emailPageQuery(options)}`),
+    },
     cloud: {
+      policy: () => json<ZelavisCloudPolicy>("/runtime/cloud/policy"),
+      setPolicy: (policy, options) => json<ZelavisCloudPolicy>("/runtime/cloud/policy", { method: "PUT", body: { policy, ...options } }),
       scaling: () => json<{ scaling: ZelavisCloudScaling }>("/runtime/cloud/scaling").then((r) => r.scaling),
       setScaling: (input) => json<{ settings: ZelavisCloudScalingSettings }>("/runtime/cloud/scaling", { method: "PUT", body: input }).then((r) => r.settings),
       connection: () => json<{ connection: ZelavisCloudConnection | null }>("/runtime/cloud").then((r) => r.connection),
@@ -2229,120 +2259,7 @@ export function createZelavisClient(
     agent: createAgentClient(json),
     services: createServicesClient(json),
     workloads: (projectId) => createWorkloadsClient(json, projectId),
-    auth: {
-      registrationStatus: () => json<RegistrationStatus>("/auth/registration"),
-      providers: () => json<readonly string[]>("/auth/providers"),
-      oauthProviders: () => json<readonly string[]>("/auth/oauth/providers"),
-      signUp: (provider, input) =>
-        json<ZelavisAuthSessionResult>(
-          `/auth/sign-up/${encodeURIComponent(provider)}`,
-          { method: "POST", body: input },
-        ),
-      signUpWithPassword: (input) =>
-        json<ZelavisAuthSessionResult>("/auth/sign-up/password", {
-          method: "POST",
-          body: input,
-        }),
-      signIn: (provider, input) =>
-        json<ZelavisAuthSessionResult>(
-          `/auth/authenticate/${encodeURIComponent(provider)}`,
-          { method: "POST", body: input },
-        ),
-      signInWithPassword: (input) =>
-        json<ZelavisAuthSessionResult>("/auth/authenticate/password", {
-          method: "POST",
-          body: input,
-        }),
-      signInWithOAuth: (provider) =>
-        json<{ readonly authorizationUrl: string; readonly expiresAt: string }>(
-          `/auth/oauth/${encodeURIComponent(provider)}/start`,
-          { method: "POST" },
-        ),
-      linkIdentity: (provider) =>
-        json<{ readonly authorizationUrl: string; readonly expiresAt: string }>(
-          `/auth/oauth/${encodeURIComponent(provider)}/link/start`,
-          { method: "POST" },
-        ),
-      getSession: () =>
-        json<{ readonly principal: ZelavisPrincipal }>("/auth/session"),
-      refreshSession: () =>
-        json<{ readonly token: string; readonly session: ZelavisAuthSession }>(
-          "/auth/session/rotate",
-          { method: "POST" },
-        ),
-      signOut: () => json<void>("/auth/session", { method: "DELETE" }),
-      sessions: () => json("/auth/sessions"),
-      revokeSession: (sessionId) => json<void>(`/auth/sessions/${dataName(sessionId, "session id")}`, { method: "DELETE" }),
-      recoveryProviders: () => json("/auth/recovery/providers"),
-      beginRecovery: (provider, input) => json(`/auth/recovery/${dataName(provider, "provider")}`, { method: "POST", body: input }),
-      completeRecovery: (provider, input) => json<void>(`/auth/recovery/${dataName(provider, "provider")}/complete`, { method: "POST", body: input }),
-      bootstrapStatus: () => json("/auth/bootstrap"),
-      bootstrap: (input) => json("/auth/bootstrap", { method: "POST", body: input }),
-      admin: {
-        registrationSettings: () => json<RegistrationSettings>("/auth/registration/settings"),
-        setRegistrationSettings: (input) => json<RegistrationSettings>("/auth/registration/settings", { method: "PUT", body: input }),
-        accounts: (accountId) => json(accountId === undefined ? "/auth/accounts"
-          : `/auth/accounts?${new URLSearchParams({ accountId })}`),
-        setAccountAccess: (accountId, input) => json<AccountAccessResult>(
-          `/auth/accounts/${dataName(accountId, "account id")}/access`, { method: "PUT", body: input },
-        ),
-        createAccount: (input) => json("/auth/accounts", { method: "POST", body: input }),
-        importAccounts: (input) => json("/auth/accounts/import", { method: "POST", body: input }),
-        createCredentials: (input) => json("/auth/credentials", { method: "POST", body: input }),
-        accountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`),
-        revokeAccountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`, { method: "DELETE" }),
-        revokeAccountSession: (accountId, sessionId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions/${dataName(sessionId, "session id")}`, { method: "DELETE" }),
-        securityEvents: () => json("/auth/security/events"),
-        oauthConnections: () =>
-          present(Effect.gen(function* () {
-    return ((yield* integrationValue(json<{ readonly providers: readonly ZelavisOAuthConnection[] }>(
-            "/auth/oauth/connections",
-          )))).providers;
-  })),
-        configureOAuth: (provider, input) =>
-          present(Effect.gen(function* () {
-    return ((yield* integrationValue(json<{ readonly connection: ZelavisOAuthConnection }>(
-            `/auth/oauth/connections/${encodeURIComponent(provider)}`,
-            { method: "PUT", body: input },
-          )))).connection;
-  })),
-        removeOAuth: (provider) =>
-          json<void>(`/auth/oauth/connections/${encodeURIComponent(provider)}`, {
-            method: "DELETE",
-          }),
-        serviceAccounts: () =>
-          present(Effect.gen(function* () {
-    return ((yield* integrationValue(json<{ readonly serviceAccounts: readonly ZelavisAuthAccount[] }>(
-            "/auth/service-accounts",
-          )))).serviceAccounts;
-  })),
-        createServiceAccount: (input) =>
-          json<{
-            readonly serviceAccount: ZelavisAuthAccount;
-            readonly token: string;
-            readonly session: ZelavisAuthSession;
-          }>("/auth/service-accounts", { method: "POST", body: input }),
-        rotateServiceAccountToken: (accountId, expiresInDays) =>
-          json<{ readonly token: string; readonly session: ZelavisAuthSession }>(
-            `/auth/service-accounts/${encodeURIComponent(accountId)}/token`,
-            {
-              method: "POST",
-              body: expiresInDays === undefined ? {} : { expiresInDays },
-            },
-          ),
-        setServiceAccountTenant: (accountId, tenantId) =>
-          present(Effect.gen(function* () {
-    return ((yield* integrationValue(json<{ serviceAccount: ZelavisAuthAccount }>(
-            `/auth/service-accounts/${encodeURIComponent(accountId)}`,
-            { method: "PATCH", body: { tenantId } },
-          )))).serviceAccount;
-  })),
-        revokeServiceAccount: (accountId) =>
-          json<void>(`/auth/service-accounts/${encodeURIComponent(accountId)}`, {
-            method: "DELETE",
-          }),
-      },
-    },
+    auth,
     edge: {
       status: () => json<ZelavisEdgeStatusResponse>("/runtime/edge"),
       plan: (input) =>
@@ -2407,6 +2324,19 @@ export function createZelavisClient(
             body: input,
           },
         ))),
+      dns: {
+        providers: () => json("/runtime/edge/dns/providers"),
+        connect: (provider, input) => json(`/runtime/edge/dns/connections/${encodeURIComponent(provider)}`, { method: "PUT", body: input }),
+        disconnect: (provider) => present(integration(() => json(`/runtime/edge/dns/connections/${encodeURIComponent(provider)}`, { method: "DELETE" }))
+          .pipe(Effect.asVoid)),
+        providerZones: (provider, cursor) => json(`/runtime/edge/dns/connections/${encodeURIComponent(provider)}/zones${
+          cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`}`),
+        zones: () => json("/runtime/edge/dns/zones"),
+        adoptZone: (apex, input) => json(`/runtime/edge/dns/zones/${encodeURIComponent(apex)}`, { method: "PUT", body: input }),
+        releaseZone: (apex) => present(integration(() => json(`/runtime/edge/dns/zones/${encodeURIComponent(apex)}`, { method: "DELETE" }))
+          .pipe(Effect.asVoid)),
+        orderWildcard: (apex) => json(`/runtime/edge/dns/zones/${encodeURIComponent(apex)}/wildcard-certificate`, { method: "POST" }),
+      },
     },
     hostOperations: {
       catalog: () =>
@@ -2980,6 +2910,15 @@ function createWorkloadsClient(
   };
 }
 
+/** The deliveries listing's page options as a query string. */
+function emailPageQuery(options?: { readonly limit?: number; readonly after?: string }): string {
+  const query = new URLSearchParams();
+  if (options?.limit !== undefined) query.set("limit", String(options.limit));
+  if (options?.after !== undefined) query.set("after", options.after);
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
 function projectPath(projectId: string, action?: string): string {
   if (typeof projectId !== "string" || !projectId.trim()) {
     throw new TypeError("A Project id is required.");
@@ -3020,13 +2959,40 @@ function createProjectsClient(
   return {
     domains: projectId => json<ProjectDomainList>(projectPath(projectId, "domains")),
     addDomain: (projectId, input) => json<ProjectDomain>(projectPath(projectId, "domains"), { method: "POST", body: input }),
+    hostedZones: projectId => json<ProjectHostedZones>(projectPath(projectId, "domains/hosted-zones")),
     verifyDomain: (projectId, hostname, input) => json<ProjectDomain>(
       projectPath(projectId, `domains/${encodeURIComponent(hostname)}/verify`), { method: "POST", body: input }),
     removeDomain: (projectId, hostname, expectedRevision) => json<RemoveProjectDomainResult>(
       projectPath(projectId, `domains/${encodeURIComponent(hostname)}?revision=${expectedRevision}`), { method: "DELETE" }),
     registrationSettings: (projectId) => json<RegistrationSettings>(projectPath(projectId, "auth/registration/settings")),
+    authMethodSettings: (projectId) => json(projectPath(projectId, "auth/methods/settings")),
+    setAuthMethodSettings: (projectId, input) => json(projectPath(projectId, "auth/methods/settings"), { method: "PUT", body: input }),
+    passkeySettings: (projectId) => json(projectPath(projectId, "auth/passkeys/settings")),
+    setPasskeySettings: (projectId, input) => json(projectPath(projectId, "auth/passkeys/settings"), { method: "PUT", body: input }),
+    oauthConnections: (projectId) => json(projectPath(projectId, "auth/oauth/connections")),
+    configureOAuthConnection: (projectId, provider, input) =>
+      json(projectPath(projectId, `auth/oauth/connections/${dataName(provider, "provider")}`), { method: "PUT", body: input }),
+    removeOAuthConnection: (projectId, provider) =>
+      json<void>(projectPath(projectId, `auth/oauth/connections/${dataName(provider, "provider")}`), { method: "DELETE" }),
+    mfaPolicy: (projectId) => json(projectPath(projectId, "auth/mfa/policy")),
+    setMfaPolicy: (projectId, input) => json(projectPath(projectId, "auth/mfa/policy"), { method: "PUT", body: input }),
+    rotateAuthKeys: (projectId) => json(projectPath(projectId, "auth/keys/rotate"), { method: "POST", body: {} }),
     setRegistrationSettings: (projectId, input) => json<RegistrationSettings>(
       projectPath(projectId, "auth/registration/settings"), { method: "PUT", body: input },
+    ),
+    emailSettings: (projectId) => json<EmailSettings>(projectPath(projectId, "email/settings")),
+    setEmailSettings: (projectId, input) => json<EmailSettings>(projectPath(projectId, "email/settings"), { method: "PUT", body: input }),
+    sendTestEmail: (projectId, to) => json<{ readonly id: string }>(projectPath(projectId, "email/test"), { method: "POST", body: { to } }),
+    emailDeliveries: (projectId, options) => json<EmailDeliveryPage>(`${projectPath(projectId, "email/deliveries")}${emailPageQuery(options)}`),
+    invitations: (projectId, options) => json(`${projectPath(projectId, "auth/invitations")}${invitationPageQuery(options)}`),
+    invite: (projectId, input) => json(projectPath(projectId, "auth/invitations"), { method: "POST", body: input }),
+    resendInvitation: (projectId, id) => json(projectPath(projectId, `auth/invitations/${dataName(id, "invitation id")}/resend`), { method: "POST" }),
+    revokeInvitation: (projectId, id) => json(projectPath(projectId, `auth/invitations/${dataName(id, "invitation id")}`), { method: "DELETE" }),
+    roles: (projectId) => json<RoleCatalogueView>(projectPath(projectId, "auth/roles")),
+    createRole: (projectId, input) => json<RoleCatalogueView>(projectPath(projectId, "auth/roles"), { method: "POST", body: input }),
+    updateRole: (projectId, roleId, input) => json<RoleCatalogueView>(projectPath(projectId, `auth/roles/${dataName(roleId, "role id")}`), { method: "PUT", body: input }),
+    deleteRole: (projectId, roleId, expectedRevision) => json<RoleCatalogueView>(
+      `${projectPath(projectId, `auth/roles/${dataName(roleId, "role id")}`)}${revisionQuery(expectedRevision)}`, { method: "DELETE" },
     ),
     setAccountAccess: (projectId, accountId, input) => json<AccountAccessResult>(
       projectPath(projectId, `auth/accounts/${dataName(accountId, "account id")}/access`),

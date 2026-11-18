@@ -13,14 +13,16 @@ export interface ZelavisAuthenticationChallenge {
 
 export class ZelavisAuthenticationError extends Error {
   readonly challenge?: ZelavisAuthenticationChallenge;
+  readonly code?: "access_token_expired";
 
   constructor(
     message = "Invalid authentication credentials.",
-    options: { challenge?: ZelavisAuthenticationChallenge; cause?: unknown } = {},
+    options: { challenge?: ZelavisAuthenticationChallenge; cause?: unknown; code?: "access_token_expired" } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = "ZelavisAuthenticationError";
     this.challenge = options.challenge;
+    this.code = options.code;
   }
 }
 

@@ -69,7 +69,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/db`, `zelavis/app/identity`, and `zelavis/app/workloads`. The dashboard
+`zelavis/db`, `zelavis/auth`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -132,6 +132,20 @@ missing skill by adding one. A new skill or reference goes in `.agents/skills/` 
   qualification limits are in `website/.../architecture/updates.md`. Exact installed native App engine
   version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation reuses
   that handover as a same-release reload (above).
+
+A service may request Platform permissions in `zelavis.principal.permissions`; every install path refuses until the installing operator approves exactly that list, within their own authority. The Platform then creates the service's own service account, keeps its token sealed, and the service calls Platform operations in-process through `core.fetch` as that account; disabling the service revokes it. A service cannot be disabled while an installed service extends it.
+
+Service setup receives per-service `core.secrets` beside `core.store` on both
+runtime roles. Credentials are sealed under that runtime's master secret and
+bound to the service and credential name; list names only and never return or
+log values. Service workers use `context.addRuntimePlugin` and the existing
+runtime start/cleanup lifecycle. Start after setup/mounting and stop before
+databases close, including failed startup; never leave setup-owned timers running.
+Native Apps admit provider callbacks on verified hostnames and previews only at
+`POST <api-base>/plugins/<namespace>/webhooks/<provider>`, separately from the
+exact public Auth allow-list. Preserve signed bytes/headers, cap bodies at
+256 KiB, strip Platform authority and require signature verification in the
+owning service; ordinary service administration stays behind the Gateway.
 
 ## Distribution Trust Model
 
@@ -230,7 +244,7 @@ OS timers, cleanup workflows, or reference-sync side effects.
 
 ## Cloud Capacity And Alchemy
 
-Decision (2026-10-06). The provisioning code, fenced state store and `CapacityProvider` exist in `packages/zelavis/services/zelavis-cloud` (private; built into one bundle the Platform loads by path when `ZELAVIS_CLOUD_POLICY` names the operator's policy file and an enrollment endpoint is served) and pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
+Decision (2026-10-06, revised 2026-11-13). The provisioning code, fenced state store and `CapacityProvider` implementations live in `packages/zelavis/src/adapters/capacity` and are built into one bundle inside the `zelavis` package (`dist/adapters/capacity/bundle.js`) that the Platform imports by path only when a provider is first used; a Platform composes cloud capacity whenever it serves an enrollment endpoint, and the operator sets the machine policy through `/runtime/cloud/policy`. They pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
 measurements and open tests are in `.agents/references/alchemy-architecture-brief.md`.
 
 - Cloud capacity is a core capability. The capacity controller, provider
@@ -239,8 +253,9 @@ measurements and open tests are in `.agents/references/alchemy-architecture-brie
   allocation, placement, draining and fencing; a provisioning engine only
   supplies machines and external resources and never becomes a second authority.
 - Alchemy (pinned to an exact version) is the default engine for provisioning
-  external resources, shipped in a bundled first-party cloud service, never in the
-  core runtime and never as something a self-hoster installs. Do not write a
+  external resources, shipped inside the `zelavis` package as a capacity adapter, never imported by core, Fabric,
+  backends, Edge, Platform or SDK modules (`test/provider-adapter-boundary.test.mjs`), and never
+  something a self-hoster installs. Do not write a
   general infrastructure-as-code engine in-house. If its behavioral tests fail,
   fall back to a narrow adapter on the `@distilled.cloud/*` clients, not a rebuilt
   engine.
@@ -254,6 +269,8 @@ measurements and open tests are in `.agents/references/alchemy-architecture-brie
   token, needs no cloud and no provider. Connecting a provider only adds adopt
   conveniences (firewall, DNS) and automatic scale-out. Zelavis deletes only
   machines it labeled itself, never adopted or user-enrolled ones.
+- Operators whose datacenter has no API connect the `webhook` provider: Zelavis sends
+  signed, versioned requests to their HTTPS endpoint and releases only machines it asked for.
 - A provisioned machine is not a Node until enrollment verifies identity, version,
   backend and health. Release only after Fabric reports the Node drained and
   fenced. Provider calls check the current epoch, and a promotion rotates the
@@ -404,7 +421,7 @@ Rules that hold for every change:
   `provider`, or `template`. Each described who shipped a service or restated a
   capability, and nothing ever branched on them. A provider is discovered by
   its capability, and that capability names the service it extends
-  (`zelavis/identity:credentials`, `@acme/shop:payments`) rather than a bare domain
+  (`zelavis/auth:authenticator`, `@acme/shop:payments`) rather than a bare domain
   two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
@@ -421,15 +438,21 @@ Rules that hold for every change:
   setup wizard. Once the durable owner claim succeeds, setup stays closed and
   the normal authenticated dashboard/login flow owns subsequent visits.
 - The Platform process does not mount an app-facing `zelavis/db` service by
-  default. Each Zelavis App project owns its logical database below
+  default. Services installed on the Platform share one private services database
+  (`<data>/services-database`), reachable only as their `core.database`; each keeps
+  to its `service:<name>` Tenant, it has no routes or dashboard, it is backed up
+  with the System Store and the identity database, and it is restored host-locally
+  with `zelavis services-database restore`.
+  Each Zelavis App project owns its logical database below
   `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
   virtual shard ranges across several physical SQLite shard files even on one
   Node. Project-private topology and runtime metadata stays separate at
   `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
 - A Project runtime is the same `zelavis()` composition as the Platform with
-  `role: "project"`, not a different system. It composes Identity, Database and
-  Workloads itself as native subsystems; only where Identity keeps its accounts
-  differs (the Project's own database, not the System Store). The `@zelavis/app`
+  `role: "project"`, not a different system. It composes Auth, Database and
+  Workloads itself as native subsystems; only where Auth keeps its accounts
+  differs (the Project's own database instead of the Platform's identity
+  database). The `@zelavis/app`
   recipe carries identity, menu and defaults, and mounts no subsystem through a
   package `setup`. Every runtime has its own services folder: the Platform's is
   `<data>/services`, and a Project's is `services` inside its own `.zelavis`
@@ -461,7 +484,7 @@ Rules that hold for every change:
   These internal services assemble the public core primitives into the Zelavis
   product and are not separate public framework brands.
 - **Core Subsystems vs. Services**: Foundational capabilities built into the
-  Platform OS — Identity & Permissions, Database engine, Fabric scheduler,
+  Platform OS — Auth & Permissions, Database engine, Fabric scheduler,
   and Server Control Plane — are **Platform Subsystems**, not "services".
   They are core platform primitives providing native runtime APIs (`runtime.auth`,
   `runtime.database`, authenticators, and core routes), not pseudo-plugins
@@ -812,6 +835,20 @@ configuration. Traefik, Caddy, Nginx and external/cloud load balancers are
 replaceable execution adapters. Their configuration is compiled output, never
 the source of truth, and they must not independently reinterpret Fabric
 placement.
+DNS providers and registrars follow the same rule: core owns the contract,
+first-party drivers (Cloudflare, Namecheap) live behind the adapter boundary in
+`packages/zelavis/src/adapters` and are injected by the host adapter, and a
+plugin adds another through `zelavis/edge:dns` or `zelavis/edge:registrar`.
+
+Registrar operations are Platform-only under system-scoped `server.domains.view`
+and `server.domains.purchase`, with SDK/HTTP/CLI parity. Purchase intents keep
+immutable idempotency keys and a durable pre-submission state; never retry an
+ambiguous external purchase. Reconcile using the original registrar connection,
+keep credentials and contacts encrypted, and never persist a transfer auth code.
+An outcome still unconfirmed after 24 hours remains unknown; there is no manual
+resolution endpoint yet. Registrar tests use local fixtures; live qualification
+uses the Namecheap sandbox only, never its production endpoint.
+
 
 Switching an Edge adapter is a durable, reversible migration. Preflight every
 active route against the destination's declared capabilities, refuse required
@@ -1007,7 +1044,7 @@ algorithms and must preserve reproducible seeds and traces.
 - A Project's persistent host (`_node-project-runner.ts`, one per running Project and per managed
   app's integration runtime) stays resident for the Project's lifetime, so its module graph holds only
   supervision and handover: files it loads import `effect/<Module>` (never the `effect` barrel, which
-  costs every host tens of MB), and reach the Project driver, service loading, identity or the database
+  costs every host tens of MB), and reach the Project driver, service loading, Auth or the database
   only through a lazy `import()`. `test/project-host-footprint.test.mjs` enforces it. An installed
   Project host verifies each selected engine in a short-lived process and waits for it to exit
   before starting the engine, so the verification allocations leave with that process.
@@ -1931,36 +1968,74 @@ The base authorization contract belongs in `zelavis/core`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`zelavis/app/identity` owns authentication primitives: accounts, credentials,
-sessions, roles and permissions. It ships the credential ceremonies whose
-dangerous parts are generic and identical for every provider — password
-verification and its timing, and the state, nonce and PKCE custody an OAuth
-redirect flow depends on — so they are written and audited once. It resolves
-identities into principals; the server contract enforces route access.
+`zelavis/auth` (Zelavis Auth) owns authentication: accounts, credentials,
+sessions, sign-in methods, roles, permissions and grants. It ships the
+credential ceremonies whose dangerous parts are generic and identical for every
+provider (password verification, email challenges, the state, nonce and PKCE
+custody of an OAuth redirect, WebAuthn and TOTP) so they are written and audited
+once. It resolves sessions and tokens into principals; the server contract
+enforces route access. See `## Zelavis Auth`.
 
-Identity guarantees hold under concurrency, so they live in the repository, not
-in a check made first. Email, username and `(provider, identifier)` are unique
-because a repository claims each value with an atomic create-if-absent before it
-writes the entity, and a loser gets `IdentityConflictError` (a claim with no
-entity behind it is recovered only after a grace period, never while its creator
-may be between its two writes). A session token is usable for rotation exactly
-once: rotation consumes the old session with an atomic transition before issuing
-the next. Revoke-all bumps the account's `sessionEpoch` atomically and a session
-is valid only while its epoch matches, so nothing issued or rotated at the same
-moment survives it. Any new identity repository must implement `mutate` and the
-claim primitives and pass `test/identity-atomicity.test.mjs`.
-
-What is vendor-specific stays a plugin. A credential provider declares
-`zelavis/identity:credentials` and owns its whole exchange; an OAuth provider
-declares `zelavis/identity:oauth` and supplies only endpoints and claim mapping.
-Any OpenID Connect issuer needs neither: pasting its issuer URL is enough,
-because the issuer publishes its own endpoints.
+What is vendor-specific stays a plugin. A bearer authenticator plugin declares
+`zelavis/auth:authenticator`; a plugin naming OpenID Connect issuers declares
+`zelavis/auth:oauth` (`defineOAuthProviders`) and supplies only issuer metadata,
+while the operator supplies the client credentials. Google, Apple, GitHub and
+any OpenID Connect issuer need no plugin: pasting an issuer URL is enough,
+because the issuer publishes its own endpoints. There are no custom
+credential-exchange plugins.
 
 Future official modules such as Hosting Provider must not create a separate
 customer permission system. Customers, resellers, operators, and owners are
 Zelavis principals with system, project, or service-scoped grants. The same
 `/zelavis` shell should render different menus, project lists, and actions from
 those grants, while endpoints remain the authority layer.
+
+## Zelavis Auth
+
+Zelavis Auth (`zelavis/auth`, `packages/zelavis/src/auth`) is a Platform
+Subsystem composed once per runtime (`subsystems.auth`), structured into
+focused modules with transactional guarantees.
+
+- **One Auth partition per runtime.** Every module (`core`, `username`,
+  `password`, `email`, `oauth`, `google`, `apple`, `github`, `passkey`, `totp`,
+  and the Zelavis modules `accounts`, `registration`, `bootstrap`, `admin`,
+  `serviceAccounts`, `security`, `invitations`, `roles`) keeps its tables, named
+  `<module>_<table>`, in the Tenant `service:zelavis-auth`: the Project
+  database for an App, and the Platform identity database
+  (`<data>/identity-database/`, never handed to services or routes, backed up
+  as component `identity`) for the Platform. Never put a module's tables in a
+  Tenant of their own: atomic sign-up across modules depends on one partition.
+- **Guarantees come from transactions, not claims.** Each upstream mutation is
+  one `documents.transaction` (read-decide-write with the read set re-checked
+  under the partition's writer). Uniqueness of usernames, verified emails and
+  provider accounts, single redemption of a refresh token, code or ticket, and
+  "one invitation creates one account" hold because the check and the write are
+  in the same transaction. Password hashing and network calls run outside it.
+- **Sessions.** A session row per sign-in; refresh tokens rotate, and
+  presenting a spent or dropped one revokes its session. Access tokens are ES256
+  JWTs signed by a per-runtime key (sealed at rest, public keys at
+  `GET /auth/jwks`), and every request reads the session row, so a deleted
+  session stops authenticating at once. Zelavis pages hold tokens in HttpOnly
+  cookies; other clients hold the bundle and refresh through
+  `POST /auth/session/refresh`.
+- **Isolation.** Platform users and App users never share a store, signing key,
+  issuer or cookie. A Platform principal reaches an App only through the
+  Gateway's signed authority.
+- **Limits** (state them, never paper over them): no SAML SSO and no SCIM; one
+  Auth writer per App (the partition is not split across shards); no live
+  revocation push (clients learn on their next request or refresh); passkeys
+  use one relying-party id per runtime; anonymous sign-in is not ported.
+- **Provenance and Effect discipline.** `packages/zelavis/src/auth/upstream.json`
+  records every derived Apache-2.0 file with its provenance header;
+  `pnpm auth:upstream` checks upstream changes against the pinned reference
+  source in `scripts/reference-sources.json`. All Auth runtime code uses
+  Effect (`Effect.fn` generators over `tx.db`, bounded sweeps, typed
+  failures) rather than `async`/`await` (`check:effect-usage` has an empty
+  baseline).
+- **License.** Derived files keep Apache-2.0: each carries its provenance header,
+  `packages/zelavis/NOTICE` carries the attribution and points to `upstream.json`, and `LICENSE-APACHE` and
+  `NOTICE` ship in the npm package (`license`: `MIT AND Apache-2.0`). Never
+  relicense a derived file or drop its header.
 
 ## Repo Structure
 
@@ -1991,8 +2066,8 @@ those grants, while endpoints remain the authority layer.
   Completed behavior belongs in tests, maintained documentation and Git history.
   Revisit nearby stale entries rather than leaving finished work marked open.
 - `packages/zelavis/src/app` owns the built-in App stack exported as `zelavis/app`
-  (identity primitives and Project-scoped workloads; the document-first database
-  is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`
+  (Project-scoped workloads and email; authentication is `zelavis/auth` in
+  `packages/zelavis/src/auth`, and the document-first database is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`
   package in `packages/zelavis/services/zelavis-app`. The stack consumes the same core implementation and must never grow private server
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
@@ -2403,6 +2478,19 @@ wins where it is more specific. A small task needs no plan and nothing beyond th
     done (what is missing or unverified, and why), or blocked (on what).
 
   For a one-line fix, a sentence or two covering the same ground is enough.
+
+### Next-session prompt for plan execution
+
+When handing back execution of a plan with work remaining, including after a finished step
+or part, append **Next-session prompt** to the final reply with one copy-ready fenced `text` block.
+Use the updated `## Progress`, execution report, and overview to identify the next runnable
+step, ready part, or final audit. Give the absolute checkout and plan paths, the milestone
+completed, and the next scope, prerequisites, and checks. Tell the next agent to read the
+governing instructions and section 8. When work is blocked, name what must change before
+resuming and how to verify it. The prompt is required even when the user does not ask for
+one. Keep working through the scope assigned to the current session, then hand it back.
+See [the plan-writer implementer block](.agents/skills/plan-writer/SKILL.md#8-instructions-to-the-implementer)
+for the full format.
 
 ## Code Change Expectations
 

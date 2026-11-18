@@ -1,0 +1,74 @@
+{
+  "name": "@zelavis/hosting",
+  "version": "1.0.0-alpha.0",
+  "type": "module",
+  "description": "Sell hosting plans and provision Zelavis Projects through Ecommerce subscriptions.",
+  "license": "MIT",
+  "zelavis": {
+    "kind": "plugin",
+    "namespace": "hosting",
+    "capabilities": [
+      "@zelavis/ecommerce:fulfillment",
+      "api:routes",
+      "dashboard:menu"
+    ],
+    "principal": {
+      "permissions": [
+        "projects.create",
+        "project.view",
+        "project.runtime.manage",
+        "system.users.manage",
+        "system.roles.manage",
+        "project.settings.manage",
+        "project.users.manage",
+        "project.domains.manage",
+        "project.logs.read",
+        "project.delete"
+      ]
+    },
+    "marketplace": {
+      "title": "Hosting Provider",
+      "summary": "For hosting and cloud companies using Zelavis as their panel. Sell plans, let customers create Projects within quota, and suspend Projects when payment lapses. Requires Ecommerce and a payment provider.",
+      "categories": [
+        "hosting",
+        "commerce",
+        "official"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/dashboard.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dashboard/hosting.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck && node --test \"test/**/*.test.mjs\""
+  },
+  "files": [
+    "dist",
+    "dashboard"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "zelavis-services/hosting"
+  },
+  "peerDependencies": {
+    "zelavis": ">=2.0.0-alpha.45",
+    "@zelavis/ecommerce": ">=2.0.0-alpha.4",
+    "effect": "4.0.0"
+  },
+  "devDependencies": {
+    "zelavis": "workspace:*",
+    "@zelavis/ecommerce": "workspace:*",
+    "effect": "4.0.0",
+    "typescript": "^7.0.2",
+    "esbuild": "^0.28.2"
+  }
+}

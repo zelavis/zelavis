@@ -1664,7 +1664,7 @@ function listProductServicePackages(directory: string): Promise<string[]> {
  * A package dropped into a folder outside `node_modules` cannot resolve its
  * own peer dependency: Node walks parent directories looking for
  * `node_modules/zelavis` and finds none, so any service importing
- * `zelavis/app/identity` fails to load. Nearly every real plugin does.
+ * `zelavis/core` fails to load. Nearly every real plugin does.
  *
  * Linking the running Platform package into `<folder>/node_modules` puts it
  * exactly where that walk looks. The link points at whichever `zelavis` is
@@ -1967,4 +1967,4 @@ export function createLocalServiceSources(
 
 const packageRecord = objectFields<ZelavisPackageManifest>({ name: isString, version: optional(isString), type: optional(isString),
   exports: isUnknown, main: isUnknown, zelavis: optional(objectFields<NonNullable<ZelavisPackageManifest["zelavis"]>>({
-    kind: isString, namespace: optional(isString), capabilities: optional(arrayOf(isString)), hostOperations: optional(arrayOf(isString)), marketplace: optional(recordOf(isUnknown)) })) });
+    kind: isString, namespace: optional(isString), capabilities: optional(arrayOf(isString)), principal: optional(objectFields({ permissions: arrayOf(isString) })), hostOperations: optional(arrayOf(isString)), marketplace: optional(recordOf(isUnknown)) })) });

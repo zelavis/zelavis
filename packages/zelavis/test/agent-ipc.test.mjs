@@ -150,7 +150,21 @@ test("the boot sweep preserves detached environment processes for session reatta
   const first = await client(directory);
   const { directory: cwd, file } = await script(`console.log("ready"); setInterval(() => {}, 1000);`);
 
-  await first.start(command(cwd, file, "environment:session-1"));
+  // Detach only after the Agent has recorded output; starting the process is not a stdout flush barrier.
+  let markReady;
+  let readyTimer;
+  const ready = new Promise((resolve, reject) => {
+    markReady = resolve;
+    readyTimer = setTimeout(() => reject(new Error("The environment process did not report ready.")), 5000);
+  });
+  try {
+    await first.start(command(cwd, file, "environment:session-1"), {
+      onOutput: output => { if (output.line === "ready") markReady(); },
+    });
+    await ready;
+  } finally {
+    clearTimeout(readyTimer);
+  }
   await first.close();
   await new Promise((wait) => setTimeout(wait, 100));
 

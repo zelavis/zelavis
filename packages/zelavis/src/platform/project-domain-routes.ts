@@ -9,7 +9,7 @@ import {
 const statuses = {
   invalid_hostname: 400, invalid_domain_request: 400, domain_not_found: 404, hostname_unavailable: 409,
   domain_revision_conflict: 409, project_deleting: 409, dns_not_verified: 422, domain_limit: 429,
-  domain_verification_busy: 429, domain_ingress_unavailable: 503,
+  domain_verification_busy: 429, domain_ingress_unavailable: 503, hosted_zone_unavailable: 400, dns_provider_failed: 502,
 } as const;
 const invalid = () => new ProjectDomainError({
   code: "invalid_domain_request", message: "Supply valid domain operation fields and a current revision when required.",
@@ -44,6 +44,12 @@ export function projectDomainRoutes(controller: ProjectDomainController): readon
   const bodyOptions = { maxRequestBodyBytes: 1024, invalidJsonBodyCode: "invalid_domain_request" };
   return [
     {
+      id: "runtime.projects.domains.hosted-zones", method: "GET", path: `${path}/hosted-zones`, access: write,
+      spec: { operationId: "listProjectHostedZones", summary: "List the operator zones a Project may take a hosted subdomain under", tags: ["projects"],
+        responses: { 200: { description: "Zone apexes that allow hosted subdomains" }, 403: { description: "Missing domain permission" } } },
+      handler: ({ params }) => run(integration(() => controller.hostedZones(params.projectId ?? "")).pipe(Effect.map(body => response(200, body)))),
+    },
+    {
       id: "runtime.projects.domains.list", method: "GET", path,
       spec: { operationId: "listProjectDomains", summary: "List an exact Project's domains", tags: ["projects"],
         responses: { 200: { description: "Project domains" }, 403: { description: "Missing domain permission" } } },
@@ -60,7 +66,7 @@ export function projectDomainRoutes(controller: ProjectDomainController): readon
     },
     {
       id: "runtime.projects.domains.add", method: "POST", path, access: write, ...bodyOptions,
-      spec: { operationId: "addProjectDomain", summary: "Create a DNS TXT challenge for a Project domain", tags: ["projects"],
+      spec: { operationId: "addProjectDomain", summary: "Create a DNS TXT challenge for a Project domain, or take a hosted subdomain", tags: ["projects"],
         responses: { 201: { description: "Challenge created" }, 200: { description: "Existing domain" }, 409: { description: "Hostname unavailable" } } },
       handler: ({ params, principal, body }) => {
         const projectId = params.projectId ?? "";

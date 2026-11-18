@@ -13,6 +13,7 @@ const fixtureModule = fileURLToPath(new URL("./fixtures/handover-engine.mjs", im
 const worker = fileURLToPath(new URL("../dist/adapters/_node-runtime-worker.js", import.meta.url));
 const release = version => ({ version, digest: `sha256:${version}` });
 const old = release("1.0.0"), next = release("2.0.0");
+const startupTimeoutMs = 5000;
 async function fixture(extra = {}) {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-handover-"));
   const backing = createLocalAgentProcessRunner();
@@ -34,7 +35,7 @@ async function fixture(extra = {}) {
   };
   const checkpoints = [], commits = [], logs = [];
   const supervisor = await Effect.runPromise(createNodeRuntimeSupervisor({
-    agent, workloadId: "fixture", initial: old, generation: 1, startupTimeoutMs: 5000, drainTimeoutMs: extra.drainTimeoutMs ?? 1000,
+    agent, workloadId: "fixture", initial: old, generation: 1, startupTimeoutMs, drainTimeoutMs: extra.drainTimeoutMs ?? 1000,
     resolve: selected => Effect.succeed({ executable: process.execPath, worker, module: fixtureModule, cwd: directory, environment: {},
       configuration: { directory, version: selected.version, ...(selected.version === next.version ? extra : {}) } }),
     checkpoint: value => Effect.sync(() => { checkpoints.push(value); }),
@@ -54,12 +55,13 @@ async function fixture(extra = {}) {
     },
   };
 }
-async function until(predicate) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function until(predicate, description) {
+  const deadline = performance.now() + startupTimeoutMs;
+  do {
     if (await predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 5));
-  }
-  throw new Error("Condition did not become true.");
+  } while (performance.now() < deadline);
+  throw new Error(`Timed out waiting for ${description}.`);
 }
 
 test("real child engines hand over a persistent port without dropping a request or overlapping SQLite owners", { timeout: 15_000 }, async () => {
@@ -67,11 +69,11 @@ test("real child engines hand over a persistent port without dropping a request 
   try {
     assert.equal(await (await fetch(f.url)).text(), old.version);
     const slow = fetch(`${f.url}/hold`);
-    await until(() => f.supervisor.admission.snapshot().active === 1);
+    await until(() => f.supervisor.admission.snapshot().active === 1, "the held request to enter the previous engine");
     const update = Effect.runPromise(f.supervisor.replace(next));
-    await until(() => f.supervisor.admission.snapshot().paused);
+    await until(() => f.supervisor.admission.snapshot().paused, "candidate preparation to pause admission");
     const queued = fetch(`${f.url}/write`, { method: "POST" });
-    await until(() => f.supervisor.admission.snapshot().waiting === 1);
+    await until(() => f.supervisor.admission.snapshot().waiting === 1, "the write to queue on the persistent listener");
     assert.equal(f.supervisor.server.address().port, f.port);
     await writeFile(join(f.directory, "finish"), "yes");
     assert.equal(await (await slow).text(), old.version);
@@ -102,7 +104,7 @@ test("a long request that cannot drain aborts replacement and still completes on
   const f = await fixture({ drainTimeoutMs: 30 });
   try {
     const slow = fetch(`${f.url}/hold`);
-    await until(() => f.supervisor.admission.snapshot().active === 1);
+    await until(() => f.supervisor.admission.snapshot().active === 1, "the held request to enter the previous engine");
     await assert.rejects(Effect.runPromise(f.supervisor.replace(next)), error => error._tag === "RuntimeDrainTimeout");
     assert.equal(await (await fetch(f.url)).text(), old.version);
     await writeFile(join(f.directory, "finish"), "yes");

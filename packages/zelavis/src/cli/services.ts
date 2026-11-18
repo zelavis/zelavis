@@ -18,6 +18,7 @@ export interface RuntimeServiceRegistryMutationResult {
 }
 
 export interface RuntimeServiceRegistryCreateInput {
+  approvePermissions?: readonly string[];
   specifier: string;
   name?: string;
   status?: RuntimeServiceStatus;
@@ -26,6 +27,7 @@ export interface RuntimeServiceRegistryCreateInput {
 }
 
 export interface RuntimeServiceRegistryUpdateInput {
+  approvePermissions?: readonly string[];
   status?: RuntimeServiceStatus;
   source?: RuntimeServiceSource;
   order?: number;
@@ -70,7 +72,9 @@ function readJson<TBody>(
         ? body.error
         : `Request failed with status ${response.status}.`;
 
-    throw new Error(`${message} (${url})`);
+    const permissions = body && typeof body === "object" && "permissions" in body && Array.isArray(body.permissions)
+      ? body.permissions.filter((p): p is string => typeof p === "string") : [];
+    throw new Error(`${message}${permissions.length ? `: ${permissions.join(", ")}. Approve each with --approve-permission.` : ""} (${url})`);
   }
 
   return body as TBody;

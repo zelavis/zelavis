@@ -8,6 +8,7 @@ import {
 } from "../dist/platform/cloud-capacity.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 
+const POLICY = { location: "nbg1", image: "ubuntu-24.04", maxNodes: 2, machineClasses: [{ name: "cpx11", cpuCores: 2, memoryBytes: 2 * 1024 ** 3, diskBytes: 40 * 1024 ** 3 }] };
 const TOKEN = "hcloud_token_0123456789abcdef";
 const run = (effect) => Effect.runPromise(effect);
 const codeOf = async (effect) => {
@@ -33,6 +34,7 @@ function fakeProvider(state) {
 function setup(overrides = {}) {
   const state = { nodes: new Map(), provisioned: [], scripts: [], listed: 0, rejectToken: false, tokensSeen: [] };
   const store = overrides.store ?? createMemorySystemStore();
+  if (!store.get("fabric.cloud-policy.v1", "default")) store.set("fabric.cloud-policy.v1", "default", { schemaVersion: 1, policy: POLICY, updatedAt: 1, updatedBy: "owner" });
   const controller = createCloudCapacityController({
     store, masterSecret: "master-secret-for-tests", platformId: "platform-1", now: () => 1_000_000,
     buildProvider: (config, firstBoot) => { state.tokensSeen.push(config.token); state.firstBoot = firstBoot; return fakeProvider(state); },
@@ -108,5 +110,26 @@ test("every use is audited with the principal and no secret; an unrecordable act
   const second = setup({ store: failing });
   assert.equal(await codeOf(second.controller.connect({ provider: "hetzner", token: TOKEN, principalId: "o" })), "audit-unavailable");
   assert.equal(second.state.provisioned.length, 0);
+  assert.equal(second.state.listed, 0, "failed audit prevents even the connection token check");
   assert.equal(state.provisioned.length, 1);
+});
+
+
+test("policy persists, has monotonic revisions, and races commit once", async () => {
+  const { controller, store } = setup();
+  const first = await run(controller.setPolicy(POLICY, "owner", 1));
+  assert.deepEqual(await run(setup({ store }).controller.policy()), first);
+  const results = await Promise.allSettled([run(controller.setPolicy(POLICY, "a", first.updatedAt)), run(controller.setPolicy(POLICY, "b", first.updatedAt))]);
+  assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
+  assert.ok((await run(controller.policy())).updatedAt > first.updatedAt);
+  assert.ok((await store.list(CLOUD_AUDIT_NAMESPACE)).some(r => r.value.action === "policy.set"));
+});
+
+
+test("provider inventory is audited before reading, with the caller's principal", async () => {
+  const { controller, store } = setup();
+  await run(controller.connect({ provider: "hetzner", token: TOKEN, principalId: "owner" }));
+  await run(controller.nodes("viewer"));
+  const audit = (await store.list(CLOUD_AUDIT_NAMESPACE)).map(record => record.value);
+  assert.ok(audit.some(entry => entry.action === "nodes.list" && entry.principalId === "viewer"));
 });

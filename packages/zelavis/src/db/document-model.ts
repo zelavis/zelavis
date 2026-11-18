@@ -13,6 +13,8 @@ import {
   InvalidMessage,
   MessageExists,
   TenantMoving,
+  TransactionConflict,
+  TransactionTooLarge,
   UnindexedField,
   CursorMismatch,
   IndexExists,
@@ -727,6 +729,52 @@ export interface RelatedDocuments {
 
 declare const DocumentCursorBrand: unique symbol;
 
+
+/** What `write` can fail with. */
+export type WriteFailure =
+  | CollectionNotFound | DocumentConflict | DocumentNotFound | SchemaViolation | TenantMoving
+  | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
+  | VectorShapeMismatch | InvalidDocumentValue | MessageExists | InvalidMessage;
+
+/**
+ * What a `documents.transaction` body reads and stages. Reads see the body's own staged writes; nothing reaches the
+ * store until the body returns, and then only if nothing it read has changed.
+ */
+export interface DocumentTransaction {
+  readonly get: (input: { readonly collection: string; readonly id: string }) =>
+    Effect.Effect<Document | undefined, CollectionNotFound | TransactionTooLarge>;
+  /**
+   * Equality, `in` and range filters, `orderBy` and a `limit` (1 to 1000). Search, geometry, links, similarity,
+   * `related`, `hybrid`, `statistics` and `offset` are refused (`TransactionTooLarge`, `what: "query"`).
+   */
+  readonly find: (input: FindDocumentsInput & { readonly limit: number }) =>
+    Effect.Effect<ReadonlyArray<Document>, CollectionNotFound | UnindexedField | TransactionTooLarge>;
+  /** Staged; the id is generated now when absent, so the body can reference it. */
+  readonly insert: (input: {
+    readonly collection: string;
+    readonly id?: string;
+    readonly data: JsonObject;
+    readonly expiresAt?: string;
+  }) => Effect.Effect<{ readonly id: string }, TransactionTooLarge>;
+  readonly update: (input: {
+    readonly collection: string;
+    readonly id: string;
+    readonly data: JsonObject;
+    readonly mode?: "merge" | "replace";
+  }) => Effect.Effect<void, CollectionNotFound | TransactionTooLarge>;
+  readonly delete: (input: { readonly collection: string; readonly id: string }) =>
+    Effect.Effect<void, CollectionNotFound | TransactionTooLarge>;
+  /** Staged with the writes: the message exists exactly when they do. */
+  readonly emit: (message: OutboxEmit) => Effect.Effect<void, TransactionTooLarge>;
+}
+
+export interface DocumentTransactionOptions {
+  /** 1 to 8; default 8. */
+  readonly attempts?: number;
+  /** 100 to 30 000 milliseconds over all attempts; default 5000. */
+  readonly deadlineMs?: number;
+}
+
 /** Where a page of documents stopped. Opaque, and bound to its tenant, collection and order. */
 export type DocumentCursor = string & { readonly [DocumentCursorBrand]: true };
 
@@ -1219,6 +1267,19 @@ export interface DocumentsApi {
     | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
     | VectorShapeMismatch | InvalidDocumentValue | MessageExists | InvalidMessage
   >;
+
+  /**
+   * Read, decide and write over this tenant's documents as one serializable change.
+   *
+   * The body runs outside the store's writer against one snapshot, staging its writes. The commit is one `write`
+   * batch that first re-reads everything the body read, inside the writer's transaction, and refuses when any of it
+   * differs; the body then runs again (up to `attempts`). A body that stages nothing returns without a commit. The
+   * body may run more than once, so it must not do anything it cannot repeat. In-process only: a body is code.
+   */
+  readonly transaction: <A, E>(
+    body: (tx: DocumentTransaction) => Effect.Effect<A, E>,
+    options?: DocumentTransactionOptions,
+  ) => Effect.Effect<A, E | TransactionConflict | TransactionTooLarge | Exclude<WriteFailure, DocumentConflict>>;
 
   /**
    * Write every document back as it stands, so its postings are the ones the

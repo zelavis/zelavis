@@ -1,6 +1,5 @@
 import { isUnknown, optional, objectFields, recordOf, parseJson } from "../core/json-validation.js";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Effect, Exit, Scope } from "effect";
 import { serveAgentEngineControl } from "./_agent-engine-control.js";
@@ -15,7 +14,7 @@ import { createZelavisEdgePreviews, type ZelavisEdgePreviews } from "../edge/pre
 import { requestNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
 import { ensureProductionEdge } from "../edge/production.js";
-import { classifyProjectPublicAuthRequest, hasCanonicalSitePath, PROJECT_AUTH_API, PROJECT_AUTH_ROOT } from "../platform/project-public-auth.js";
+import { classifyProjectPublicAuthIngress, hasCanonicalSitePath } from "../platform/project-public-auth.js";
 
 export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configuration: Readonly<Record<string, unknown>>): Effect.fn.Return<NodeRuntimeEngine, TaggedFailure> {
   const options = yield* evaluate(() => {
@@ -78,8 +77,6 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
           } : {}),
           ...(options.servicesDirectory ? { services: { directory: options.servicesDirectory } } : {}),
           ...(options.enrollmentEndpoint ? { enrollmentEndpoint: options.enrollmentEndpoint } : {}),
-          ...(process.env.ZELAVIS_CLOUD_POLICY ? { cloud: { policyFile: resolve(process.env.ZELAVIS_CLOUD_POLICY),
-            bundlePath: fileURLToPath(new URL("../../services/zelavis-cloud/bundle/index.js", import.meta.url)) } } : {}),
           projects: { previewHost: options.custody ? false : options.host,
             ...(process.env.ZELAVIS_AGENT_ENDPOINT ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
             // A Platform that accepts machines dispatches to them: enrolled nodes arrive through the registry.
@@ -181,7 +178,7 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
         const projectId = request.headers.get(NODE_RUNTIME_PREVIEW_ID);
         if (!projectId) return runtime.fetch(request, context);
         if (!options.custody || request.headers.get(NODE_RUNTIME_PREVIEW_KEY) !== options.custody.token) return Promise.resolve(new Response("Private preview authority required.", { status: 401 }));
-        if (!hasCanonicalSitePath(request, context) && classifyProjectPublicAuthRequest(request.method, new URL(request.url).pathname, PROJECT_AUTH_ROOT, PROJECT_AUTH_API)) {
+        if (!hasCanonicalSitePath(request, context) && classifyProjectPublicAuthIngress(request.method, new URL(request.url).pathname)) {
           return Promise.resolve(new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } }));
         }
         const headers = new Headers(request.headers); headers.delete(NODE_RUNTIME_PREVIEW_ID); headers.delete(NODE_RUNTIME_PREVIEW_KEY);

@@ -122,7 +122,7 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const systemItems = input.tables.filter(entry => object(entry.search).databaseSystemView).map(entry => ({ title: label(entry.title).replace(/^System · /u, ""), path: at("/database"), search: Object.fromEntries(Object.entries(object(entry.search)).filter(([key, value]) => key !== "databaseTenant" && typeof value === "string")) as Record<string, string> }));
   const workloadList = (kind: string) => (input.workloads[kind] ?? []).map(entry => ({ title: entry.name, path: at(`/workloads/${kind}/${encodeURIComponent(entry.id)}`) }));
   const native: MenuItem[] = [
-    ...(available("identity") ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
+    ...(available("auth") ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
     ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" }, access: projectAccess("project.runtime.manage") }, { title: "Tenants", path: at("/database/tenants") }, { title: "Cross-Tenant Indexes", path: at("/database/cross-tenant-indexes") }, { title: "Shards", path: at("/database/shards") }, { title: "Images", path: at("/database/images") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
     ...(available("storage") ? [{ title: "Storage", path: at("/storage") }] : []),
     ...(available("workloads") ? [{ title: "Workloads", path: at("/workloads"), items: [
@@ -136,7 +136,7 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const contentItems: MenuItem[] = [{ title: "All Content Types", path: at("/content") }, { title: "Add Content Type", path: at("/content/new") },
     ...input.content.map(row => ({ title: row.label, path: at(`/content/${encodeURIComponent(row.name)}`), items: [{ title: "Entries", path: at(`/content/${encodeURIComponent(row.name)}`) }, { title: "Fields", path: at(`/content/${encodeURIComponent(row.name)}/fields`) }] }))];
   const nativeItems: MenuItem[] = [
-    ...(available("identity") ? [{ title: "Users", path: at("/users"), access: projectAccess("project.users.manage") }] : []),
+    ...(available("auth") ? [{ title: "Users", path: at("/users"), access: projectAccess("project.users.manage") }, { title: "Roles", path: at("/roles"), access: projectAccess("project.users.manage") }] : []),
     ...(available("database") ? [{ title: "Content", path: at("/content"), items: contentItems, access: projectAccess("project.content.read") }] : []),
     ...(available("storage") ? [{ title: "Media", path: at("/media"), access: projectAccess("project.media.manage") }] : []),
     ...(native.length ? [{ title: "Backend", path: at("/backend"), items: native, access: projectAccess("project.view") }] : [])
@@ -148,7 +148,7 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
     return filterMenu([
       { title: "Overview", path: base }, domains, { title: "Files", path: at("/files") }, { title: "App database", path: at("/app-database") }, { title: "Setup", path: at("/setup") },
       { title: "Backups", path: at("/backups") }, { title: "Logs", path: at("/logs") }, { title: "Updates", path: at("/updates") }, { title: admin, path: at("/admin") },
-      ...nativeItems.filter(item => ["Users", "Content", "Media", "Backend"].includes(item.title)), ...services.flatMap(service => menusOf(service).filter(menu => surfaceOf(menu, service) !== "platform" && menu.path !== "/").map(menu => prefixed(fromMenu(menu, label(service.name, "")))))
+      ...nativeItems.filter(item => ["Users", "Roles", "Content", "Media", "Backend"].includes(item.title)), ...services.flatMap(service => menusOf(service).filter(menu => surfaceOf(menu, service) !== "platform" && menu.path !== "/").map(menu => prefixed(fromMenu(menu, label(service.name, "")))))
     ], input.control.access, project.id);
   }
   const frontend = object(capabilities.site).available === true ? [{ title: "Frontend", path: at("/frontend"), access: projectAccess("project.website.manage") }] : [];
@@ -156,7 +156,7 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
     { title: "Overview", path: base, access: projectAccess("project.view") },
     domains,
     ...nativeItems.filter(item => item.title !== "Backend"),
-    ...(available("identity") && !canAccess(input.control.access, projectAccess("project.view")) ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
+    ...(available("auth") && !canAccess(input.control.access, projectAccess("project.view")) ? [{ title: "Auth", path: at("/auth"), access: projectAccess("project.settings.manage") }] : []),
     ...frontend, ...bySurface("root"),
     { title: "Extensions", path: at("/extensions"), items: [{ title: "Agents", path: at("/agents") }, ...bySurface("extensions")], access: projectAccess("project.extensions.manage") },
     ...(native.length || bySurface("core").length ? [{ title: "Backend", path: at("/backend"), items: [...native, ...bySurface("core")], access: projectAccess("project.view") }] : []),

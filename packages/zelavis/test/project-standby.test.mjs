@@ -14,7 +14,7 @@ import { nodeAdapter } from "../dist/adapters/node.js";
 import { createLocalSqliteSystemStore } from "../dist/adapters/_sqlite-system-store.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 import { createNodeProcessProjectRuntime } from "../dist/adapters/_node-project-runtime.js";
-import { projectLeaseConfiguration, projectLeaseEnvironment } from "../dist/adapters/_project-lease-environment.js";
+import { projectLeaseConfiguration, projectLeaseEnvironment, PROJECT_AUTH_SEALING_SECRET_ENV } from "../dist/adapters/_project-lease-environment.js";
 import { ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../dist/platform/gateway-authority.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 
@@ -88,6 +88,10 @@ test("a Project's standby follows its writer, answers 503 until promoted, then s
 
     // Its credential reads this Project's followers and nothing else.
     const standbyEnvironment = await projectLeaseEnvironment(configuration, systemStore, "leased", "standby");
+    const writerEnvironment = await projectLeaseEnvironment(configuration, systemStore, "leased", "writer");
+    const otherEnvironment = await projectLeaseEnvironment(configuration, systemStore, "other", "writer");
+    assert.equal(standbyEnvironment[PROJECT_AUTH_SEALING_SECRET_ENV], writerEnvironment[PROJECT_AUTH_SEALING_SECRET_ENV]);
+    assert.notEqual(standbyEnvironment[PROJECT_AUTH_SEALING_SECRET_ENV], otherEnvironment[PROJECT_AUTH_SEALING_SECRET_ENV]);
     const bearer = { authorization: `Bearer ${standbyEnvironment.ZELAVIS_LEASE_TOKEN}` };
     const base = `${platform}/zelavis/api/v1/runtime/projects`;
     const followed = await fetch(`${base}/leased/followers/partitions`, { method: "POST", headers: { ...bearer, "content-type": "application/json" }, body: "{}" });
@@ -112,6 +116,10 @@ test("a Project's standby follows its writer, answers 503 until promoted, then s
     const data = client.data("leased");
     await data.collections.create({ name: "notes" });
     await data.documents.insert("notes", { id: "n1", data: { text: "written on the writer" } });
+    await client.projects.setRegistrationSettings("leased", { enabled: true, expectedRevision: 0 });
+    const writerAuth = createZelavisClient({ baseUrl: project.runtime.url });
+    const credentials = { username: "standby-user", password: "paper lantern on the second node" };
+    const { userId, tokens } = await writerAuth.auth.usernamePassword.signUp(credentials);
     const followers = client.followers("leased");
     const level = async () => {
       const listing = await followers.partitions();
@@ -129,9 +137,17 @@ test("a Project's standby follows its writer, answers 503 until promoted, then s
 
     // The writer is stopped (its lease released): the standby takes over and serves.
     assert.equal((await json("POST", "/projects/leased/stop")).status, 200);
-    await until(async () => (await toB("/zelavis/api/v1/runtime/access")).status, (status) => status === 200, "the promoted standby to serve", 90_000);
+    try {
+      await until(async () => (await toB("/zelavis/api/v1/runtime/access")).status, (status) => status === 200, "the promoted standby to serve", 90_000);
+    } catch (error) {
+      const lines = (await driverB.logs("leased")).slice(-20).map(line => line.message).join("\n");
+      throw new Error(`The promoted standby could not serve: ${lines}`, { cause: error });
+    }
     const promoted = await lease();
     assert.deepEqual([promoted.owner, promoted.epoch > 1], ["node-b", true]);
+    const standbyAuth = createZelavisClient({ baseUrl: standing.url, headers: { authorization: `Bearer ${tokens.accessToken}` } });
+    assert.equal((await standbyAuth.auth.session.current()).account.id, userId);
+    assert.equal((await standbyAuth.auth.usernamePassword.signIn(credentials)).userId, userId);
 
     const after = await (await toB("/zelavis/api/v1/database/followers/partitions", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
     const now = new Map(after.partitions.map((entry) => [entry.partition, entry.head]));

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hosting Provider</title><link rel="stylesheet" href="./hosting.css">
+</head>
+<body>
+<main class="zv-stack" data-hosting-page="customer">
+  <p id="customer-status" class="hosting-status" role="status">Loading hosting…</p>
+  <section id="current" class="zv-card zv-stack" hidden>
+    <div class="hosting-heading"><h2>Current plan</h2><button id="refresh" type="button" class="zv-button">Refresh</button></div>
+    <p id="subscription"></p>
+    <p id="grace" hidden></p>
+    <div id="billing-actions" class="hosting-actions"></div>
+  </section>
+  <section id="offers" class="zv-card zv-stack" hidden>
+    <h2>Hosting plans</h2>
+    <div id="offers-list" class="hosting-cards"></div>
+  </section>
+  <section id="billed" class="zv-card zv-stack" hidden>
+    <div class="hosting-heading"><h2>Billed Projects</h2><p id="quota"></p></div>
+    <ul id="projects" class="hosting-list"></ul>
+    <form id="project" class="hosting-form" hidden>
+      <label>Project name<input name="name" maxlength="120" required></label>
+      <label id="recipe-field">Project recipe<select name="recipeName"></select></label>
+      <div class="hosting-actions"><button class="zv-button" type="submit">Create Project</button></div>
+    </form>
+  </section>
+</main>
+<script type="module" src="./hosting.js"></script>
+</body>
+</html>

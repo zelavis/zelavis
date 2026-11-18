@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { refreshQualificationOwner } from './lib/qualification-auth.mjs';
 import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
 
 if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== '1') throw Error('Disposable qualification only');
@@ -22,7 +23,7 @@ const saveState = async (state) => writeFile(stateFile, JSON.stringify(state));
 
 async function sdk() {
   const { createZelavisClient } = await import(pathToFileURL('/opt/zelavis/current/platform/dist/sdk/fetch.js').href);
-  const cookie = await readFile('/var/lib/zelavis/qualification-session', 'utf8');
+  const cookie = await refreshQualificationOwner(baseUrl);
   return { cookie, client: createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl },
     fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(300_000) }) }) };
 }

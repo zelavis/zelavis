@@ -1,4 +1,8 @@
+import { createServicePrincipals, ServicePrincipalError, type ServicePrincipals } from "./platform/service-principals.js";
+import { createServiceSecrets } from "./platform/service-secrets.js";
+export { createServiceSecrets, type ZelavisServiceSecrets } from "./platform/service-secrets.js";
 import { neededHostPackages, provisionableRequirements } from "./project-host-packages.js";
+import { keepIdentityDatabase } from "./platform/identity-database.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
 import { createProjectStandbyStore, deleteProjectStandby } from "./platform/project-standby.js";
 import { deleteProjectWriterLease, systemStoreLeaseAudit, systemStoreLeaseStore } from "./platform/writer-lease-store.js";
@@ -7,22 +11,13 @@ import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
 import { setUnexpectedErrorSink } from "./core/runtime/error-policy.js";
 import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
-import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
+import { describeFailure, evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
 import { publicInstallChoices, publicProjectRecipe, publicServiceRegistryIdentity, type ServiceExtensionEntry, type ServiceExtensionPoint } from "./platform/service-registry-view.js";
-import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
-import {
-  identityEndpointGroup as createIdentityEndpointGroup,
-  createIdentity,
-  type IdentityServiceOptions,
-  createOAuthProviderRuntime,
-  createPasswordProvider,
-  PASSWORD_PROVIDER,
-  RegistrationRecovery,
-  type IdentityMethodContext,
-  type IdentityMethodPlugin,
-  type IdentityApi,
-} from "./app/identity/index.js";
+import { createEmailSubsystem, type EmailOutbox, type EmailSend } from "./app/email/index.js";
+import { AUTH_TENANT, createAuthSubsystem, projectAuthSealingSecret, type AuthServiceApi, type AuthSubsystem, type ZelavisAuthOptions } from "./auth/subsystem.js";
+import { collectOAuthProviders } from "./auth/oauth/plugins.js";
+import { projectDatabaseIdentitySource, systemStoreIdentitySource } from "./auth/import/sources.js";
 import {
   defineDatabaseEndpointGroups,
   type DatabaseRuntimeApi,
@@ -30,6 +25,11 @@ import {
   CollectionExists,
 } from "./db/index.js";
 import { DocumentConflict } from "./db/errors.js";
+import { type DatabaseApi, makeDatabase } from "./db/database.js";
+import { memoryKvEngine } from "./db/engines/memory-kv.js";
+import { partitionMapFor } from "./db/topology.js";
+import { openShardOverKv } from "./db/kv-store.js";
+import { effectDatabaseOf } from "./db/runtime-api.js";
 import type { OpenNodeDatabaseOptions } from "./db/node-host.js";
 import {
   createFabricEndpointGroup,
@@ -46,7 +46,6 @@ import {
   type ZelavisServerErrorHandler,
   type ZelavisServerExecutionContext,
   type ZelavisServerFetchHandler,
-  declaresServiceCapability,
   serviceCapabilityFor,
   misscopedExtensionOwners,
   serviceExtensionOwners,
@@ -145,6 +144,12 @@ import {
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { applyRenewedEdgeCertificates } from "./edge/production.js";
 import { createProjectDomainController, type ProjectDomainIngress, type ProjectDomainController } from "./edge/project-domains.js";
+import { collectDnsProviders, type DnsAuthoritativeTxt, type DnsProviderDefinition } from "./edge/dns-provider.js";
+import { createEdgeDnsController, type EdgeDnsController } from "./edge/dns-connections.js";
+import { registrarRoutes } from "./platform/registrar-routes.js";
+import { createRegistrarController, type RegistrarController } from "./edge/registrar.js";
+import { collectRegistrars, type RegistrarDefinition } from "./edge/registrar-provider.js";
+import { edgeDnsRoutes } from "./platform/edge-dns-routes.js";
 import { projectDomainRoutes } from "./platform/project-domain-routes.js";
 import { guardControlPlaneHost, guardProjectDomainHost } from "./platform/public-domain-forwarder.js";
 import { hasCanonicalSitePath } from "./platform/project-public-auth.js";
@@ -380,8 +385,6 @@ export {
 };
 import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
-import { createPlatformAuthRepositories } from "./platform/auth-repositories.js";
-import { createPlatformAuthBootstrap } from "./platform/auth-bootstrap.js";
 import { createServiceStore } from "./platform/service-store.js";
 export * from "./storage/s3.js";
 export * from "./storage/conditions.js";
@@ -416,7 +419,7 @@ import type {
 } from "./platform/storage-types.js";
 
 
-export type ZelavisAuthOptions = boolean | IdentityServiceOptions;
+export type { AuthServiceApi, ZelavisAuthOptions } from "./auth/subsystem.js";
 
 /**
  * The face of an installation: the title and subtitle go straight into the
@@ -481,6 +484,8 @@ export type ZelavisDatabaseStorageOptions = OpenNodeDatabaseOptions;
 
 export type ZelavisFabricOptions = boolean | FabricServiceOptions;
 
+export type ZelavisEmailOptions = false | { readonly send?: EmailSend; readonly now?: () => Date };
+
 /**
  * Platform subsystems, composed by the host rather than installed.
  *
@@ -494,6 +499,19 @@ export type ZelavisFabricOptions = boolean | FabricServiceOptions;
 export interface ZelavisSubsystemOptions {
   auth?: ZelavisAuthOptions;
   database?: ZelavisDatabaseOptions;
+  /**
+   * The Platform's own identity database (Platform users' Auth data). Never mounted as routes, never `core.database`,
+   * never reported by `runtime/config`; kept on the runtime for Zelavis Auth (`platform/identity-database.ts`).
+   */
+  identityDatabase?: ZelavisDatabaseOptions;
+  /** Host-owned private database handed only to services as `core.database`, never to runtime subsystems or routes. */
+  servicesDatabase?: DatabaseRuntimeApi;
+  /**
+   * The runtime's email delivery: settings, outbox and worker in its own System
+   * Store. On by default; `send` is the transport (the Node adapter supplies
+   * SMTP), and without one settings can be kept but nothing is sent.
+   */
+  email?: ZelavisEmailOptions;
   fabric?: ZelavisFabricOptions;
   storage?: ZelavisStorageOptions;
   workloads?: ZelavisWorkloadsOptions;
@@ -646,6 +664,11 @@ export interface ZelavisServerOptions {
   publicSiteFetch?: (url: URL, init: RequestInit) => Promise<Response>;
   /** Edge certificate authority and ACME controller. */
   edgeCertificates?: ZelavisCertificateController;
+  /** Built-in DNS provider drivers, supplied by the host adapter (Cloudflare under Node). Plugins add more through `zelavis/edge:dns`. */
+  edgeDnsProviders?: readonly DnsProviderDefinition[];
+  edgeRegistrars?: readonly RegistrarDefinition[];
+  /** TXT read at every authoritative server of a zone, for DNS-01 propagation. Supplied by the host adapter. */
+  edgeAuthoritativeTxt?: DnsAuthoritativeTxt;
   assistant?: false | ZelavisAssistantResponder | AssistantModelOption;
   bootstrap?: {
     /** One-time secret required to claim the first Platform owner account. */
@@ -654,8 +677,8 @@ export interface ZelavisServerOptions {
 }
 
 interface ZelavisRuntimeCompositionOptions extends ZelavisServerOptions {
-  registrationRecovery?: RegistrationRecovery;
   serviceRegistry?: ZelavisServiceRegistryOptions;
+  [projectAuthSealingSecret]?: string;
 }
 
 
@@ -809,6 +832,9 @@ export interface ZelavisPlatformResources {
   projectDomainIngress?: ProjectDomainIngress;
   /** Edge certificate authority and ACME controller. */
   edgeCertificates?: ZelavisCertificateController;
+  edgeDnsProviders?: readonly DnsProviderDefinition[];
+  edgeRegistrars?: readonly RegistrarDefinition[];
+  edgeAuthoritativeTxt?: DnsAuthoritativeTxt;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
@@ -968,27 +994,19 @@ export function defineAdapter(
   return definition;
 }
 
-/**
- * Package identities an operator-supplied source must never take.
- *
- * Derived, not listed: the host marks what it selected from its distribution as
- * `official`, and the frontend it was given is protected too.
- */
-function protectedOfficialPackageNames(
+/** Native capability owners and the package identities selected by the host. */
+function protectedServiceNames(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   frontendName?: string,
 ): ReadonlySet<string> {
   return new Set([
+    ...NATIVE_CAPABILITY_OWNERS,
     ...registry
       .filter((entry) => entry.source === "official")
       .map((entry) => entry.service.name),
     ...(frontendName ? [frontendName] : []),
   ]);
 }
-
-// Defined with NATIVE_EXTENSION_OWNERS below; declared here so extension
-// listings can name a native owner whether or not it is currently present.
-
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -1003,6 +1021,11 @@ function readOptionalProcessEnv(name: string): string | undefined {
   ).process;
 
   return runtimeProcess?.env?.[name];
+}
+
+/** The host's environment, where a Platform's OAuth connections may be configured (`ZELAVIS_AUTH_<PROVIDER>_*`). */
+function readProcessEnvironment(): Readonly<Record<string, string | undefined>> {
+  return (globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 }
 
 
@@ -1411,7 +1434,7 @@ function loadStoredServiceRegistryModules(
   manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
   const moduleEntries = (entries ?? [])
-    .filter((entry) => entry.specifier)
+    .filter((entry) => entry.specifier && !NATIVE_CAPABILITY_OWNERS.has(entry.name))
     .map((entry) => ({
       specifier: entry.specifier as string,
       status: entry.status ?? "available",
@@ -1613,145 +1636,32 @@ function resolveDatabaseCoreService(
 }));
   }
 
-function resolveAuthCoreService(
-  option: ZelavisAuthOptions | undefined,
-  methods: readonly IdentityMethodPlugin[] = [],
-  systemStore?: ZelavisSystemStore,
-  registryEntries: readonly Readonly<
-    ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
-  >[] = [],
-  methodServiceNames: ReadonlyMap<IdentityMethodPlugin, string> = new Map(),
-  rootPath = "/zelavis",
-  bootstrapToken?: string,
-  registrationRecovery?: RegistrationRecovery,
-  validateGrantScopes?: NonNullable<IdentityServiceOptions["definition"]>["validateGrantScopes"],
-): Promise<ZelavisEndpointGroup<IdentityApi> | undefined> {
-    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<IdentityApi> | undefined, IntegrationFailure> {
-  const authOption = option ?? true;
-
-  if (authOption === false) {
-    return undefined;
-  }
-
-  const configured = authOption === true ? {} : authOption;
-  const oauth = createOAuthProviderRuntime({
-    ...(configured.oauth ?? {}),
-    environmentConnections: true,
-  });
-  // Password sign-in ships with Zelavis: an installation with no credential
-  // provider can never create its first owner.
-  const builtInMethods: IdentityMethodPlugin[] = [
-    {
-      name: PASSWORD_PROVIDER,
-      register(api) {
-        api.authentication.registerProvider(
-          createPasswordProvider(configured.password ?? {}),
-        );
-      },
-    },
-    oauth.method,
-  ];
-  const auth = configured.auth ?? (yield* integrationValue(createIdentity({
-    ...(configured.authOptions ?? {}),
-    sessionCookieName: configured.definition?.sessionCookie === false ? false
-      : configured.definition?.sessionCookie?.name ?? configured.authOptions?.sessionCookieName,
-    registrationRecovery,
-    accountAccessWriter: configured.authOptions?.repositories?.accounts ?? systemStore,
-    repositories: {
-      ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
-      ...(configured.authOptions?.repositories ?? {}),
-    },
-    // Installed providers only. Handing credential providers to composition in
-    // code was a second way to supply a service, and the two disagreed: a
-    // provider passed here never appeared in the registry, so it could not be
-    // listed, disabled, or updated like the same provider installed normally.
-    methods: [...builtInMethods, ...methods],
-    // Each method sees the installed services and gets storage scoped to the
-    // service that supplied it, so a plugin hosting other plugins' providers
-    // can find them and read what an operator configured. Registration runs
-    // before service setup, so this is the only point where it can.
-    methodContext: (method) => ({
-      registry: registryEntries as IdentityMethodContext["registry"],
-      ...(systemStore
-        ? { store: createServiceStore(systemStore, methodServiceNames.get(method) ?? method.name) }
-        : {}),
-    }),
-  })));
-
-  return (yield* integrationValue(createIdentityEndpointGroup({
-    ...configured,
-    auth,
-    methods: [],
-    definition: {
-      ...(configured.definition ?? {}),
-      authority: "platform",
-      validateGrantScopes,
-      registrationRecovery,
-      bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
-      oauthConnections: oauth.connections,
-      bootstrapToken,
-      sessionCookie: configured.definition?.sessionCookie === false
-        ? false
-        : {
-            path: rootPath,
-            ...(configured.definition?.sessionCookie ?? {}),
-          },
-    },
-  })));
-}));
-  }
-
-/** The capability a credential provider declares to extend Platform auth. */
-export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
-  "zelavis/identity",
-  "credentials",
-);
-
 /**
- * Finds the credential providers installed on this Platform.
- *
- * Providers are ordinary installed services found by capability, and this is
- * now the only way one reaches auth: there is no option for handing providers
- * to the constructor. A provider arrives by being installed, which means the
- * same path whether it came from the services folder, the registry
- * endpoints, or the marketplace.
- *
- * The capability names the plugin being extended rather than a bare domain, so
- * a provider written for Platform auth is not also collected by some other
- * service that happens to want credentials.
+ * The in-memory Auth database of a runtime with no database of its own (embedded, tests): development only. Kept per
+ * System Store, as Identity's records were, so a runtime composed again over the same store (service activation) keeps
+ * its accounts; it lives as long as the store does.
  */
-/** Maps each collected method back to the service that supplied it. */
-function collectAuthMethodServiceNames(
-  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): ReadonlyMap<IdentityMethodPlugin, string> {
-  const names = new Map<IdentityMethodPlugin, string>();
-  for (const entry of registry) {
-    const method = entry.service.service as IdentityMethodPlugin | undefined;
-    if (typeof method?.register === "function") {
-      names.set(method, entry.service.name);
-    }
-  }
-  return names;
-}
+const memoryAuthDatabases = new WeakMap<ZelavisSystemStore, DatabaseApi>();
+const memoryAuthDatabase = (store: ZelavisSystemStore) => Effect.suspend((): Effect.Effect<DatabaseApi, IntegrationFailure> => {
+  const kept = memoryAuthDatabases.get(store);
+  if (kept !== undefined) return Effect.succeed(kept);
+  return Effect.gen(function* () {
+    const scope = yield* Scope.make();
+    const database = yield* makeDatabase({
+      partitionMap: partitionMapFor(["auth-0"]),
+      crossTenantRefresh: false,
+      openShard: (shard) => openShardOverKv(shard, memoryKvEngine()),
+    }).pipe(Scope.provide(scope));
+    memoryAuthDatabases.set(store, database);
+    return database;
+  }).pipe(Effect.mapError((cause) => new IntegrationFailure(cause)));
+});
 
-function collectAuthMethodPlugins(
-  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): readonly IdentityMethodPlugin[] {
-  return Object.freeze(
-    registry
-      .filter(
-        (entry) =>
-          entry.status === "installed" &&
-          declaresServiceCapability(
-            entry.service.capabilities,
-            "zelavis/identity",
-            "credentials",
-          ) &&
-          typeof (entry.service.service as IdentityMethodPlugin | undefined)?.register === "function",
-      )
-      .map((entry) => entry.service.service as IdentityMethodPlugin),
-  );
-}
+/** The capability a plugin declares to supply a bearer authenticator to this runtime's Auth. */
+export const ZELAVIS_AUTH_AUTHENTICATOR_CAPABILITY = serviceCapabilityFor(
+  "zelavis/auth",
+  "authenticator",
+);
 
 type DashboardServicePageReference = {
   id: string;
@@ -1790,7 +1700,7 @@ function createDashboardAccess(principal: NonNullable<ZelavisServerExecutionCont
  * yet a provider extending it is only usable while it is present.
  */
 const NATIVE_EXTENSION_OWNERS: Readonly<Record<string, string>> = {
-  identity: "zelavis/identity",
+  auth: "zelavis/auth",
   fabric: "zelavis/fabric",
   database: "@zelavis/db",
   storage: "@zelavis/storage",
@@ -1969,6 +1879,9 @@ function unavailableProjectsResponse() {
 }
 
 function projectErrorResponse(error: unknown) {
+  if (error instanceof ServicePrincipalError) return {
+    status: error.status, body: { error: error.code, ...(error.permissions ? { permissions: error.permissions } : {}) },
+  };
   if (error instanceof ZelavisProjectIsolationError) {
     // A stable code and the assessment, so SDK and CLI callers can act on
     // the refusal without parsing its message.
@@ -2003,6 +1916,7 @@ function resolveRuntimeManagementCore(
       ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
     >[];
     serviceRegistryStore: ZelavisServiceRegistryStore;
+    servicePrincipals: ServicePrincipals;
     /** See `resolveLiveServiceRegistry`. */
     installedServiceNames?: ReadonlySet<string>;
     /** The version the marketplace's allow-list lists for each package it offers, by name. */
@@ -2078,6 +1992,28 @@ function resolveRuntimeManagementCore(
         .filter((route: string) => route !== "/"),
     ),
   ];
+  const serviceRegistryError = (error: unknown) => error instanceof ServicePrincipalError
+    ? { status: error.status, body: { error: error.code, ...(error.permissions ? { permissions: error.permissions } : {}) } }
+    : zelavisErrorResponse(error, 400);
+  const requireNoServiceExtenders = (serviceName: string, registry: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]) => {
+    const extenders = registry.filter(entry => entry.status === "installed" && entry.service.name !== serviceName &&
+      serviceExtensionOwners(entry.service).includes(serviceName)).map(entry => entry.service.name).sort();
+    if (extenders.length) throw new ZelavisValidationError(`"${serviceName}" is extended by ${extenders.join(", ")}; disable them first.`);
+  };
+  const completeServiceInstall = <A, E>(name: string, granted: () => boolean | undefined, work: Effect.Effect<A, E>) =>
+    work.pipe(Effect.onError(() => granted() ? context.servicePrincipals.retire(name).pipe(Effect.orDie) : Effect.void));
+  const prepareServiceInstall = Effect.fn(function* (created: ZelavisServiceRegistryStateEntry, approval: unknown, principal: ZelavisPrincipal | undefined, updating = false) {
+    if (created.status !== "installed") {
+      requireNoServiceExtenders(created.name, yield* integration(() => readResolvedServiceRegistry()));
+      yield* context.servicePrincipals.retire(created.name, principal);
+      return;
+    }
+    const service = yield* integration(() => loadService<ZelavisServiceSetupContext>(created.specifier!, {
+      importer: context.serviceImporter, manifestResolver: context.serviceManifestResolver,
+    }));
+    if (service.name !== created.name) throw new ZelavisValidationError("The registered name must match the loaded package identity.");
+    return yield* context.servicePrincipals.approve(service, approval, principal, updating);
+  });
   const readResolvedServiceRegistry = (
     entries?: readonly ZelavisServiceRegistryStateEntry[],
   ) => resolveLiveServiceRegistry({
@@ -2101,7 +2037,7 @@ function resolveRuntimeManagementCore(
    * Acquires the listed version of a package and registers it in place of what the registry held, the way an
    * install does: the allow-list gate, the digest check and the activation are the same.
    */
-  const installListedVersion = (serviceName: string, version: string, action: "install" | "update") =>
+  const installListedVersion = (serviceName: string, version: string, action: "install" | "update", approval?: unknown, principal?: ZelavisPrincipal) =>
     Effect.gen(function* () {
       const created = yield* integration(() => readDashboardServiceRegistryCreate(
         { packageSource: `npm:${serviceName}@${version}`, status: "installed" },
@@ -2114,7 +2050,8 @@ function resolveRuntimeManagementCore(
       if (created.name !== serviceName) {
         return yield* new IntegrationFailure(new ZelavisValidationError(`The package listed for "${serviceName}" names itself "${created.name}".`));
       }
-      return yield* integration(() => runServiceRegistryChange(
+      const granted = yield* prepareServiceInstall(created, approval, principal, action === "update");
+      return yield* completeServiceInstall(serviceName, () => granted, integration(() => runServiceRegistryChange(
         applyServiceRegistryChange(
           (entries) => [
             ...entries.filter((entry) => entry.name !== serviceName),
@@ -2122,14 +2059,14 @@ function resolveRuntimeManagementCore(
           ],
           () => ({ serviceName, action, specifier: created.specifier }),
         ),
-      ));
+      )));
     });
   /**
    * A recipe is never run from its installed copy: every Project freezes its own. So the installed copy only
    * decides what a new Project or an upgrade gets, and it is brought to the newest version the allow-list lists
    * whenever one is about to be used. Plugins and frontends do run from theirs and update only when asked.
    */
-  const acquireListedRecipe = (serviceName: string): Promise<boolean> => present(Effect.gen(function* () {
+  const acquireListedRecipe = (serviceName: string): Promise<boolean> => present(context.servicePrincipals.exclusive(Effect.gen(function* () {
     const listed = context.listedServiceVersions?.get(serviceName);
     if (!listed || !isExactVersion(listed) || !context.servicePackageInstaller?.acquire) return false;
     const current = (yield* integration(() => readResolvedServiceRegistry()))
@@ -2144,7 +2081,7 @@ function resolveRuntimeManagementCore(
     if (!isCatalogueListing(current)) return false;
     yield* installListedVersion(serviceName, listed, "install");
     return true;
-  }));
+  })));
   const serializeServiceMenuForDashboard = (
     serviceName: string,
     menu: ZelavisServiceMenuDefinition | undefined,
@@ -2424,7 +2361,9 @@ function resolveRuntimeManagementCore(
   const serializeServiceRegistryForDashboard = () =>
     present(Effect.gen(function* () {
       const serviceRegistry = (yield* integrationValue(readResolvedServiceRegistry()));
-      const serialized = serviceRegistry.map((entry) => ({
+      const serialized = yield* Effect.forEach(serviceRegistry, (entry) => Effect.gen(function* () {
+        const principal = yield* context.servicePrincipals.view(entry.service);
+        return ({
         ...publicServiceRegistryIdentity(entry),
         // The trust boundary a client needs to render this service's page
         // safely. "extension" means the service was installed at runtime and is
@@ -2440,6 +2379,7 @@ function resolveRuntimeManagementCore(
           entry.service.basePath ?? entry.service.name,
         ),
         marketplace: entry.service.marketplace,
+        ...(principal ? { principal } : {}),
         // How an available entry is installed: acquired from the marketplace's
         // allow-list, or activated in place. A yes/no, never the reference.
         ...(entry.status === "available"
@@ -2457,7 +2397,8 @@ function resolveRuntimeManagementCore(
         menus: entry.service.menus?.map((menu) =>
           serializeServiceMenuForDashboard(entry.service.name, menu),
         ),
-      }));
+      });
+      }), { concurrency: 1 });
       const seen = new Set(serialized.map((entry) => entry.name));
       const storedEntries = (yield* integrationValue(context.serviceRegistryStore.read()));
 
@@ -2929,7 +2870,7 @@ function resolveRuntimeManagementCore(
               owner: {
                 type: "string",
                 description:
-                  "Limit the result to extensions of this service, such as zelavis/identity.",
+                  "Limit the result to extensions of this service, such as zelavis/auth.",
               },
             },
             responses: {
@@ -2940,7 +2881,7 @@ function resolveRuntimeManagementCore(
               const wanted = new URL(request.url).searchParams.get("owner") ?? undefined;
               const services = yield* integration(() => serializeServiceRegistryForDashboard());
               // Composed services and native subsystems count as present. A
-              // subsystem such as `zelavis/identity` never appears in the
+              // subsystem such as `zelavis/auth` never appears in the
               // registry, so a listing built from that alone would report the
               // one thing every auth extension points at as missing.
               const installed = new Set<string>([
@@ -3021,26 +2962,25 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/services",
           ),
-          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
+          handler: ({ body, principal }: { body: unknown; principal?: ZelavisPrincipal }) => present(context.servicePrincipals.exclusive(Effect.gen(function* () {
               const created = yield* integration(() => readDashboardServiceRegistryCreate(body, {
                 importer: context.serviceImporter,
                 manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
               }));
-              // An official identity is selected by the host from the
-              // distribution and changes state through PATCH; registering a
-              // package under its name would silently replace it.
+              // Only the host may supply a service under a reserved identity.
               if (
-                protectedOfficialPackageNames(
+                protectedServiceNames(
                   yield* integration(() => readResolvedServiceRegistry()),
                   context.frontendServiceName,
                 ).has(created.name)
               ) {
                 throw new ZelavisValidationError(
-                  `"${created.name}" is an official package identity and cannot be registered from another source.`,
+                  `"${created.name}" is a reserved service identity and cannot be registered from another source.`,
                 );
               }
-              const { activation } = yield* integration(() => runServiceRegistryChange(
+              const granted = yield* prepareServiceInstall(created, readBodyObject(body).approvePermissions, principal);
+              const { activation } = yield* completeServiceInstall(created.name, () => granted, integration(() => runServiceRegistryChange(
                 applyServiceRegistryChange(
                   (entries) => [
                     ...entries.filter((entry) => entry.name !== created.name),
@@ -3052,7 +2992,7 @@ function resolveRuntimeManagementCore(
                     specifier: created.specifier,
                   }),
                 ),
-              ));
+              )));
 
               return {
                 status: 201,
@@ -3061,7 +3001,7 @@ function resolveRuntimeManagementCore(
                   activation,
                 },
               };
-            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+            })).pipe(Effect.catchCause((cause) => Effect.succeed(serviceRegistryError(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           id: "runtime.services.updateToListed",
@@ -3085,7 +3025,7 @@ function resolveRuntimeManagementCore(
           // The version comes from the allow-list, never from the request, as for the Platform's own updates.
           // It is acquired and registered exactly as an install is, so the gate, the digest check and the
           // activation are the same; a recipe is then read live and a Project offers its upgrade at once.
-          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+          handler: ({ params, body, principal }: { params: Record<string, string>; body: unknown; principal?: ZelavisPrincipal }) => present(context.servicePrincipals.exclusive(Effect.gen(function* () {
               const serviceName = params.name?.trim();
               if (!serviceName) {
                 throw new ZelavisValidationError("Service name is required.");
@@ -3102,7 +3042,7 @@ function resolveRuntimeManagementCore(
                   body: { error: `${serviceName}@${current.service.version ?? "unknown"} is the newest version the marketplace lists.` },
                 };
               }
-              const { activation } = yield* installListedVersion(serviceName, version, "update");
+              const { activation } = yield* installListedVersion(serviceName, version, "update", readBodyObject(body ?? {}).approvePermissions, principal);
               return {
                 status: 200,
                 body: {
@@ -3111,7 +3051,7 @@ function resolveRuntimeManagementCore(
                   activation,
                 },
               };
-            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+            })).pipe(Effect.catchCause((cause) => Effect.succeed(serviceRegistryError(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           // Linked by service pages, which render in their own document and so
@@ -3331,14 +3271,26 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/services/:name",
           ),
-          handler: ({ body, params }: { body: unknown; params: Record<string, string> })  => present(Effect.gen(function* () {
+          handler: ({ body, params, principal }: { body: unknown; params: Record<string, string>; principal?: ZelavisPrincipal }) => present(context.servicePrincipals.exclusive(Effect.gen(function* () {
               const serviceName = params.name?.trim();
               if (!serviceName) {
                 throw new ZelavisValidationError("Service name is required.");
               }
 
               const update = readDashboardServiceRegistryUpdate(body);
-              const { activation } = yield* integration(() => runServiceRegistryChange(applyServiceRegistryChange((currentEntries) => present(Effect.gen(function* () {
+              if (update.status === "installed") {
+                const current = (yield* integration(() => readResolvedServiceRegistry())).find(entry => entry.service.name === serviceName);
+                if (current && isCatalogueListing(current)) {
+                  const version = context.listedServiceVersions?.get(serviceName);
+                  if (!version || !isExactVersion(version)) throw new ZelavisValidationError("The catalogue must list an exact service version.");
+                  // A catalogue advertises identity, not the executable manifest. Acquire through the same
+                  // gate as POST, so approval always covers the package that will actually run.
+                  const { activation } = yield* installListedVersion(serviceName, version, "install", readBodyObject(body).approvePermissions, principal);
+                  return { status: 200, body: { services: yield* integration(() => serializeServiceRegistryForDashboard()), activation } };
+                }
+              }
+              let granted: boolean | undefined;
+              const { activation } = yield* completeServiceInstall(serviceName, () => granted, integration(() => runServiceRegistryChange(applyServiceRegistryChange((currentEntries) => present(Effect.gen(function* () {
                 const currentRegistry = (yield* integrationValue(readResolvedServiceRegistry(currentEntries)));
                 const nextRegistry = createServiceRegistry(
                   currentRegistry.map((entry) =>
@@ -3369,12 +3321,14 @@ function resolveRuntimeManagementCore(
                   );
                 }
 
+                if (update.status === "available") requireNoServiceExtenders(serviceName, currentRegistry);
+
                 // An extension does nothing until what it extends is running:
                 // the plugin it points at is what discovers it. Installing one
                 // on its own would look like it worked and quietly do nothing.
                 if (update.status === "installed" && updatedRegistryEntry) {
                   // Composed services as well as installed registry entries. A
-                  // core service like `zelavis/identity` never appears in the
+                  // core service like `zelavis/auth` never appears in the
                   // registry, so checking only that would refuse every extension
                   // of one — which is most of them.
                   const installedNames = new Set([
@@ -3395,6 +3349,11 @@ function resolveRuntimeManagementCore(
                     );
                   }
                 }
+
+                if (update.status === "installed" && updatedRegistryEntry) {
+                  granted = yield* context.servicePrincipals.approve(updatedRegistryEntry.service, readBodyObject(body).approvePermissions, principal);
+                }
+                if (update.status === "available") yield* context.servicePrincipals.retire(serviceName, principal);
 
                 const base = updatedStoredEntry ?? (updatedRegistryEntry
                   ? serializeServiceRegistryState([updatedRegistryEntry])[0]
@@ -3442,7 +3401,7 @@ function resolveRuntimeManagementCore(
                       ? "uninstall"
                       : "update",
                 specifier: entries.find((entry) => entry.name === serviceName)?.specifier,
-              }))));
+              })))));
 
               return {
                 status: 200,
@@ -3451,7 +3410,7 @@ function resolveRuntimeManagementCore(
                   activation,
                 },
               };
-            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+            })).pipe(Effect.catchCause((cause) => Effect.succeed(serviceRegistryError(unwrapFailure(Cause.squash(cause))))))),
         },
         {
           id: "runtime.settings.read",
@@ -4543,6 +4502,8 @@ function resolvePlatformEndpointGroup(
   projectInstallHost?: () => Promise<ZelavisProjectInstallHost>,
   appShards?: { readonly authority: AppShardPlacementAuthority; readonly allocations: AppShardAllocationStore; readonly activation: AppShardActivation },
   projectDomains?: ProjectDomainController,
+  edgeDns?: EdgeDnsController,
+  registrar?: RegistrarController,
 ): Promise<ZelavisEndpointGroup<any>> {
   return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
@@ -6055,6 +6016,8 @@ function resolvePlatformEndpointGroup(
           }).pipe(Effect.withSpan("resolvePlatformEndpointGroup/routes/handler/callback"))); },
         },
         ...(projectDomains ? projectDomainRoutes(projectDomains) : []),
+        ...(registrar ? registrarRoutes(registrar) : []),
+        ...(edgeDns ? edgeDnsRoutes(edgeDns, { certificates: edgeCertificates, routes: edgeRoutes, manager: edge }) : []),
         {
           id: "runtime.projects.list",
           spec: {
@@ -6766,10 +6729,9 @@ export function zelavis(
                 ),
               )
             : defaultDashboardServiceRegistry;
-        // The official identities are whatever the host selected from its immutable
-        // distribution (catalog entries it marked official) plus the frontend it was
-        // given. Nothing lists them by name here.
-        const protectedPackageNames = protectedOfficialPackageNames(
+        // Reserve native subsystem names and the identities the host selected
+        // from its distribution or assigned to its frontend.
+        const protectedPackageNames = protectedServiceNames(
           baseServiceRegistry,
           platformFrontend?.service.name,
         );
@@ -6810,7 +6772,7 @@ export function zelavis(
               : undefined;
           if (declaredName && protectedPackageNames.has(declaredName)) {
             console.warn(
-              `Zelavis skipped product service "${declaredName}": that official package identity cannot be shadowed by a mutable package source.`,
+              `Zelavis skipped product service "${declaredName}": that reserved service identity cannot be shadowed by a mutable package source.`,
             );
             continue;
           }
@@ -6916,68 +6878,88 @@ export function zelavis(
                 Effect.orDie,
               ),
         );
+        const identityDatabaseSubsystem = yield* integration(() =>
+          resolveDatabaseCoreService(options.subsystems?.identityDatabase, systemStore),
+        );
+        yield* Effect.addFinalizer(() =>
+          ready
+            ? Effect.void
+            : integration(() => identityDatabaseSubsystem?.close?.()).pipe(
+                Effect.orDie,
+              ),
+        );
         const databaseEndpointGroups = databaseSubsystem
           ? defineDatabaseEndpointGroups(databaseSubsystem.api)
           : [];
         const resolvedDatabaseApi = databaseSubsystem?.api;
-        const projectIdentityOption = options.subsystems?.auth;
-        const identityEndpointGroup = projectRole
-          ? projectIdentityOption === false
-            ? undefined
-            : yield* Effect.gen(function* () {
-                if (!resolvedDatabaseApi)
-                  return yield* new IntegrationFailure(
-                    new Error(
-                      "A Project runtime requires a database for its identity. Configure the runtime's database subsystem with a storage directory.",
-                    ),
-                  );
-                const platformMetadata =
-                  options.serviceContext?.platform?.metadata;
-                return yield* integration(() =>
-                  createProjectIdentityEndpointGroup({
-                    database: resolvedDatabaseApi,
-                    rootPath,
-                    registrationRecovery: compositionOptions.registrationRecovery,
-                    registry: serviceRegistry,
-                    methods: collectAuthMethodPlugins(serviceRegistry),
-                    projectId:
-                      typeof platformMetadata?.projectId === "string"
-                        ? platformMetadata.projectId
-                        : undefined,
-                    options:
-                      projectIdentityOption === true ||
-                      projectIdentityOption === undefined
-                        ? undefined
-                        : projectIdentityOption,
-                  }),
-                );
-              })
-          : yield* integration(() =>
-              resolveAuthCoreService(
-                options.subsystems?.auth,
-                collectAuthMethodPlugins(serviceRegistry),
-                systemStore,
-                serviceRegistry,
-                collectAuthMethodServiceNames(serviceRegistry),
-                rootPath,
-                options.bootstrap?.token ??
-                  readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
-                compositionOptions.registrationRecovery,
-                (scopes) => present(Effect.gen(function* () {
-                  const ids = new Set(scopes.flatMap((scope) => scope.type === "project" ? [scope.projectId] : []));
-                  const names = new Set(scopes.flatMap((scope) => scope.type === "service" ? [scope.serviceName] : []));
-                  if (ids.size > 0) {
-                    if (!projects) return false;
-                    const available = yield* Effect.forEach(ids, (id) => integration(() => projects.view(id)), { concurrency: 4 });
-                    if (available.some((project) => !project || project.deletion)) return false;
-                  }
-                  if (names.size === 0) return true;
-                  const registry = yield* integration(readServiceRegistry);
-                  const installed = new Set(registry.filter(({ status }) => status === "installed").map(({ service }) => service.name));
-                  return [...names].every((name) => installed.has(name));
-                })),
-              ),
+        const authOption = options.subsystems?.auth;
+        // Each runtime sends its own mail from its own System Store: an App's
+        // settings and queue are never the Platform's.
+        const emailOption = options.subsystems?.email;
+        const emailSubsystem = emailOption === false
+          ? undefined
+          : createEmailSubsystem({
+              store: systemStore,
+              authority: projectRole ? "project" : "platform",
+              ...(projectRole && typeof options.serviceContext?.platform?.metadata.projectId === "string"
+                ? { projectId: options.serviceContext.platform.metadata.projectId }
+                : {}),
+              ...(emailOption?.send ? { send: emailOption.send } : {}),
+              ...(emailOption?.now ? { now: emailOption.now } : {}),
+            });
+        // Zelavis Auth: one instance per runtime on its own database. The Platform's lives in the Platform identity
+        // database, an App's in its Project database; a runtime with neither (embedded, tests) keeps it in memory,
+        // which is for development only. Each carries the published Identity records its runtime holds.
+        const authSubsystem: AuthSubsystem | undefined = authOption === false ? undefined : yield* Effect.gen(function* () {
+          const home = projectRole ? resolvedDatabaseApi : identityDatabaseSubsystem?.api;
+          const homeDatabase = home === undefined ? undefined : effectDatabaseOf(home);
+          if (projectRole && homeDatabase === undefined) {
+            return yield* new IntegrationFailure(
+              new Error("A Project runtime requires a database for Auth. Configure the runtime's database subsystem with a storage directory."),
             );
+          }
+          const database = homeDatabase ?? (yield* memoryAuthDatabase(systemStore));
+          const projectId = typeof options.serviceContext?.platform?.metadata.projectId === "string"
+            ? options.serviceContext.platform.metadata.projectId
+            : undefined;
+          return yield* createAuthSubsystem({
+            tenant: database.forTenant(AUTH_TENANT),
+            role: projectRole ? "project" : "platform",
+            projectId,
+            masterSecret: (projectRole ? compositionOptions[projectAuthSealingSecret] : undefined)
+              ?? (yield* integration(() => loadPlatformMasterSecret(systemStore))),
+            apiBase: joinPathParts(rootPath, apiPrefix, apiVersion),
+            // Server-rendered dashboard documents also resolve the caller.
+            dashboardPath: projectRole ? undefined : rootPath,
+            options: authOption === true ? undefined : authOption,
+            emailOutbox: emailSubsystem?.outbox,
+            importFrom: projectRole ? projectDatabaseIdentitySource(database) : systemStoreIdentitySource(systemStore),
+            bootstrapToken: options.bootstrap?.token ?? readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
+            environment: projectRole ? {} : readProcessEnvironment(),
+            oauthProviders: collectOAuthProviders(serviceRegistry),
+            validateGrantScopes: (scopes) => Effect.gen(function* () {
+              const ids = new Set(scopes.flatMap((scope) => scope.type === "project" && scope.projectId !== undefined ? [scope.projectId] : []));
+              const names = new Set(scopes.flatMap((scope) => scope.type === "service" && scope.serviceName !== undefined ? [scope.serviceName] : []));
+              if (ids.size > 0) {
+                const manager = projects;
+                if (!manager) return false;
+                const available = yield* Effect.forEach(ids, (id) => integration(() => manager.view(id)), { concurrency: 4 });
+                if (available.some((project) => !project || project.deletion)) return false;
+              }
+              if (names.size === 0) return true;
+              const registry = yield* integration(readServiceRegistry);
+              const installed = new Set(registry.filter(({ status }) => status === "installed").map(({ service }) => service.name));
+              return [...names].every((name) => installed.has(name));
+            }).pipe(Effect.orDie),
+          }).pipe(Effect.mapError((failure) => new IntegrationFailure(failure)));
+        });
+        // The Platform's Auth finishes carrying published Identity records before the runtime serves; an App's
+        // import runs in the background behind `503 auth_importing`.
+        const runningAuth = authSubsystem === undefined
+          ? undefined
+          : yield* authSubsystem.auth.start().pipe(Effect.mapError((failure) => new IntegrationFailure(failure)));
+        const stopAuth = runningAuth === undefined ? Effect.void : runningAuth.stop();
+        yield* Effect.addFinalizer(() => (ready ? Effect.void : stopAuth));
         // A Project's face is the static frontend installed in its own services
         // folder, mounted at its root. Until one is installed the placeholder answers.
         const projectSiteFrontend = projectRole
@@ -7027,6 +7009,26 @@ export function zelavis(
         yield* Effect.addFinalizer(() =>
           ready ? Effect.void : integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),
         );
+        const serviceDatabaseApi = resolvedDatabaseApi ?? options.subsystems?.servicesDatabase;
+        const serviceMasterSecret = yield* integration(() => loadPlatformMasterSecret(systemStore));
+        let serviceRuntimeFetch: ((request: Request, context: { principal: ZelavisPrincipal }) => Promise<Response>) | undefined;
+        const servicePrincipals = createServicePrincipals(systemStore, serviceMasterSecret, authSubsystem?.auth, projectRole);
+        // Discovery cannot approve permissions. Keep such packages visible but inactive until an operator installs them.
+        for (let i = 0; i < serviceRegistry.length; i++) {
+          const entry = serviceRegistry[i]!;
+          if (!entry.service.principal || entry.status !== "installed") {
+            if (yield* servicePrincipals.read(entry.service.name)) yield* servicePrincipals.retire(entry.service.name);
+            continue;
+          }
+          const principal = yield* servicePrincipals.view(entry.service);
+          if (projectRole || !principal?.approved) {
+            serviceRegistry[i] = Object.freeze({ ...entry, status: "available" as const });
+            yield* mutateServiceRegistryEffect(serviceRegistryStore, entries => [
+              ...entries.filter(row => row.name !== entry.service.name),
+              { ...serializeServiceRegistryState([entry])[0]!, status: "available" as const },
+            ]).pipe(Effect.mapError(error => new IntegrationFailure(error)));
+          }
+        }
         const activatedServices = yield* integration(() =>
           activateServiceRegistry(
             serviceRegistry,
@@ -7041,19 +7043,19 @@ export function zelavis(
                 options.serviceContext?.platform,
               ),
               core: {
-                ...(resolvedDatabaseApi
+                ...(serviceDatabaseApi
                   ? {
                       database: apiUsage.observe(
-                        resolvedDatabaseApi,
+                        serviceDatabaseApi,
                         "database",
                       ),
                     }
                   : {}),
-                ...(identityEndpointGroup
+                ...(authSubsystem
                   ? {
                       auth: apiUsage.observe(
-                        identityEndpointGroup.context,
-                        "identity",
+                        authSubsystem.service,
+                        "auth",
                       ),
                     }
                   : {}),
@@ -7085,6 +7087,25 @@ export function zelavis(
               // here rather than by the plugin naming one for itself.
               serviceStore: (serviceName: string) =>
                 createServiceStore(systemStore, serviceName),
+              serviceSecrets: (serviceName: string) => createServiceSecrets(systemStore, serviceName, serviceMasterSecret),
+              ...(!projectRole ? { serviceFetch: (serviceName: string) => (input: Request) => present(Effect.gen(function* () {
+                if (!serviceRuntimeFetch) return Response.json({ error: "runtime_starting" }, { status: 503 });
+                const request = input.clone();
+                request.headers.delete("authorization");
+                request.headers.delete("cookie");
+                const requested = serviceRegistry.find(entry => entry.service.name === serviceName)?.service.principal?.permissions;
+                const token = requested ? yield* servicePrincipals.token(serviceName) : undefined;
+                if (token) request.headers.set("authorization", `Bearer ${token}`);
+                const principal = (authSubsystem ? yield* authSubsystem.auth.authenticate(request) : undefined)
+                  ?? { id: "anonymous", type: "anonymous" as const };
+                // The native authenticator consumed the internal credential. Endpoint code receives only
+                // the principal, so an echo route cannot give the sealed token back to its service.
+                request.headers.delete("authorization");
+                const scopedPrincipal = principal.type === "anonymous" ? principal : {
+                  ...principal, permissions: principal.permissions?.filter(permission => requested?.includes(permission)), grants: [],
+                };
+                return yield* integration(() => serviceRuntimeFetch!(request, { principal: scopedPrincipal }));
+              })) } : {}),
               // A plugin names the operations its manifest allows and nothing else; the broker still
               // authorizes the caller's own permissions for each one.
               ...(options.hostOperations
@@ -7124,15 +7145,8 @@ export function zelavis(
         // Filled in once mounting resolves them, and read at request time.
         let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
 
-        const configuredAuth = options.subsystems?.auth;
-        const configuredSessionCookie =
-          typeof configuredAuth === "object"
-            ? configuredAuth.definition?.sessionCookie
-            : undefined;
-        const protectedCookieNames = [
-          identityEndpointGroup?.context.context.sessionCookieName,
-          configuredSessionCookie ? configuredSessionCookie.name : undefined,
-        ].filter((name): name is string => typeof name === "string" && name.length > 0);
+        // A site frontend never receives this runtime's Auth cookies.
+        const protectedCookieNames = authSubsystem?.cookieNames ?? [];
 
         const websiteService =
           !siteEnabled || projectSiteFrontend
@@ -7243,10 +7257,37 @@ export function zelavis(
                     }
                   : {}),
               });
+        // Operator DNS automation: built-in drivers from the host, then plugins declaring `zelavis/edge:dns`.
+        const registrars = collectRegistrars(serviceRegistry, options.edgeRegistrars ?? []);
+        for (const refusal of registrars.refused) yield* Effect.logWarning(refusal.code, { plugin: refusal.plugin, provider: refusal.name });
+        const registrar = !projectRole && systemStore ? createRegistrarController({
+          store: systemStore, masterSecret: yield* integration(() => loadPlatformMasterSecret(systemStore)), providers: registrars.providers,
+        }) : undefined;
+        yield* Effect.addFinalizer(() => ready ? Effect.void : integration(() => registrar?.close()).pipe(Effect.orDie));
+        const dnsProviders = collectDnsProviders(serviceRegistry, options.edgeDnsProviders ?? []);
+        for (const refusal of dnsProviders.refused) yield* Effect.logWarning(refusal.code, { plugin: refusal.plugin, provider: refusal.name });
+        const edgeDns: EdgeDnsController | undefined = !projectRole && systemStore && edgeRoutes
+          ? createEdgeDnsController({
+              store: systemStore,
+              masterSecret: yield* integration(() => loadPlatformMasterSecret(systemStore)),
+              providers: dnsProviders.providers,
+              // A zone is in use while a Project domain holds a hostname one label below it.
+              zoneInUse: (apex) => integration(() => edgeRoutes.listHostnames()).pipe(Effect.map((hostnames) =>
+                hostnames.some((row) => row.scope === "project" && row.host.endsWith(`.${apex}`) && !row.host.slice(0, -apex.length - 1).includes(".")))),
+            })
+          : undefined;
+        if (edgeDns && edgeCertificates) {
+          const attached = yield* Effect.result(integration(() => edgeCertificates.attachDns({
+            dns: edgeDns.access, ...(options.edgeAuthoritativeTxt ? { authoritativeTxt: options.edgeAuthoritativeTxt } : {}),
+          })));
+          if (attached._tag === "Failure") yield* Effect.logWarning("edge.acme.dns01-cleanup-deferred", { error: describeFailure(attached.failure) });
+          else if (attached.success.removed + attached.success.failed > 0) yield* Effect.logInfo("edge.acme.dns01-cleanup", attached.success);
+        }
         const projectDomains: ProjectDomainController | undefined = !projectRole && systemStore && edgeRoutes && projectRuntime
           ? createProjectDomainController({
               store: systemStore, routes: edgeRoutes, projects: () => projects,
               ingress: options.projectDomainIngress, manager: options.edge, certificates: edgeCertificates,
+              ...(edgeDns ? { dns: edgeDns.access } : {}),
             })
           : undefined;
         const projects: ZelavisProjectManager | undefined =
@@ -7580,6 +7621,7 @@ export function zelavis(
             apiVersion,
             serviceRegistry,
             serviceRegistryStore,
+            servicePrincipals,
             installedServiceNames,
             ...(projects?.recipesChanged ? { serviceRegistryChanged: () => projects.recipesChanged!() } : {}),
             listedServiceVersions,
@@ -7633,8 +7675,8 @@ export function zelavis(
               server: { available: true },
               fabric: { available: Boolean(fabricCoreService) },
               database: { available: Boolean(databaseSubsystem) },
-              identity: { available: Boolean(identityEndpointGroup) },
-              ...(appAuthFrontend && identityEndpointGroup
+              auth: { available: Boolean(authSubsystem) },
+              ...(appAuthFrontend && authSubsystem
                 ? { appPublicAuth: { available: true } }
                 : {}),
               storage: { available: Boolean(storageEndpointGroup) },
@@ -7718,6 +7760,8 @@ export function zelavis(
             options.projectInstallHost,
             { authority: appShardAuthority, allocations: appShardAllocations, activation: appShardActivation },
             projectDomains,
+            edgeDns,
+            registrar,
           ),
         );
         const productServices = [
@@ -7766,7 +7810,8 @@ export function zelavis(
             ...(fabricCoreService ? [fabricCoreService] : []),
             ...(storageEndpointGroup ? [storageEndpointGroup] : []),
             ...(workloadsCoreService ? [workloadsCoreService] : []),
-            ...(identityEndpointGroup ? [identityEndpointGroup] : []),
+            ...(authSubsystem ? [authSubsystem.endpointGroup] : []),
+            ...(emailSubsystem ? [emailSubsystem.endpointGroup] : []),
             ...databaseEndpointGroups,
             ...serviceEndpointGroups,
           ],
@@ -7777,7 +7822,7 @@ export function zelavis(
         const runtime = yield* integration(() =>
           mountZelavisServer({
             ...options,
-            plugins: [platformLogPlugin(platformLog)],
+            plugins: [platformLogPlugin(platformLog), ...activatedServices.plugins],
             prefix: mountPrefix,
             version: "v1",
             services: productServices,
@@ -7827,10 +7872,20 @@ export function zelavis(
         // list with inputs that were never guaranteed to match.
         mountedRoutes = runtime.routes as readonly ZelavisResolvedRoute[];
         mountedFetch = (request) => runtime.fetch(request);
+        // Started last, so a composition that fails never leaves it running;
+        // `close` stops it before the store it reads is closed.
+        const emailWorker = emailSubsystem?.start();
+        registrar?.start();
+        const closeMountedRuntime = runtime.close.bind(runtime);
         let closePromise: Promise<void> | undefined;
         const close = (): Promise<void> => {
           closePromise ??= present(
             apiUsage.flush.pipe(
+              Effect.ensuring(integration(() => closeMountedRuntime()).pipe(Effect.orDie)),
+              Effect.ensuring(integration(() => registrar?.close()).pipe(Effect.orDie)),
+              Effect.ensuring(
+                integration(() => emailWorker?.stop()).pipe(Effect.orDie),
+              ),
               Effect.ensuring(
                 integration(() => options.edgePreviews?.close()).pipe(
                   Effect.orDie,
@@ -7842,8 +7897,15 @@ export function zelavis(
               Effect.ensuring(
                 integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),
               ),
+              // Auth stops before the databases it writes are closed.
+              Effect.ensuring(stopAuth),
               Effect.ensuring(
                 integration(() => databaseSubsystem?.close?.()).pipe(
+                  Effect.orDie,
+                ),
+              ),
+              Effect.ensuring(
+                integration(() => identityDatabaseSubsystem?.close?.()).pipe(
                   Effect.orDie,
                 ),
               ),
@@ -7891,14 +7953,17 @@ export function zelavis(
         const guardedFetch: typeof runtime.fetch = (request, context) =>
           present(Effect.map(integration(() => dispatch(request, context)), result => result.response));
 
+        serviceRuntimeFetch = guardedFetch;
         ready = true;
+        if (identityDatabaseSubsystem) keepIdentityDatabase(runtime, identityDatabaseSubsystem.api);
         return Object.assign(runtime, {
           fetch: guardedFetch,
           dispatch,
           plain: createZelavisPlainHandler(dispatch),
           close,
-          auth: identityEndpointGroup?.context,
+          auth: authSubsystem?.service,
           database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
+          email: emailSubsystem?.outbox,
         });
       }),
     ),
@@ -7907,8 +7972,11 @@ export function zelavis(
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
   close(): Promise<void>;
-  auth?: IdentityApi;
+  /** This runtime's Zelavis Auth, as services see it. */
+  auth?: AuthServiceApi;
   database?: DatabaseRuntimeApi;
+  /** The runtime's outbox, for subsystems that send mail (verification, recovery, invitations). */
+  email?: EmailOutbox;
 }
 
 /** One retention sweep per store, however many runtimes are composed over it. */
@@ -7980,6 +8048,7 @@ function mergeSubsystemOptions(
   return {
     auth: mergeMaybeRecord(base.auth, override.auth),
     database: mergeMaybeRecord(base.database, override.database),
+    email: mergeMaybeRecord(base.email, override.email),
     fabric: mergeMaybeRecord(base.fabric, override.fabric),
     storage: mergeMaybeRecord(base.storage, override.storage),
     workloads: mergeMaybeRecord(base.workloads, override.workloads),
@@ -8303,6 +8372,9 @@ function applyPlatformResourceDefaults(
     edgePreviews: options.edgePreviews ?? resources.edgePreviews,
     publicSiteFetch: options.publicSiteFetch ?? resources.publicSiteFetch,
     edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,
+    edgeDnsProviders: options.edgeDnsProviders ?? resources.edgeDnsProviders,
+    edgeRegistrars: options.edgeRegistrars ?? resources.edgeRegistrars,
+    edgeAuthoritativeTxt: options.edgeAuthoritativeTxt ?? resources.edgeAuthoritativeTxt,
   };
 }
 
@@ -8310,20 +8382,18 @@ export class Zelavis {
   private readonly options: ZelavisOptions;
   private readonly serviceRegistryStore = createMemoryServiceRegistryStore([]);
   private systemStore?: ZelavisSystemStore;
-  // In-process service activation keeps the same writer, including its live enrollment slots.
-  private readonly registrationRecovery = new RegistrationRecovery();
   private runtimePromise?: Promise<ZelavisRuntime>;
   private readonly activeRuntimes = new Set<ZelavisRuntime>();
   private closed = false;
   private closePromise?: Promise<void>;
-  private resolvedAuthApi?: IdentityApi;
+  private resolvedAuthApi?: AuthServiceApi;
   private resolvedDatabaseApi?: DatabaseRuntimeApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
     resources: {},
     metadata: {},
   };
-  readonly auth: IdentityApi;
+  readonly auth: AuthServiceApi;
   readonly db: DatabaseRuntimeApi;
 
   constructor(options: ZelavisOptions = {}) {
@@ -8441,7 +8511,6 @@ export class Zelavis {
       const runtimeOptions: ZelavisRuntimeCompositionOptions = {
           ...serverOptions,
           systemStore: serverOptions.systemStore ?? (self.systemStore ??= createMemorySystemStore()),
-          registrationRecovery: self.registrationRecovery,
           serviceRegistry,
           servicePackageInstaller: platformResources.servicePackages,
           marketplace: platformResources.marketplace,
@@ -8471,16 +8540,16 @@ export class Zelavis {
   }));
   }
 
-  resolveAuthApi(): Promise<IdentityApi> {
+  resolveAuthApi(): Promise<AuthServiceApi> {
     const self = this;
-    return present(Effect.gen(function* (): Effect.fn.Return<IdentityApi, IntegrationFailure> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthServiceApi, IntegrationFailure> {
     if (self.resolvedAuthApi) {
       return self.resolvedAuthApi;
     }
 
     const runtime = (yield* integrationValue(self.runtime()));
-    const service = runtime.auth ?? runtime.services["zelavis/identity"]?.service;
-    assertResolvedServiceApi<IdentityApi>(service, "zelavis/identity");
+    const service = runtime.auth;
+    assertResolvedServiceApi<AuthServiceApi>(service, "zelavis/auth");
     self.resolvedAuthApi = service;
     return service;
   }));

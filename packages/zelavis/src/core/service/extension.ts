@@ -3,7 +3,7 @@ import { parseServiceCapability } from "./capability.js";
 /**
  * Which services extend which.
  *
- * A capability owned by a service — `zelavis/identity:oauth`, not the domain
+ * A capability owned by a service — `zelavis/auth:authenticator`, not the domain
  * namespace `provider:auth` — says the plugin declaring it exists to extend
  * that one. Nothing else marks it: a child plugin is an ordinary plugin,
  * installed the same way, and the only difference is who it points at.
@@ -71,8 +71,8 @@ export function serviceExtensionOwners(service: {
 /**
  * The same owner written with the other scope marker.
  *
- * A capability owner may be a bare service name (`zelavis/identity`) or a
- * package (`@acme/shop`), and both are legal — which means `@zelavis/identity`
+ * A capability owner may be a bare service name (`zelavis/fabric`) or a
+ * package (`@acme/shop`), and both are legal — which means `@zelavis/fabric`
  * is a perfectly valid owner that simply nobody is. The two differ by one
  * character and never match, so declaring the wrong one puts an extension in a
  * catalogue nothing reads rather than producing an error.

@@ -1,0 +1,6 @@
+Zelavis includes software derived from Convex Auth
+(https://github.com/convex/convex-auth), Copyright 2026 Convex, Inc.,
+licensed under the Apache License, Version 2.0 (see LICENSE-APACHE).
+Each derived source file states its upstream path and that it was modified;
+src/auth/upstream.json in the Zelavis repository lists them all.
+The rest of Zelavis is licensed under the MIT License (see LICENSE).

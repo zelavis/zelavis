@@ -2,7 +2,7 @@ import {
   REGISTRATION_SETTINGS_BODY_BYTES,
   registrationSettingsInputJsonSchema,
   registrationSettingsJsonSchema,
-} from "../app/identity/domain/registration.js";
+} from "../auth/registration/policy.js";
 import {
   ACCOUNT_ACCESS_BODY_BYTES,
   accountAccessInputJsonSchema,
@@ -11,7 +11,16 @@ import {
   decodeSetAccountAccessInput,
   projectAccountAccessDigest,
   projectAccountAccessPermissions,
-} from "../app/identity/domain/account-access.js";
+} from "../auth/access/access.js";
+import { accessInputFits } from "../auth/access/delegation.js";
+import { invitationGatewayDigest } from "../auth/invitations/invitations.js";
+import { INVITATION_ID } from "../auth/invitations/tables.js";
+import { decodeInvitationInput, invitationError, invitationOperations, invitationOperationSpec } from "../auth/routes/invitations.js";
+import { type RoleDefinition, decodeRoleCatalogueView } from "../auth/roles/catalogue.js";
+import { roleContentPermissions } from "../auth/roles/roles.js";
+import { decodeRoleInput, revisionOf, roleGatewayDigest, roleOperationSpec, roleOperations, roleRefused } from "../auth/routes/roles.js";
+import { RoleIdSchema } from "../auth/access/access.js";
+import { parseJsonObject } from "../core/json-validation.js";
 /**
  * Project Gateway: the Platform's proxy into a Project runtime.
  *
@@ -21,9 +30,18 @@ import {
  * module.
  */
 import {
-  ZELAVIS_GATEWAY_AUTHORITY_HEADER,
+  setGatewayDispatchHeaders,
 } from "./gateway-authority.js";
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Schema } from "effect";
+import { requestClientAddress, setRequestClientAddress } from "../core/runtime/client-address.js";
+import {
+  EMAIL_SETTINGS_BODY_BYTES,
+  EMAIL_TEST_BODY_BYTES,
+  emailDeliveryPageJsonSchema,
+  emailSettingsInputJsonSchema,
+  emailSettingsJsonSchema,
+  emailTestInputJsonSchema,
+} from "../app/email/contracts.js";
 import { evaluate, integration, present, unwrapFailure, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/index.js";
 import { principalHasPermission } from "../core/runtime/request-dispatcher.js";
@@ -418,6 +436,17 @@ export interface ProjectGatewayDependencies {
   readonly projectErrorResponse: (error: unknown) => ZelavisRouteResponse;
 }
 
+/** The caller's address, as a signed claim, when this request has a trusted one. */
+const clientAddressClaim = (request: Request): { readonly clientAddress?: string } => {
+  const clientAddress = requestClientAddress(request);
+  return clientAddress === undefined ? {} : { clientAddress };
+};
+/** A request rebuilt from another keeps that request's caller address. */
+const sameClient = (from: Request, to: Request): Request => {
+  setRequestClientAddress(to, requestClientAddress(from));
+  return to;
+};
+
 export type ProjectForwardOptions = {
   readonly projectId: string;
   /** Path inside the Project runtime, already resolved by the caller. */
@@ -471,6 +500,7 @@ export function createProjectForwarder(
         tenantId: options.principal ? tenantOfPrincipal(options.principal) : "anonymous",
         permissions: options.permissions,
         ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
+        ...clientAddressClaim(options.request),
       },
       headers: [...gatewayRequestHeaders(options.request.headers)],
       ...(body && body.byteLength > 0 ? { body: new Uint8Array(body) } : {}),
@@ -574,9 +604,10 @@ export function createProjectForwarder(
             : "anonymous",
           permissions: options.permissions,
           ...(options.accountAccessDigest === undefined ? {} : { accountAccessDigest: options.accountAccessDigest }),
+          ...clientAddressClaim(options.request),
         }));
     if (authority) {
-      headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
+      setGatewayDispatchHeaders(headers, authority);
     }
     const body =
       options.request.method === "GET" || options.request.method === "HEAD"
@@ -715,6 +746,216 @@ export function createProjectGatewayRoutes(
     };
   });
 
+  // An App's own Auth settings, forwarded to exactly the child's `/auth/...` route: sign-in methods, passkeys, OAuth
+  // connections, the MFA policy and signing-key rotation.
+  const authSettingsRoutes: readonly ZelavisServerRoute[] = ([
+    { action: "methods.settings.get", method: "GET", path: "methods/settings", operationId: "projectAuthMethodSettings", summary: "Read a Project's enabled sign-in methods" },
+    { action: "methods.settings.set", method: "PUT", path: "methods/settings", operationId: "setProjectAuthMethodSettings", summary: "Choose a Project's enabled sign-in methods", bodyBytes: 4096 },
+    { action: "passkeys.settings.get", method: "GET", path: "passkeys/settings", operationId: "projectPasskeySettings", summary: "Read a Project's passkey relying party" },
+    { action: "passkeys.settings.set", method: "PUT", path: "passkeys/settings", operationId: "setProjectPasskeySettings", summary: "Set a Project's passkey relying party", bodyBytes: 4096 },
+    { action: "oauth.connections.list", method: "GET", path: "oauth/connections", operationId: "projectOAuthConnections", summary: "List a Project's OAuth connections" },
+    { action: "oauth.connections.configure", method: "PUT", path: "oauth/connections/:provider", operationId: "configureProjectOAuthConnection", summary: "Configure one of a Project's OAuth connections", bodyBytes: 16384 },
+    { action: "oauth.connections.remove", method: "DELETE", path: "oauth/connections/:provider", operationId: "removeProjectOAuthConnection", summary: "Remove one of a Project's OAuth connections" },
+    { action: "mfa.policy.get", method: "GET", path: "mfa/policy", operationId: "projectMfaPolicy", summary: "Read a Project's MFA policy" },
+    { action: "mfa.policy.set", method: "PUT", path: "mfa/policy", operationId: "setProjectMfaPolicy", summary: "Set a Project's MFA policy", bodyBytes: 1024 },
+    { action: "keys.rotate", method: "POST", path: "keys/rotate", operationId: "rotateProjectAuthKeys", summary: "Rotate a Project's access-token signing key" },
+  ] as const).map<ZelavisServerRoute>((route) => ({
+    id: `runtime.projects.auth.${route.action}`,
+    method: route.method,
+    path: `/projects/:projectId/auth/${route.path}`,
+    access: { permissions: ["project.settings.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    ...("bodyBytes" in route ? { maxRequestBodyBytes: route.bodyBytes, invalidJsonBodyCode: "invalid_request" } : {}),
+    spec: {
+      operationId: route.operationId,
+      summary: route.summary,
+      tags: ["runtime", "auth"],
+      pathParams: {
+        projectId: { type: "string", required: true },
+        ...(route.path.includes(":provider") ? { provider: { type: "string", required: true } } : {}),
+      },
+      ...("bodyBytes" in route ? { requestBody: { required: true, schema: { type: "object", additionalProperties: true } } } : {}),
+      responses: {
+        200: { description: "The child's answer" },
+        403: { description: "Project settings permission required" },
+        404: { description: "No such Project" },
+        409: { description: "Project unavailable or the settings revision has changed" },
+        503: { description: "Project Auth unavailable" },
+      },
+    },
+    handler: ({ params, request, principal }) => present(Effect.gen(function* () {
+      const provider = params.provider;
+      if (route.path.includes(":provider") && (!provider || !/^[A-Za-z0-9_-]{1,64}$/u.test(provider))) {
+        return { status: 400, body: { error: "Invalid provider.", code: "invalid_request" } };
+      }
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId,
+        wildcardPath: `zelavis/api/v1/auth/${route.path.replace(":provider", provider ?? "")}`,
+        query: new URLSearchParams(),
+        request,
+        principal,
+        permissions: ["project.settings.manage"],
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
+  // An App's own email settings, test send and deliveries, forwarded to exactly its `/email` routes.
+  const emailRoutes: readonly ZelavisServerRoute[] = ([
+    { action: "settings.get", method: "GET", path: "settings", operationId: "projectEmailSettings", summary: "Read a Project's email delivery settings",
+      ok: { 200: { description: "Project email settings and revision", schema: emailSettingsJsonSchema } } },
+    { action: "settings.set", method: "PUT", path: "settings", operationId: "setProjectEmailSettings", summary: "Update a Project's email delivery settings",
+      bodyBytes: EMAIL_SETTINGS_BODY_BYTES, requestSchema: emailSettingsInputJsonSchema,
+      ok: { 200: { description: "Updated Project email settings", schema: emailSettingsJsonSchema }, 400: { description: "Invalid email settings" } } },
+    { action: "test.send", method: "POST", path: "test", operationId: "sendProjectTestEmail", summary: "Queue a test message from a Project",
+      bodyBytes: EMAIL_TEST_BODY_BYTES, requestSchema: emailTestInputJsonSchema,
+      ok: { 202: { description: "Queued delivery id" }, 400: { description: "Invalid address" }, 429: { description: "Too many deliveries waiting" } } },
+    { action: "deliveries.list", method: "GET", path: "deliveries", operationId: "listProjectEmailDeliveries", summary: "List a Project's email deliveries, oldest first",
+      query: true, ok: { 200: { description: "A page of deliveries", schema: emailDeliveryPageJsonSchema }, 400: { description: "Invalid limit or cursor" } } },
+  ] as const).map<ZelavisServerRoute>((route) => ({
+    id: `runtime.projects.email.${route.action}`,
+    method: route.method,
+    path: `/projects/:projectId/email/${route.path}`,
+    access: { permissions: ["project.settings.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    ...("bodyBytes" in route ? { maxRequestBodyBytes: route.bodyBytes, invalidJsonBodyCode: "invalid_email_settings" } : {}),
+    spec: {
+      operationId: route.operationId,
+      summary: route.summary,
+      tags: ["runtime", "email"],
+      pathParams: { projectId: { type: "string", required: true } },
+      ...("requestSchema" in route ? { requestBody: { required: true, schema: route.requestSchema } } : {}),
+      ...("query" in route ? { queryParams: {
+        limit: { type: "integer", description: "Page size, 1-100 (default 50)." },
+        after: { type: "string", description: "The `next` cursor of the previous page." },
+      } } : {}),
+      responses: {
+        ...route.ok,
+        403: { description: "Project settings permission required" },
+        404: { description: "No such Project" },
+        409: { description: "Project unavailable, email disabled or settings revision has changed" },
+        503: { description: "Project email unavailable" },
+      },
+    },
+    handler: ({ params, request, principal, query }) => present(Effect.gen(function* () {
+      // Only the listing's own parameters reach the child.
+      const forwarded = new URLSearchParams();
+      if ("query" in route) for (const name of ["limit", "after"]) {
+        const value = query.get(name);
+        if (value !== null) forwarded.set(name, value);
+      }
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId,
+        wildcardPath: `zelavis/api/v1/email/${route.path}`,
+        query: forwarded,
+        request,
+        principal,
+        permissions: ["project.settings.manage"],
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
+  const mayDelegateProjectPermission = (principal: ZelavisPrincipal | undefined, projectId: string, permission: string) =>
+    principalHasPermission(principal, permission, { type: "project", projectId }) &&
+    (permission !== "system.services.manage" || principal?.permissions?.includes(permission) === true ||
+      principal?.permissions?.includes("*") === true);
+
+  /**
+   * An App's role catalogue as its own `GET /auth/roles` answers it, read by
+   * the caller's authority: what the Gateway checks a role change or an
+   * assignment against before it signs. The App compares the signed names
+   * with its catalogue again, so a role changed in between is refused there.
+   */
+  type ProjectRoles = { readonly response: ZelavisRouteResponse } | { readonly roles: ReadonlyMap<string, RoleDefinition> };
+  const readProjectRoles = (projectId: string, request: Request, principal: ZelavisPrincipal | undefined): Effect.Effect<ProjectRoles, IntegrationFailure> => Effect.gen(function* () {
+    const read = yield* integration(() => forwardToProject({
+      projectId, principal, permissions: ["project.users.manage"], allowFrontend: false,
+      wildcardPath: "zelavis/api/v1/auth/roles",
+      query: new URLSearchParams(),
+      request: sameClient(request, new Request(request.url, { headers: request.headers, signal: request.signal })),
+    }));
+    if (read.status !== 200) return { response: read };
+    const invalid: ProjectRoles = { response: { status: 502, body: { error: "Invalid Project role response." } } };
+    if (!(read.body instanceof Uint8Array)) return invalid;
+    const bytes = read.body;
+    const view = yield* Effect.result(evaluate(() => decodeRoleCatalogueView(parseJsonObject(new TextDecoder().decode(bytes)))));
+    if (view._tag === "Failure") return invalid;
+    return { roles: new Map(view.success.roles.map((role) => [role.id, role])) };
+  });
+
+  const isRoleId = Schema.is(RoleIdSchema);
+  const roleRoutes = roleOperations.map<ZelavisServerRoute>((operation) => ({
+    ...roleOperationSpec(operation, true),
+    id: `runtime.projects.auth.roles.${operation.action}`,
+    method: operation.method,
+    path: `/projects/:projectId/auth${operation.path}`,
+    access: { permissions: ["project.users.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    handler: ({ params: { projectId, roleId }, request, principal, body, query }) => present(Effect.gen(function* () {
+      if (!isCanonicalProjectId(projectId) || ("hasId" in operation && !isRoleId(roleId ?? ""))) return roleRefused({ code: "invalid_role" });
+      const path = operation.path.replace(":roleId", roleId ?? "");
+      const forwarded = new URLSearchParams();
+      let accountAccessDigest: string | undefined;
+      if (operation.action === "delete") {
+        // Deleting takes authority away: the digest binds the exact deletion, and no delegation is checked.
+        const revision = revisionOf(query.get("revision"));
+        if (revision === undefined) return roleRefused({ code: "invalid_role", message: "Name the catalogue revision: ?revision=N." });
+        forwarded.set("revision", String(revision));
+        accountAccessDigest = yield* roleGatewayDigest("DELETE", path, revision, []);
+      } else if (operation.action !== "list") {
+        const input = decodeRoleInput(body);
+        if (input === undefined || (operation.action === "update" && input.id !== roleId)) return roleRefused({ code: "invalid_role" });
+        // A change must be delegable as it was and as it will be.
+        const current = operation.action === "update" ? yield* readProjectRoles(projectId, request, principal) : undefined;
+        if (current !== undefined && "response" in current) return current.response;
+        const names = roleContentPermissions(input, current?.roles.get(input.id));
+        if (names.some((permission) => !mayDelegateProjectPermission(principal, projectId, permission))) return roleRefused({ code: "account_access_forbidden" });
+        accountAccessDigest = yield* roleGatewayDigest(operation.method, path, input, names);
+      }
+      return yield* integration(() => forwardToProject({
+        projectId, wildcardPath: `zelavis/api/v1/auth${path}`, query: forwarded, request, principal,
+        permissions: ["project.users.manage"], ...(accountAccessDigest === undefined ? {} : { accountAccessDigest }), allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
+  const invitationRoutes = invitationOperations.map<ZelavisServerRoute>((operation) => ({
+    ...invitationOperationSpec(operation, true),
+    id: `runtime.projects.auth.invitations.${operation.action}`,
+    method: operation.method,
+    path: `/projects/:projectId/auth${operation.path}`,
+    access: { permissions: ["project.users.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+    handler: ({ params: { projectId, id }, request, principal, body, query }) => present(Effect.gen(function* () {
+      if (!isCanonicalProjectId(projectId) || ("hasId" in operation && !INVITATION_ID.test(id ?? ""))) {
+        return invitationError("invalid_invitation");
+      }
+      const input = operation.action === "create" ? decodeInvitationInput(body) : undefined;
+      if (operation.action === "create" && input === undefined) return invitationError("invalid_invitation_input");
+      if (input !== undefined && (!accessInputFits({ authority: "project", projectId }, input.access) ||
+          input.access.grants.some((grant) => !mayDelegateProjectPermission(principal, projectId, grant.permission)))) {
+        return invitationError("account_access_forbidden");
+      }
+      if (input !== undefined && input.access.roleAssignments.length > 0) {
+        // The App accepts a Gateway invitation as the Gateway vouched for it, so the roles it assigns are checked here.
+        const read = yield* readProjectRoles(projectId, request, principal);
+        if ("response" in read) return read.response;
+        if (input.access.roleAssignments.some(({ roleId }) => !read.roles.has(roleId))) return invitationError("role_not_found");
+        const names = roleContentPermissions(...input.access.roleAssignments.map(({ roleId }) => read.roles.get(roleId)));
+        if (names.some((permission) => !mayDelegateProjectPermission(principal, projectId, permission))) return invitationError("account_access_forbidden");
+      }
+
+      const path = operation.path.replace(":id", id ?? "");
+      const forwarded = new URLSearchParams();
+      if (operation.action === "list") for (const name of ["limit", "after"]) {
+        const value = query.get(name);
+        if (value !== null) forwarded.set(name, value);
+      }
+      const accountAccessDigest = yield* invitationGatewayDigest(operation.method, path, input);
+      return yield* integration(() => forwardToProject({
+        projectId, wildcardPath: `zelavis/api/v1/auth${path}`, query: forwarded, request, principal,
+        permissions: ["project.users.manage"], accountAccessDigest, allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
   const accountAccessRoute: ZelavisServerRoute = {
     id: "runtime.projects.auth.accounts.access.set",
     method: "PUT",
@@ -744,13 +985,9 @@ export function createProjectGatewayRoutes(
       if (decoded._tag === "Failure" || !isCanonicalProjectId(projectId) ||
           !accountId || accountId === "." || accountId === "..") return invalid;
       const input = decoded.success;
-      const scope = { type: "project" as const, projectId };
-      const canDelegate = (permission: string) => principalHasPermission(principal, permission, scope) &&
-        (permission !== "system.services.manage" || principal?.permissions?.includes(permission) === true ||
-          principal?.permissions?.includes("*") === true);
-      if (input.role !== "user" || input.permissions.length !== 0 ||
-          input.grants.some((grant) => grant.scope.type !== "project" || grant.scope.projectId !== projectId ||
-            !canDelegate(grant.permission))) return forbidden;
+      const canDelegate = (permission: string) => mayDelegateProjectPermission(principal, projectId, permission);
+      if (!accessInputFits({ authority: "project", projectId }, input) ||
+          input.grants.some((grant) => !canDelegate(grant.permission))) return forbidden;
 
       const forwarding = { projectId, principal, permissions: ["project.users.manage"], allowFrontend: false };
       // The exact read supplies old authority that must be delegable even when
@@ -759,12 +996,13 @@ export function createProjectGatewayRoutes(
         ...forwarding,
         wildcardPath: "zelavis/api/v1/auth/accounts",
         query: new URLSearchParams({ accountId }),
-        request: new Request(request.url, { headers: request.headers, signal: request.signal }),
+        request: sameClient(request, new Request(request.url, { headers: request.headers, signal: request.signal })),
       }));
       if (read.status !== 200) return read;
       if (!(read.body instanceof Uint8Array)) return { status: 502, body: { error: "Invalid Project account response." } };
       const bytes = read.body;
-      const snapshot = yield* Effect.result(evaluate(() => decodeProjectAccountAuthority(JSON.parse(new TextDecoder().decode(bytes)))));
+      const snapshot = yield* Effect.result(evaluate(() => decodeProjectAccountAuthority(
+        parseJsonObject(new TextDecoder().decode(bytes)).accounts)));
       if (snapshot._tag === "Failure") return { status: 502, body: { error: "Invalid Project account response." } };
       const [current] = snapshot.success;
       if (!current) return { status: 404, body: { error: "Account not found.", code: "account_not_found" } };
@@ -772,7 +1010,13 @@ export function createProjectGatewayRoutes(
       if (current.accessRevision !== input.expectedRevision) {
         return { status: 409, body: { error: "The account access revision has changed.", code: "account_access_conflict" } };
       }
-      const names = projectAccountAccessPermissions(projectId, current, input);
+      let roles: ReadonlyMap<string, { readonly permissions: readonly string[] }> | undefined;
+      if ((current.roleAssignments?.length ?? 0) > 0 || input.roleAssignments.length > 0) {
+        const read = yield* readProjectRoles(projectId, request, principal);
+        if ("response" in read) return read.response;
+        roles = read.roles;
+      }
+      const names = projectAccountAccessPermissions(projectId, current, input, roles);
       if (!names || names.some((permission) => !canDelegate(permission))) return forbidden;
       const accountAccessDigest = yield* projectAccountAccessDigest(accountId, input, names);
       return yield* integration(() => forwardToProject({
@@ -1015,5 +1259,5 @@ export function createProjectGatewayRoutes(
     }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
-  return [...registrationSettingsRoutes, accountAccessRoute, ...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
+  return [...registrationSettingsRoutes, ...authSettingsRoutes, ...emailRoutes, ...invitationRoutes, ...roleRoutes, accountAccessRoute, ...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
 }

@@ -38,10 +38,9 @@ test("the persistent host serves the enrollment listener: machines pin its certi
     const port = await Effect.runPromise(host.listen({ host: "127.0.0.1", port: 0 }));
     const url = `http://127.0.0.1:${port}`;
     const anonymous = createZelavisClient({ baseUrl: url });
-    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, provider: "password",
-      account: { email: "owner@example.com" }, credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
-    const { session } = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
-    const owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${session.token}` } });
+    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, username: "owner", password: "correct horse battery staple" } });
+    const { tokens: session } = await anonymous.auth.usernamePassword.signIn({ username: "owner", password: "correct horse battery staple" });
+    const owner = createZelavisClient({ baseUrl: url, headers: { authorization: `Bearer ${session.accessToken}` } });
 
     const endpoint = await owner.nodes.platform();
     assert.ok(endpoint, JSON.stringify(logs));

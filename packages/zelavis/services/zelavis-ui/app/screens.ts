@@ -1,8 +1,12 @@
 import { Effect } from "effect";
+import { isAccountPath } from "../src/account-routes.ts";
+import { accountScreen } from "./account-pages.ts";
 import type { ApiError, Config, Project } from "./api.ts";
 import { empty } from "./dom.ts";
 import { assistantScreen } from "./assistant-pages.ts";
-import { loginScreen, logoutScreen, setupScreen, signUpScreen } from "./auth-pages.ts";
+import { logoutScreen, setupScreen } from "./auth-pages.ts";
+import { publicAuthScreen, publicAuthPaths } from "./auth-public.ts";
+import { API_PREFIX, ROOT, resolveReturnTo } from "./mount.ts";
 import { fabricScreen } from "./fabric-pages.ts";
 import { hostScreens } from "./host-pages.ts";
 import { marketplaceScreen as platformMarketplace } from "./marketplace-pages.ts";
@@ -24,12 +28,20 @@ export interface ScreenContext {
   navigate(path: string): void;
   run<A>(effect: Effect.Effect<A, ApiError>, success?: (value: A) => void): void;
   refresh(): void;
+  signOut(): void;
   setSearch(values: Record<string, string | undefined>): void;
 }
 export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: ScreenContext) {
   if (context.path === "/assistant") return yield* assistantScreen(context);
-  if (context.path === "/login") return yield* loginScreen(context);
-  if (context.path === "/sign-up") return yield* signUpScreen(context);
+  if (publicAuthPaths.some(path => path === context.path)) return yield* publicAuthScreen({
+    api: context.config.api.basePath, prefix: API_PREFIX, path: context.path, mount: ROOT,
+    destination: resolveReturnTo(context.url.searchParams.get("returnTo"), context.url.origin),
+    navigate: context.navigate, run: context.run,
+  });
+  if (isAccountPath(context.path)) return yield* accountScreen({
+    api: context.config.api.basePath, prefix: API_PREFIX, path: context.path, mount: ROOT,
+    navigate: context.navigate, run: context.run, signOut: context.signOut,
+  });
   if (context.path === "/setup") return yield* setupScreen(context);
   if (context.path === "/logout") return yield* logoutScreen(context);
   if (context.path === "/server/logs") return yield* logsScreen(context);

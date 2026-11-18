@@ -33,6 +33,8 @@ export interface AcmeAuthorization {
   status: "pending" | "valid" | "invalid" | "deactivated" | "expired" | "revoked";
   identifier: AcmeIdentifier;
   challenges: readonly AcmeChallenge[];
+  /** Set for the authorization of a `*.` identifier, whose `identifier.value` is the name below the wildcard. */
+  wildcard?: boolean;
 }
 
 export interface AcmeOrder {
@@ -296,11 +298,13 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         status: AcmeAuthorization["status"];
         identifier: AcmeIdentifier;
         challenges: AcmeChallenge[];
+        wildcard?: unknown;
       };
       return {
         status: data.status,
         identifier: data.identifier,
         challenges: data.challenges,
+        ...(data.wildcard === true ? { wildcard: true } : {}),
       };
     }));
   },

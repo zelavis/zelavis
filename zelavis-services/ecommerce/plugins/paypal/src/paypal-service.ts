@@ -457,7 +457,7 @@ function toCapturePaymentAttempt(order: Order, capture: OrdersCapture): PaymentA
   };
 }
 
-function toRefundPaymentAttempt(refund: Refund, originalOrderId: string, captureId: string): PaymentAttempt {
+function toRefundPaymentAttempt(refund: Refund, originalOrderId: string | undefined, captureId: string): PaymentAttempt {
   const createdAt = refund.createTime ? new Date(refund.createTime) : new Date();
   const currency = refund.amount?.currencyCode ?? "USD";
 

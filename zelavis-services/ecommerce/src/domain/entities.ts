@@ -15,6 +15,8 @@ const Metadata = Schema.optional(Schema.Record(Schema.String, Schema.Unknown));
 export class Customer extends Schema.Class<Customer>("zelavis/ecommerce/Customer")({
   id: Schema.NonEmptyString,
   accountId: Schema.optional(Schema.String),
+  principalId: Schema.optional(Schema.String),
+  providerReferences: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   email: Schema.NonEmptyString,
   firstName: Schema.optional(Schema.String),
   lastName: Schema.optional(Schema.String),
@@ -98,7 +100,10 @@ export type PaymentStatus = typeof PaymentStatus["Type"];
 
 export class PaymentAttempt extends Schema.Class<PaymentAttempt>("zelavis/ecommerce/PaymentAttempt")({
   id: Schema.NonEmptyString,
-  orderId: Schema.NonEmptyString,
+  orderId: Schema.optional(Schema.NonEmptyString),
+  subscriptionId: Schema.optional(Schema.String),
+  checkoutId: Schema.optional(Schema.String),
+  providerUpdatedAt: Schema.optional(Schema.Date),
   provider: Schema.NonEmptyString,
   amount: Schema.Number,
   currency: Schema.NonEmptyString,
@@ -136,10 +141,28 @@ export class BillingSubscription extends Schema.Class<BillingSubscription>(
   intervalCount: Schema.Number,
   status: SubscriptionStatus,
   cancelAtPeriodEnd: Schema.Boolean,
+  providerCustomerReference: Schema.optional(Schema.String),
+  providerUpdatedAt: Schema.optional(Schema.Date),
+  checkoutId: Schema.optional(Schema.String),
   currentPeriodStart: Schema.optional(Schema.Date),
   currentPeriodEnd: Schema.optional(Schema.Date),
   reference: Schema.optional(Schema.String),
   metadata: Metadata,
   createdAt: Schema.Date,
   updatedAt: Schema.Date,
+}) {}
+
+const CheckoutLineSchema = Schema.Struct({
+  name: Schema.NonEmptyString.check(Schema.isMaxLength(200)),
+  amount: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  currency: Schema.String.check(Schema.isPattern(/^[A-Za-z]{3}$/u)),
+  quantity: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 10000 })),
+  interval: Schema.optional(SubscriptionInterval),
+  intervalCount: Schema.optional(Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 36 }))),
+});
+export class Checkout extends Schema.Class<Checkout>("zelavis/ecommerce/Checkout")({
+  id: Schema.NonEmptyString, provider: Schema.NonEmptyString, mode: Schema.Literals(["payment", "subscription"]),
+  customerId: Schema.NonEmptyString, lines: Schema.Array(CheckoutLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)), reference: Schema.String, url: Schema.String,
+  status: Schema.Literals(["open", "completed", "expired"]), subscriptionId: Schema.optional(Schema.String),
+  metadata: Schema.Record(Schema.String, Schema.String), createdAt: Schema.Date, updatedAt: Schema.Date,
 }) {}

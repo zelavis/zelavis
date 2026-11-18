@@ -3,7 +3,7 @@
   "version": "2.0.0-alpha.45",
   "private": false,
   "description": "Open, self-hostable App Platform and embeddable backend framework.",
-  "license": "MIT",
+  "license": "MIT AND Apache-2.0",
   "author": "Ivan Jeremic",
   "type": "module",
   "bin": {
@@ -36,6 +36,14 @@
       "types": "./dist/edge/routes.d.ts",
       "import": "./dist/edge/routes.js"
     },
+    "./edge/dns-provider": {
+      "types": "./dist/edge/dns-provider.d.ts",
+      "import": "./dist/edge/dns-provider.js"
+    },
+    "./edge/registrar-provider": {
+      "types": "./dist/edge/registrar-provider.d.ts",
+      "import": "./dist/edge/registrar-provider.js"
+    },
     "./edge/traefik": {
       "types": "./dist/edge/traefik-compiler.d.ts",
       "import": "./dist/edge/traefik-compiler.js"
@@ -60,9 +68,13 @@
       "types": "./dist/app/index.d.ts",
       "import": "./dist/app/index.js"
     },
-    "./app/identity": {
-      "types": "./dist/app/identity/index.d.ts",
-      "import": "./dist/app/identity/index.js"
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "import": "./dist/auth/index.js"
+    },
+    "./app/email": {
+      "types": "./dist/app/email/index.d.ts",
+      "import": "./dist/app/email/index.js"
     },
     "./db": {
       "types": "./dist/db/index.d.ts",
@@ -159,12 +171,12 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && node scripts/copy-installation-assets.mjs",
-    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && node scripts/copy-installation-assets.mjs",
+    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && tsc -p tsconfig.capacity.json && node scripts/bundle-capacity.mjs && node scripts/copy-installation-assets.mjs",
+    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && tsc -p tsconfig.capacity.json && node scripts/bundle-capacity.mjs && node scripts/copy-installation-assets.mjs",
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
-    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json --noEmit && pnpm run diagnostics:effect",
+    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.capacity.json --noEmit && pnpm run diagnostics:effect",
     "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json",
@@ -181,6 +193,8 @@
   },
   "files": [
     "dist",
+    "LICENSE-APACHE",
+    "NOTICE",
     "services/zelavis-app/package.json",
     "services/zelavis-auth/package.json",
     "services/zelavis-marketplace/package.json",
@@ -191,7 +205,6 @@
     "services/zelavis-marketplace/dist",
     "services/zelavis-marketplace/allowlist.snapshot.json",
     "services/zelavis-ui/dist",
-    "services/zelavis-cloud/bundle",
     "services/zelavis-ui/.fuzor/web/dist-spa",
     "services/zelavis-ui/.fuzor/dist-backend",
     "services/zelavis-ui/.fuzor/fuzor-build.json"
@@ -210,6 +223,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
+    "@simplewebauthn/browser": "14.0.0",
+    "@simplewebauthn/server": "14.0.0",
     "effect": "4.0.0",
     "jose": "^6.2.15",
     "picocolors": "^1.1.1"
@@ -226,7 +241,11 @@
     "h3-js": "^4.5.0",
     "lmdb": "^3.5.9",
     "typescript": "^7.0.2",
-    "usearch": "^2.26.4"
+    "usearch": "^2.26.4",
+    "alchemy": "2.0.0-beta.81",
+    "@distilled.cloud/hetzner": "1.0.0-rc.13",
+    "@effect/platform-node": "4.0.0",
+    "rolldown": "1.2.5"
   },
   "keywords": [
     "zelavis",

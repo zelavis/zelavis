@@ -3,8 +3,8 @@
 /** Node ids are what `zelavis worker join --node-id` accepts: a short, lower-case label. */
 export const NODE_ID_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** Providers the bundled cloud service can drive today. */
-export const CLOUD_PROVIDERS = [{ id: "hetzner", label: "Hetzner Cloud" }] as const;
+/** Providers available for cloud capacity. */
+export const CLOUD_PROVIDERS = [{ id: "hetzner", label: "Hetzner Cloud" }, { id: "webhook", label: "Your own automation (webhook)" }] as const;
 
 export function isValidNodeId(value: string): boolean {
   return NODE_ID_PATTERN.test(value);

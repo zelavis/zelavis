@@ -241,3 +241,22 @@ html, body {
 .project-domain-dns input {
   width: 100%;
 }
+
+.account-page { min-width: 0; overflow-wrap: anywhere; }
+.account-nav { margin-bottom: 20px; }
+.account-nav a[aria-current="page"] { background: var(--hover); font-weight: 600; }
+.account-list { padding: 0; margin: 0; list-style: none; }
+.account-list > li { display: grid; justify-items: start; gap: 10px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.account-list > li:last-child { border-bottom: 0; }
+.account-list p { margin: 0; }
+.account-section, .account-setup { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+.account-setup > button { margin-top: 12px; }
+.account-qr { display: block; max-width: 100%; height: auto; }
+
+.service-link-dialog {
+  width: min(28rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow-wrap: anywhere;
+}
+.service-link-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.service-link-dialog > .row { display: flex; gap: .75rem; justify-content: flex-end; flex-wrap: wrap; }

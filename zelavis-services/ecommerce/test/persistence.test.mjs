@@ -35,6 +35,7 @@ test("commerce persists customers, products and orders across runtimes", async (
     name: "storage-only",
     async resolve() {
       return {
+        resolvePrincipal: () => PLATFORM_OWNER_CONTEXT.principal,
         subsystems: {
           database: false,
         },
@@ -121,6 +122,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   const zelavis = new Zelavis({
     adapter,
   });
+  t.after(() => zelavis.close());
 
   const createCustomerResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/customers", {
@@ -211,6 +213,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.deepEqual(paymentProviders.providers, []);
 
   const firstRuntime = await createZelavis({
+    resolvePrincipal: () => PLATFORM_OWNER_CONTEXT.principal,
     subsystems: {
       database: { directory },
     },
@@ -239,6 +242,7 @@ test("commerce persists customers, products and orders across runtimes", async (
       },
     },
   });
+  t.after(() => firstRuntime.close());
 
   const persistedProductResponse = await firstRuntime.fetch(
     new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products", {
@@ -259,6 +263,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(persistedProductResponse.status, 201);
 
   const secondRuntime = await createZelavis({
+    resolvePrincipal: () => PLATFORM_OWNER_CONTEXT.principal,
     subsystems: {
       database: { directory },
     },
@@ -287,6 +292,7 @@ test("commerce persists customers, products and orders across runtimes", async (
       },
     },
   });
+  t.after(() => secondRuntime.close());
 
   const persistedProductListResponse = await secondRuntime.fetch(
     new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products"),
@@ -390,6 +396,7 @@ test("a database the plugin cannot recognise stops it starting", async () => {
     core: { database },
     endpointGroups: [],
     addEndpointGroup() {},
+    addRuntimePlugin() {},
     addEndpointGroups() {},
   });
 

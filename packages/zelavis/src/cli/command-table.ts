@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient, type ZelavisClient } from "../sdk/fetch.js";
+import { withAuthSessionFile } from "./auth-session-file.js";
 
 /** What an action of a table-driven command is given: its arguments, its flags, and the SDK client it must go through. */
 export interface CliInput {
@@ -88,8 +89,13 @@ export function runTable(table: CliTable, args: readonly string[]): Promise<void
     if (action === undefined) throw new Error(`Unknown ${table.name} command "${name}". ${table.usage}`);
     const base = new URL(flags.get("--url") ?? "http://localhost:3000/zelavis");
     const token = flags.get("--token");
-    const client = createZelavisClient({ baseUrl: base.origin, rootPath: base.pathname, headers: token ? { authorization: `Bearer ${token}` } : undefined });
-    const result = yield* integrationValue(action.run({ positional: rest, flags, switches, client }));
+    const sessionFile = flags.get("--session-file");
+    if (token && sessionFile) throw new Error("Use either --session-file or --token.");
+    const options = { baseUrl: base.origin, rootPath: base.pathname, headers: token ? { authorization: `Bearer ${token}` } : undefined };
+    const run = (client: ZelavisClient) => action.run({ positional: rest, flags, switches, client });
+    const result = yield* integrationValue(sessionFile === undefined
+      ? run(createZelavisClient(options))
+      : withAuthSessionFile(sessionFile, storage => run(createZelavisClient({ ...options, authSession: { storage } }))));
     console.log(switches.has("--json") || action.text === undefined ? JSON.stringify(result, null, 2) : action.text(result));
   }));
 }

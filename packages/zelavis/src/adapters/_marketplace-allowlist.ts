@@ -23,6 +23,7 @@ import type {
 } from "../index.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 import { resolveBundledServiceDirectory } from "./_local-runtime.js";
+import { provideHostPackagesTo } from "./_service-resolution.js";
 import { ZELAVIS_VERSION } from "../version.js";
 
 export interface MarketplaceOptions {
@@ -233,8 +234,12 @@ export function discoverLocalOfficialServices(root: string): Promise<readonly Lo
 function loadMarketplaceModule(): Promise<MarketplaceModule | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<MarketplaceModule | undefined, IntegrationFailure> {
   const directory = resolveBundledServiceDirectory("@zelavis/marketplace");
-  const entry = directory && join(directory, "dist", "allowlist", "index.js");
-  if (!entry || !existsSync(entry)) return undefined;
+  if (!directory) return undefined;
+  const entry = join(directory, "dist", "allowlist", "index.js");
+  if (!existsSync(entry)) return undefined;
+  // This module is needed before the service registry is composed, including
+  // in Project workers. Give it the host's packages before its first import.
+  yield* evaluate(() => provideHostPackagesTo(directory));
   return ((yield* integrationValue(import(pathToFileURL(entry).href)))) as MarketplaceModule;
 }));
   }
@@ -355,6 +360,8 @@ export function createLocalMarketplace(input: {
       service: {
         name: entry.name,
         kind: entry.kind,
+        // The checkout supplies the bytes; Marketplace activation still installs an extension.
+        scope: "extension",
         version: entry.version,
         service: {},
         api: {},

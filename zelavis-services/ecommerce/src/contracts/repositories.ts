@@ -12,6 +12,7 @@
 import type { Effect } from "effect";
 import type {
   BillingSubscription,
+  Checkout,
   Coupon,
   Customer,
   Order,
@@ -33,7 +34,9 @@ export interface Repository<A, Key extends string = string> {
   readonly update: (value: A) => Effect.Effect<A, StorageFailure>;
 }
 
-export type CustomerRepository = Repository<Customer>;
+export interface CustomerRepository extends Repository<Customer> {
+  readonly setProviderReference: (id: string, provider: string, reference: string, at: Date) => Effect.Effect<Customer, StorageFailure>;
+}
 export type ProductRepository = Repository<Product>;
 export type OrderRepository = Repository<Order>;
 export type PaymentAttemptRepository = Repository<PaymentAttempt>;
@@ -44,7 +47,14 @@ export interface CouponRepository extends Omit<Repository<Coupon>, "findById"> {
   readonly findByCode: (code: string) => Effect.Effect<Coupon | undefined, StorageFailure>;
 }
 
+export interface ProviderEventRepository {
+  apply(provider: string, event: import("./payment-provider.js").ProviderEvent): Effect.Effect<boolean, StorageFailure>;
+}
+
 export interface EcommerceRepositories {
+  readonly events: ProviderEventRepository;
+  readonly fulfillment: import("../services/fulfillment.js").FulfillmentRepository;
+  readonly checkouts: Repository<Checkout>;
   readonly customers: CustomerRepository;
   readonly coupons: CouponRepository;
   readonly products: ProductRepository;
