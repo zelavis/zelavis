@@ -411,7 +411,7 @@ export type {
   ZelavisFileStorageObject,
   ZelavisFileStoragePutInput,
   ZelavisStorageOptions,
-  ZelavisStorageCoreServiceOptions,
+  ZelavisStorageSubsystemOptions,
 } from "./platform/storage-types.js";
 import type {
   ZelavisFileStorage,
@@ -1614,7 +1614,7 @@ interface ResolvedDatabaseSubsystem {
  * filesystem — and the composition entry point stays runtime-neutral. A host
  * that opens its own instance never loads it.
  */
-function resolveDatabaseCoreService(
+function resolveDatabaseSubsystem(
   option: ZelavisDatabaseOptions | undefined,
   systemStore?: ZelavisSystemStore,
 ): Promise<ResolvedDatabaseSubsystem | undefined> {
@@ -2153,10 +2153,10 @@ function resolveRuntimeManagementCore(
     const registryEntry = serviceRegistry.find(
       (candidate) => candidate.service.name === serviceName,
     );
-    // Core services are composed into the runtime rather than installed
+    // System services are composed into the runtime rather than installed
     // through the registry, so they never appear above. They still own pages,
     // and a page must not depend on how its service arrived.
-    const coreService = registryEntry
+    const composedService = registryEntry
       ? undefined
       : context
           .getServices()
@@ -2165,8 +2165,8 @@ function resolveRuntimeManagementCore(
     const entry =
       registryEntry?.status === "installed"
         ? registryEntry
-        : coreService
-          ? { service: coreService as ZelavisServiceRegistryEntry<any>["service"] }
+        : composedService
+          ? { service: composedService as ZelavisServiceRegistryEntry<any>["service"] }
           : undefined;
 
     if (!entry) {
@@ -2321,7 +2321,7 @@ function resolveRuntimeManagementCore(
                   context.apiVersion,
                   service.basePath ?? service.name,
                 ),
-        // Serialized the same way registry menus are: a core service's page
+        // Serialized the same way registry menus are: a system service's page
         // needs a resolvable `src` too, or the dashboard mounts a frame with
         // nothing in it.
         menu: serializeServiceMenuForDashboard(service.name, service.menu),
@@ -3328,7 +3328,7 @@ function resolveRuntimeManagementCore(
                 // on its own would look like it worked and quietly do nothing.
                 if (update.status === "installed" && updatedRegistryEntry) {
                   // Composed services as well as installed registry entries. A
-                  // core service like `zelavis/auth` never appears in the
+                  // system service like `zelavis/auth` never appears in the
                   // registry, so checking only that would refuse every extension
                   // of one — which is most of them.
                   const installedNames = new Set([
@@ -3595,7 +3595,7 @@ function resolvePlatformFrontend(
 }));
   }
 
-function resolveWorkloadsCoreService(
+function resolveWorkloadsSubsystem(
   option: ZelavisWorkloadsOptions | undefined,
 ): Promise<ZelavisEndpointGroup<any> | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<any> | undefined, IntegrationFailure> {
@@ -3650,7 +3650,7 @@ function resolveLocalNodeId(option: ZelavisFabricOptions | undefined): string {
   return configured.localNode?.id ?? "local";
 }
 
-function resolveFabricCoreService(
+function resolveFabricSubsystem(
   option: ZelavisFabricOptions | undefined,
   context: {
     projects?: ZelavisProjectManager;
@@ -6869,7 +6869,7 @@ export function zelavis(
         // home of its identity data differs: its own database, not the System Store.
         const projectRole = options.role === "project";
         const databaseSubsystem = yield* integration(() =>
-          resolveDatabaseCoreService(options.subsystems?.database, systemStore),
+          resolveDatabaseSubsystem(options.subsystems?.database, systemStore),
         );
         yield* Effect.addFinalizer(() =>
           ready
@@ -6879,7 +6879,7 @@ export function zelavis(
               ),
         );
         const identityDatabaseSubsystem = yield* integration(() =>
-          resolveDatabaseCoreService(options.subsystems?.identityDatabase, systemStore),
+          resolveDatabaseSubsystem(options.subsystems?.identityDatabase, systemStore),
         );
         yield* Effect.addFinalizer(() =>
           ready
@@ -6985,8 +6985,8 @@ export function zelavis(
             apiVersion,
           }),
         );
-        const workloadsCoreService = yield* integration(() =>
-          resolveWorkloadsCoreService(
+        const workloadsSubsystem = yield* integration(() =>
+          resolveWorkloadsSubsystem(
             options.subsystems?.workloads === false
               ? false
               : {
@@ -7003,8 +7003,8 @@ export function zelavis(
           ),
         );
         // Durable entities are served where the database's writer is, with the `entity` workloads as handlers.
-        const entityWorkloads = resolvedDatabaseApi && workloadsCoreService
-          ? serveDurableWorkloads(resolvedDatabaseApi, workloadsCoreService.context)
+        const entityWorkloads = resolvedDatabaseApi && workloadsSubsystem
+          ? serveDurableWorkloads(resolvedDatabaseApi, workloadsSubsystem.context)
           : undefined;
         yield* Effect.addFinalizer(() =>
           ready ? Effect.void : integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),
@@ -7067,10 +7067,10 @@ export function zelavis(
                       ),
                     }
                   : {}),
-                ...(workloadsCoreService
+                ...(workloadsSubsystem
                   ? {
                       workloads: apiUsage.observe(
-                        workloadsCoreService.context,
+                        workloadsSubsystem.context,
                         "workloads",
                       ),
                     }
@@ -7235,9 +7235,9 @@ export function zelavis(
                       const project = yield* integration(() =>
                         systemStore.get("projects", projectId),
                       );
-                      if (!project || !fabricCoreService) return false;
+                      if (!project || !fabricSubsystem) return false;
                       const node = yield* integration(() =>
-                        fabricCoreService.context.getNode(nodeId),
+                        fabricSubsystem.context.getNode(nodeId),
                       );
                       return (
                         node?.status === "ready" || node?.status === "degraded"
@@ -7309,7 +7309,7 @@ export function zelavis(
                   // Project manager it plans for. Reconciliation is deferred to match,
                   // because it runs once and a pass before Fabric exists would enforce
                   // nothing.
-                  placement: () => fabricCoreService?.context,
+                  placement: () => fabricSubsystem?.context,
                   // Drivers this host runs: JavaScript recipes today. OCI is declared in the contract but has no driver yet.
                   installHost: options.projectInstallHost ?? (() => Promise.resolve({
                     drivers: ["js" as const],
@@ -7564,7 +7564,7 @@ export function zelavis(
                 }),
               )
             : undefined;
-        const fabricCoreService = resolveFabricCoreService(
+        const fabricSubsystem = resolveFabricSubsystem(
           options.subsystems?.fabric,
           {
             projects,
@@ -7664,7 +7664,7 @@ export function zelavis(
               ? {
                   pageCapability: {
                     secret: pageCapabilitySecret!,
-                    forward: createProjectForwarder({ projects, fabric: fabricCoreService?.context, unavailableProjectsResponse, projectErrorResponse }),
+                    forward: createProjectForwarder({ projects, fabric: fabricSubsystem?.context, unavailableProjectsResponse, projectErrorResponse }),
                   },
                 }
               : {}),
@@ -7673,14 +7673,14 @@ export function zelavis(
               : {}),
             capabilities: apiUsage.capabilities({
               server: { available: true },
-              fabric: { available: Boolean(fabricCoreService) },
+              fabric: { available: Boolean(fabricSubsystem) },
               database: { available: Boolean(databaseSubsystem) },
               auth: { available: Boolean(authSubsystem) },
               ...(appAuthFrontend && authSubsystem
                 ? { appPublicAuth: { available: true } }
                 : {}),
               storage: { available: Boolean(storageEndpointGroup) },
-              workloads: { available: Boolean(workloadsCoreService) },
+              workloads: { available: Boolean(workloadsSubsystem) },
               site: { available: siteMounted },
             }),
           }),
@@ -7701,11 +7701,11 @@ export function zelavis(
               if (!project || project.deletion)
                 return new Response("Site not found.", { status: 404 });
               const placement = yield* integration(() =>
-                fabricCoreService?.context.getProjectPlacement(projectId),
+                fabricSubsystem?.context.getProjectPlacement(projectId),
               );
               const node = placement
                 ? yield* integration(() =>
-                    fabricCoreService?.context.getNode(placement.runtimeNodeId),
+                    fabricSubsystem?.context.getNode(placement.runtimeNodeId),
                   )
                 : undefined;
               if (
@@ -7744,7 +7744,7 @@ export function zelavis(
           resolvePlatformEndpointGroup(
             readServiceRegistry,
             projects,
-            fabricCoreService?.context,
+            fabricSubsystem?.context,
             systemStore,
             deploymentBackends,
             options.agentOperations,
@@ -7807,9 +7807,9 @@ export function zelavis(
         const nativeEndpointGroups = yield* Effect.forEach(
           [
             platformEndpointGroup,
-            ...(fabricCoreService ? [fabricCoreService] : []),
+            ...(fabricSubsystem ? [fabricSubsystem] : []),
             ...(storageEndpointGroup ? [storageEndpointGroup] : []),
-            ...(workloadsCoreService ? [workloadsCoreService] : []),
+            ...(workloadsSubsystem ? [workloadsSubsystem] : []),
             ...(authSubsystem ? [authSubsystem.endpointGroup] : []),
             ...(emailSubsystem ? [emailSubsystem.endpointGroup] : []),
             ...databaseEndpointGroups,
@@ -8062,7 +8062,7 @@ function assertResolvedServiceApi<TService>(
 ): asserts value is TService {
   if (!value) {
     throw new Error(
-      `Zelavis core service \`${serviceName}\` is not enabled on this runtime.`,
+      `Zelavis subsystem \`${serviceName}\` is not enabled on this runtime.`,
     );
   }
 }
@@ -8317,9 +8317,8 @@ function applyPlatformResourceDefaults(
     ...(options.serviceRegistry ?? {}),
   };
 
-  // The runtime settings store is a resource, not a frontend concern. It used
-  // to hang off `coreServices.dashboard`, which is why turning the dashboard
-  // off also took the Platform's own settings persistence with it.
+  // The runtime settings store is a resource, not a frontend concern: the
+  // Platform's own settings persist whether or not a frontend is installed.
   const runtimeSettingsStore =
     options.runtimeSettingsStore ??
     (resources.systemStore

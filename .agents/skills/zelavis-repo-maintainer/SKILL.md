@@ -20,7 +20,7 @@ Use this skill for changes in:
 - Prefer simple automation with clear ownership over clever repo machinery.
 - Do not claim GitHub settings are enabled unless they were verified.
 - Separate repo-policy changes from product code changes when possible.
-- Treat `AGENTS.md` as the canonical coding-agent instruction file.
+- Treat `AGENTS.md` as the canonical coding-agent instruction file. `.github/copilot-instructions.md` only points to it; keep it that way rather than restating rules there.
 - There is no `CLAUDE.md`; do not add one. Durable project guidance belongs in `AGENTS.md`.
 - Keep `.agents/` synchronized with `AGENTS.md`. When repo guidance affects a specific workflow, update the relevant skill or add a focused reference file.
 - Claude Code reads `AGENTS.md` directly but loads a skill only once it is linked into `~/.claude/skills/` (AGENTS.md § Agent Instruction Source Of Truth). Keep nothing tracked in `.claude/`: no skills, references, hooks or symlinks. A new skill in `.agents/skills/` needs that link on each maintainer's machine.
@@ -46,9 +46,10 @@ Use the relevant checks for repo-health changes:
 
 ```bash
 git diff --check
-pnpm run verify
+pnpm run verify          # also what CI's ci:runtime runs
 pnpm run docs:check
 pnpm audit:security
-pnpm ci:runtime
-pnpm ci:ui
+pnpm run ci:ui           # when a change reaches the dashboard
 ```
+
+For GitHub storage upkeep, `pnpm github:storage:check` is read-only and `pnpm github:storage:clean` deletes only what the policy allows.

@@ -637,7 +637,7 @@ That split is intentional:
 - the class is for real application code
 - the function is for internal/runtime-facing work
 
-Application code can use the core services through the runtime instance:
+Application code can use the subsystems through the runtime instance:
 
 ```ts
 const tenantDb = zv.db.forTenant("tenant_acme");
@@ -1060,11 +1060,11 @@ These scripts compile only the selected SDK source entry and its imports. They
 are the current enforcement point for keeping browser and native-fetch SDK
 surfaces separate from UI, host runtimes, and local server adapters.
 
-Runtime resources now also feed real core-service persistence in the high-level `Zelavis` class:
+Runtime resources also feed subsystem persistence in the high-level `Zelavis` class:
 
 - dashboard settings persist through the Platform System Store, or through a configured KV resource in runtimes without a System Store
-- the storage core service can expose local file storage through the Zelavis API
-- website pages can persist through local files when no database core service is configured
+- the storage subsystem can expose local file storage through the Zelavis API
+- website pages can persist through local files when no database subsystem is configured
 
 The dashboard settings endpoint exposes runtime-editable dashboard preferences:
 
@@ -1137,7 +1137,7 @@ Zelavis dashboard internals.
 
 `menu.path` and `menu.page.file` intentionally mean different things:
 
-- `menu.path` is the dashboard URL. Core services whose screens already ship
+- `menu.path` is the dashboard URL. System services whose screens already ship
   with `@zelavis/ui` should use this without `menu.page`; the dashboard renders
   the local React Router route directly and no iframe is mounted.
 - `menu.page.file` is a browser-extension-style HTML entry file inside the
@@ -1201,7 +1201,7 @@ service-owned endpoint returns a JSON menu fragment:
 }
 ```
 
-When a file storage resource exists, Zelavis can also expose a built-in storage core service:
+When a file storage resource exists, Zelavis can also expose the built-in storage subsystem:
 
 ```txt
 GET /zelavis/api/v1/storage/files

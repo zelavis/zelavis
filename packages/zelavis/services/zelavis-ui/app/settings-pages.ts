@@ -128,7 +128,7 @@ export const settingsScreen = Effect.fn("ui.settingsScreen")(function*(context: 
     audit,
     rowsCard("Email delivery", dataRow("SMTP", "Configure how this Platform sends email, send a test and follow deliveries.", link("Open", "/settings/email"))),
     rowsCard("Appearance", dataRow("Persistence", settings.persistence === "read-only" ? "Read-only until runtime settings storage is available." : "Runtime settings storage is available. Root path changes apply after restart."), dataRow("Theme", "Configure dashboard light, dark, or system mode.", link("Open", "/settings/appearance"))),
-    rowsCard("Runtime Services", dataRow("Mounted services", "Inspect core services and service-provided runtime pieces registered in this runtime.", link("Open", "/services"))));
+    rowsCard("Runtime Services", dataRow("Mounted services", "Inspect the subsystems and services registered in this runtime.", link("Open", "/services"))));
 });
 
 const THEMES = [["auto", "System"], ["light", "Light"], ["dark", "Dark"]] as const;

@@ -3,7 +3,7 @@ title: File Storage Flow
 ---
 This guide shows the intended Zelavis flow for files:
 
-1. upload a file into the storage core service
+1. upload a file into the storage subsystem
 2. copy the generated Zelavis file reference
 3. validate that reference in a database document with a file-aware schema
 

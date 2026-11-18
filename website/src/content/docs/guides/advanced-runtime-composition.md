@@ -9,7 +9,7 @@ Reach for the runtime instance when you need things like:
 
 - direct `fetch(...)` handling
 - access to the initialized runtime through `zv.runtime()`
-- core service APIs such as `zv.db` and `zv.auth`
+- subsystem APIs such as `zv.db` and `zv.auth`
 
 For normal application code, prefer:
 
@@ -42,7 +42,7 @@ That returns the mounted runtime object with `fetch`, `dispatch`, `plain`, resol
 
 ## Project recipe composition
 
-There is no separate `defineCoreService(...)` helper. The current in-process
+The in-process
 composition is internal runtime plumbing; create-project definitions are
 Project recipes: services with `kind: "app"`.
 
@@ -70,23 +70,17 @@ Concretely:
 The same low-level runtime service shape is used for System Services and project
 services, but their ownership and persistence are different.
 
-The `coreServices` option is gone. It read as though the Platform had a second,
-privileged way to install services; it did not. What it held was the Platform's
-own subsystems, and they now say what they are:
+The Platform's own pieces are configured by what they are, never as
+installable services:
 
 - `subsystems` on `zelavis(...)` carries `auth`, `database`, `fabric`,
   `storage`, `workloads`, and `site` — infrastructure and policy switches, not
   installable services.
-- `frontend` carries what `coreServices.dashboard` used to: the factory, plus
-  `title`, `subtitle`, `devServerUrl`, and a `clientRoutes` override. It
-  predated frontends being a first-class concept, and by the end every field it
-  held was about the frontend — `clientRoutes` already fell back to the routes
-  the frontend declared for itself. There is no way to switch it off: an
-  installation with no frontend is one with none installed, and its root path
-  says so while the API is unchanged.
-- `runtimeSettingsStore` carries the settings store. It is a resource, and
-  hanging it off the dashboard option meant turning the dashboard off also took
-  the Platform's own settings persistence with it.
+- `frontend` carries the frontend options: the factory, plus `title`,
+  `subtitle`, `devServerUrl`, and a `clientRoutes` override (which falls back
+  to the routes the frontend declares for itself).
+- `runtimeSettingsStore` carries the settings store. It is a resource, so the
+  Platform's own settings persist whether or not a frontend is installed.
 
 `frontend` has no `false`. An installation with no frontend is one with none
 installed, and its root path says so while the API is unchanged; a second
@@ -103,7 +97,7 @@ capabilities belong to Project runtimes created from recipes.
 This gives Zelavis two useful properties:
 
 - packages like `zelavis/app/db` stay independently usable
-- the high-level runtime can still reserve extra privileges for built-in core services
+- the high-level runtime can still reserve extra privileges for built-in system services
 
 That means the service factory itself can stay ordinary, while the runtime decides which services are privileged built-ins.
 

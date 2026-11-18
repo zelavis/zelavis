@@ -2,7 +2,7 @@
  * Platform file-storage contracts.
  *
  * Kept free of runtime imports so storage adapters, the bundle store, and the
- * storage core service can all depend on the shapes without depending on the
+ * storage subsystem can all depend on the shapes without depending on the
  * Platform composition they are used by.
  */
 
@@ -90,10 +90,10 @@ export interface ZelavisFileStorage {
   ): Promise<readonly ZelavisFileStorageEntry[]> | readonly ZelavisFileStorageEntry[];
 }
 
-export interface ZelavisStorageCoreServiceOptions {
+export interface ZelavisStorageSubsystemOptions {
   storage?: ZelavisFileStorage;
 }
 
 export type ZelavisStorageOptions =
   | boolean
-  | ZelavisStorageCoreServiceOptions;
+  | ZelavisStorageSubsystemOptions;

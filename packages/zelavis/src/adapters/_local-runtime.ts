@@ -1122,7 +1122,7 @@ export function createLocalRuntimeServiceImporter(
 
     // A bare package specifier resolves through the host's own installed
     // dependencies, which is the same trust as the host's own code. When
-    // nothing is installed under that name, a core service bundled in this
+    // nothing is installed under that name, a first-party service bundled in this
     // distribution answers instead — the same trust again, since it shipped
     // as part of the host.
     return yield* integrationValue(import(specifier)).pipe(Effect.catch((failure) => {
@@ -1148,11 +1148,11 @@ export function createLocalRuntimeServiceImporter(
 }
 
 // ---------------------------------------------------------------------------
-// Core services bundled in the distribution
+// First-party services bundled in the distribution
 // ---------------------------------------------------------------------------
 
 /**
- * The distribution carries its core services — `@zelavis/app`, `@zelavis/auth`,
+ * The distribution carries its first-party services — `@zelavis/app`, `@zelavis/auth`,
  * `@zelavis/marketplace`, `@zelavis/ui` — inside its own `services/` folder.
  *
  * Resolving them by bare name through `import.meta.resolve` looks in
@@ -1251,7 +1251,7 @@ export function isBundledServicePath(path: string): boolean {
   });
 }
 
-/** Absolute directory of a core service shipped inside this distribution. */
+/** Absolute directory of a first-party service shipped inside this distribution. */
 export function resolveBundledServiceDirectory(
   packageName: string,
 ): string | undefined {
@@ -1540,7 +1540,7 @@ export function resolveLocalPackageManifest(
       const resolvedUrl = import.meta.resolve(specifierOrPath);
       startPath = fileURLToPath(resolvedUrl);
     } catch {
-      // Nothing is installed under that name. A core service bundled in this
+      // Nothing is installed under that name. A first-party service bundled in this
       // distribution lives in its own folder rather than in node_modules, so
       // it never resolves this way and has to be looked up directly.
       startPath = bundled ?? resolve(specifierOrPath);

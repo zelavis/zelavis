@@ -7,7 +7,7 @@ This page documents the current environment variables used by Zelavis runtime an
 
 ### `ZELAVIS_UI_DEV_SERVER`
 
-Used by the `zelavis` dashboard core service when you want dashboard requests to redirect to a live UI dev server instead of serving embedded built assets.
+Used by the `zelavis` dashboard when you want dashboard requests to redirect to a live UI dev server instead of serving embedded built assets.
 
 Notes:
 

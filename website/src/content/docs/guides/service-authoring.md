@@ -280,7 +280,7 @@ Important details:
 - If the HTML file boots a SPA, that SPA owns its internal router, tabs, and
   menu. Zelavis sidebar items select concrete HTML entry files; they do not
   deep-link into plugin-private SPA routes.
-- Core services whose content already ships with `@zelavis/ui` should use
+- System services whose content already ships with `@zelavis/ui` should use
   `menu.path` without `menu.page`, so the local route renders directly instead
   of mounting an iframe.
 - Menu items can use `fixed: true` for slide-local pinned actions such as

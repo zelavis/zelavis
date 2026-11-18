@@ -61,7 +61,7 @@ Today `@zelavis/cloud` (`packages/zelavis/services/zelavis-cloud`, private, 1,47
 - Package build: `packages/zelavis/package.json:162` (`build`: clean, bootstrap, three bundled service builds, `tsc -p tsconfig.json`, `copy-installation-assets`), `:167` (`typecheck`); `tsconfig.json` includes `src/**/*.ts` with `rootDir: src`, `outDir: dist`.
 - Import-footprint pattern: `packages/zelavis/test/project-host-footprint.test.mjs:9-25` (spawn Node with a `registerHooks` load recorder, inspect loaded URLs).
 
-**Pattern to mirror.** The bundle step stays the one in `services/zelavis-cloud/scripts/bundle.mjs`, with input and output paths changed. Lazy loading mirrors `resolveDatabaseCoreService`'s `import("./db/node-host.js")` inside an Effect (`packages/zelavis/src/index.ts:1608`). The webhook provider's request signing mirrors how the Platform seals and audits the token today: the secret is the sealed `token`, never logged.
+**Pattern to mirror.** The bundle step stays the one in `services/zelavis-cloud/scripts/bundle.mjs`, with input and output paths changed. Lazy loading mirrors `resolveDatabaseSubsystem`'s `import("./db/node-host.js")` inside an Effect (`packages/zelavis/src/index.ts:1608`). The webhook provider's request signing mirrors how the Platform seals and audits the token today: the secret is the sealed `token`, never logged.
 
 **Traps.**
 - Letting `tsc -p tsconfig.json` compile `src/adapters/capacity/`: `dist/` would then hold modules that import `alchemy`, which is not a dependency of the published package. The folder is excluded from the main config and compiled by its own config into an ignored intermediate directory that only the bundler reads.

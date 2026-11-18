@@ -119,7 +119,7 @@ export const storageScreen = Effect.fn("ui.storageScreen")(function*(context: Sc
 
   return page(
     flashNotice("Done"),
-    ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable a storage core service to use this panel.")]),
+    ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable the storage subsystem to use this panel.")]),
     columns(3, statCard("Files", String(files.length), "Currently visible under this prefix"), statCard("Total size", formatBytes(total), "Sum of the visible files"), statCard("Metadata", selected ? "Ready" : "Select file", "Checksums and file references are available per file")),
     columns(2,
       card("Upload and browse", filter, upload, node("div", { class: "k-card flush" }, ...(rows.length ? rows : [resourceNotice("No files yet", "Upload a file or clear the prefix filter to see more results.")]))),
@@ -149,6 +149,6 @@ export const mediaScreen = Effect.fn("ui.mediaScreen")(function*(context: Screen
   island.setAttribute("props", JSON.stringify({ apiBase: scoped.api.basePath, settingsApi: scoped.api.basePath, orderedPaths }));
   return page(
     node("div", { class: "actions" }, link("Open Backend Storage", `/projects/${encodeURIComponent(context.projectId ?? "")}/storage`)),
-    ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable the storage core service to use the media gallery.")]),
+    ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable the storage subsystem to use the media gallery.")]),
     island);
 });

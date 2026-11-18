@@ -429,7 +429,7 @@ Rules that hold for every change:
   (`zelavis/auth:authenticator`, `@acme/shop:payments`) rather than a bare domain
   two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
-  bundled project service a core service.
+  bundled project service a system service.
 - **System Store** is Platform OS persistence. Server → Database is its read-only,
   paginated namespace/record inspection surface; require system-scoped
   `server.database.inspect` and redact secrets. It is not the Project Database API. Local adapters default to
@@ -525,7 +525,7 @@ Rules that hold for every change:
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define
 namespaced extension points on top of that mechanism. Only statically trusted
-product/core services may introduce a new extension-point schema or privileged
+product or system services may introduce a new extension-point schema or privileged
 manifest capability; ordinary services and marketplace extensions may
 contribute values to an allowed extension point after validation.
 
@@ -1923,7 +1923,7 @@ state, active menu state, and reload/share behavior. `menu.page.file` is the
 browser-extension-style HTML entry file for iframe-backed service UI, such as
 `dashboard.html`, `settings.html`, or `options.html`. Zelavis serves that file
 from the service bundle through the generated service-page-asset endpoint; iframes
-must never point at raw filesystem paths. Core services with content already
+must never point at raw filesystem paths. System services with content already
 shipped in `@zelavis/ui` should use `menu.path` without `menu.page`, so the
 local dashboard route renders directly and no iframe is mounted.
 If a service page wants to be a SPA, the service author owns that SPA's internal
@@ -2234,7 +2234,7 @@ Each package should remain independently useful and focused.
 - Global dashboard areas such as `/zelavis/marketplace` and `/zelavis/server/*` sit outside any project. Project-local marketplace/plugins live under `/zelavis/projects/:projectId/marketplace`.
 - Server-level dashboard routes include `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs`.
 - Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation. A recipe declares itself a managed app in `package.json` under `zelavis.project.managed` (`adminTitle`, `adminPath`), locked with the recipe; the dashboard renders that and must not recognise any recipe by name.
-- The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER` or `frontend.devServerUrl`. The `coreServices` option it used to live under is gone: Platform subsystems are `subsystems` on `zelavis(...)`, the frontend options are the public `frontend` option, and the settings store is `runtimeSettingsStore`.
+- The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER` or `frontend.devServerUrl`. Platform subsystems are `subsystems` on `zelavis(...)`, the frontend options are the public `frontend` option, and the settings store is `runtimeSettingsStore`.
 - The main local platform workflow is `pnpm dev`.
 - In repository development through `pnpm dev`, runtime state lives below
   `packages/zelavis/.zelavis`: the Platform System Store is under `system/` and
@@ -2355,7 +2355,7 @@ Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboar
 - **Qualification** is `pnpm run ci:ui` (also part of `release:check`): the Fuzor package's browser
   suites start throwaway Platforms and check the first-owner and login gates, the embedded production
   bundle at its mount, every route at desktop and mobile sizes, the update banner, representative actions
-  (create, upload, edit, save, run) and the three grid libraries. Keep it green; a new page adds its pattern to
+  (create, upload, edit, save, run) and the Glide data grid. Keep it green; a new page adds its pattern to
   `app/dashboard-routes.ts`. `PARITY_SHOTS=<dir>` makes the parity run save a screenshot of the main pages.
   A browser step that changes data waits for the page's own sign that the server answered (its message or
   new state) before it reads anything back; an element leaving the page is no such sign, because it can leave

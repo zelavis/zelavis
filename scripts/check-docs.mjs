@@ -20,9 +20,9 @@ const stalePatterns = [
     message: "UI docs still claim the dashboard is not served by zelavis.",
   },
   {
-    pattern: /dashboard, auth, and database core services/i,
+    pattern: /\bcore[ -]services?\b/i,
     message:
-      "Docs still describe the default core services without the website service.",
+      'Say "subsystem" (auth, database, storage, Fabric, workloads) or "system service" (a trusted composed service); "core service" is retired.',
   },
   {
     pattern: /devServerUrl:\s*"http:\/\/127\.0\.0\.1:3001"/i,

@@ -77,7 +77,7 @@ the mounted paths become:
 /admin/api/v2/workloads/http/:projectId/*path
 ```
 
-The storage routes are present when Zelavis has a file storage resource to expose through the storage core service. `?format=metadata` returns structured file information and the ready-to-use Zelavis file reference for that path.
+The storage routes are present when Zelavis has a file storage resource to expose through the storage subsystem. `?format=metadata` returns structured file information and the ready-to-use Zelavis file reference for that path.
 
 Workload HTTP routes under `/workloads/http/:projectId/*path` are the current
 trusted-development test binding for project functions. Public website-style

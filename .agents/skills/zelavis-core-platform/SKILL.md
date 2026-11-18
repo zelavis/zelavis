@@ -74,8 +74,6 @@ Each of these cost a real bug or a long detour.
 - **Do not switch features off in code.** There is no `frontend: false`: an installation with
   no frontend has none installed, and the root path says so. A flag that says what a runtime
   *is* is named for that (`role: "platform" | "project"`).
-- **Refuse a retired option rather than ignore it.** Passing `coreServices` is refused, because
-  dropping it silently would leave a caller believing a subsystem was off.
 - **Do not add a service kind nothing branches on.** The kind union once drifted to five dead
   kinds while missing `frontend`. Trust is `scope`, never the kind.
 - **Prefer narrow exports** over broad `export *` surfaces.

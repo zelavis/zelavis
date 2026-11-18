@@ -8,7 +8,7 @@
  * other's payment providers, and neither can tell.
  *
  * So a capability may instead be owned by the service that defines it —
- * a core service or an installable package:
+ * a system service or an installable package:
  *
  *     "zelavis/auth:authenticator"
  *     "@acme/shop:payments"
@@ -34,9 +34,9 @@ export const ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES: readonly string[] =
   Object.freeze(["web", "api", "dashboard", "provider", "app"]);
 
 /**
- * A capability owner: a package name, or a core service name.
+ * A capability owner: a package name, or a system service name.
  *
- * Core services are unscoped and slash-separated (`zelavis/auth`,
+ * System services are unscoped and slash-separated (`zelavis/auth`,
  * `zelavis/platform`) while installable packages carry an npm scope
  * (`@acme/shop`). Both own capabilities, so both are accepted here.
  */
@@ -70,7 +70,7 @@ export function parseServiceCapability(
 
   if (!CAPABILITY_OWNER.test(owner)) return undefined;
 
-  // A service name always carries a `/` — `zelavis/auth` for a core service,
+  // A service name always carries a `/` — `zelavis/auth` for a system service,
   // `@acme/shop` for a package. A bare word is a domain namespace saying what
   // a plugin implements, not whose contract it satisfies. Reading `app:project`
   // as an extension of something called "app" invented an extension point that

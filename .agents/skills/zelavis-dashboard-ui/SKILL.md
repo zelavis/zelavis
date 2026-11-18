@@ -18,11 +18,21 @@ The private `zelavis-ui-legacy` package is reference material only.
   and verify the same frame nodes survive.
 
 - Fuzor owns routing and compiled server views. Pages are native screens in
-  `app/screens.ts` and its modules, built with `app/dom.ts` and `app/page-kit.ts`.
+  `app/screens.ts` (`loadScreen`) and the modules it calls, built with `app/dom.ts`
+  and `app/page-kit.ts`. `behaviors/dashboard.ts` is the client entry that draws them;
+  `pages/` holds Fuzor's route documents, and `app/routes.ts` maps runtime patterns
+  (`/projects/:projectId/...`) to them. The package README explains how they fit.
+- The Project Database workspace is a Fuzor HTML server component
+  (`components/database-workspace.html`, used by `pages/projects/[projectId]/database`).
+  Its server loader (`app/database-reads.ts`) is a bounded, cancellable read through the
+  caller's own session and the exact Project proxy, never an upstream chosen from the
+  Host header. It declares no server action: the Platform routes only GET to the shell,
+  and every change goes through the ordinary APIs from `app/database-workspace.ts`.
 - Use `Effect.fn`/`Effect.gen` for asynchronous loading and orchestration. A screen
   loads its data when drawn; actions use `context.run` to report errors and refresh.
 - Live views own their state and cleanup in a `fuzor-island`. Use plain DOM for
-  Lexical and CodeMirror. React is needed only by the Glide Data Grid adapter.
+  Lexical and CodeMirror. React is needed only by the Glide Data Grid adapter
+  (`app/grids/glide.ts`, loaded lazily), the one grid the dashboard ships.
 - Add new route patterns to `app/dashboard-routes.ts`; parity visits each at
   desktop and mobile sizes. Wildcard routes leave script, stylesheet and asset
   requests to asset serving.
@@ -47,7 +57,7 @@ The private `zelavis-ui-legacy` package is reference material only.
   surfaces. A folder-discovered, installed or unscoped service is an extension.
   Config and registry listing must agree about scope.
 - Every extension page, on the Platform or in a Project, is framed without
-  `allow-same-origin`. Mint its page-capability URL for the signed-in viewer;
+  `allow-same-origin`; only `system` service pages keep the dashboard's origin. Mint its page-capability URL for the signed-in viewer;
   only the claims' service, bundle and optional Project authorize its files.
 - Disk reads stay within the named bundle after symlink resolution, with no
   package-root fallback. Public service-page UI assets are static build code
@@ -99,10 +109,17 @@ The private `zelavis-ui-legacy` package is reference material only.
 
 ## Verification
 
-Run from the repository root. `pnpm run verify` checks the whole workspace;
-`pnpm run ci:ui:local` builds and exercises the production dashboard, isolated
-Platform, first-owner/login gates, desktop/mobile routes and representative
-mutations. Follow any more specific checks the user requests.
+While iterating, `pnpm --filter @zelavis/ui typecheck` and `test` (unit tests) are the
+quick checks, and `node scripts/dev.mjs` in the package starts an isolated Platform
+with the dev server (`--embedded` serves the built bundle instead); `pnpm dev` from the
+root runs the everyday Platform.
+
+Before calling it done, from the repository root: `pnpm run verify` checks the whole
+workspace, and `pnpm run ci:ui` (the same command as `ci:ui:local`) builds the bundle and
+runs the browser suites: service UI, server views, route parity at desktop and mobile
+sizes, and the embedded production bundle with first-owner/login gates and real
+mutations. `PARITY_SHOTS=<dir>` saves screenshots of the main pages. Follow any more
+specific checks the user requests.
 
 Browser tests choose free ports and stop only processes they started. Never
 kill by port or command line. A development server is not evidence that the

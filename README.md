@@ -195,7 +195,7 @@ Official domain plugins:
 
 ## Runtime Defaults
 
-Applications should usually import from `zelavis`, where core services are included by default:
+Applications should usually import from `zelavis`, where the Platform subsystems are included by default:
 
 ```ts
 import { Zelavis } from "zelavis";
@@ -283,9 +283,9 @@ That moves the dashboard and APIs together:
 
 Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
-## Core Services
+## Subsystems and bundled services
 
-Core services use the same service contract as extension services. The high-level `Zelavis` runtime currently includes dashboard delivery, auth, database, website, and workloads by default.
+The high-level `Zelavis` runtime composes its subsystems (auth, database, website, and workloads) and the bundled dashboard by default. Bundled services use the same service contract as extension services.
 
 The dashboard and admin experience are still evolving. The runtime already serves the current UI package, but the overall product surface should be treated as early and subject to change.
 

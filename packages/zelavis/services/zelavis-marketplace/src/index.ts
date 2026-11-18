@@ -11,7 +11,7 @@
  * private path into the dashboard, the extension mechanism is not finished; if
  * it does not, the mechanism is proven by the product itself.
  *
- * Its pages ship in `@zelavis/ui` (a core service with content already in the
+ * Its pages ship in `@zelavis/ui` (a system service with content already in the
  * dashboard uses `menu.path` with no `menu.page`): one workspace serves both the
  * Platform's marketplace and a Project's, so the two cannot drift apart.
  */

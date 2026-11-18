@@ -60,7 +60,7 @@ The dashboard should reflect that split:
   item owns iframe-backed dashboard content.
 - `menu.path` is the dashboard URL. `menu.page.file` is the
   browser-extension-style HTML entry file for service-owned dashboard documents.
-  Use `menu.path` without `menu.page` for core service screens already provided
+  Use `menu.path` without `menu.page` for system service screens already provided
   by `@zelavis/ui`.
 - If a service page is implemented as a SPA, that SPA owns its internal
   navigation inside the iframe. Zelavis service menu metadata selects HTML entry
@@ -84,7 +84,7 @@ The dashboard should reflect that split:
   This makes it possible for a service to keep one action visible across a few
   nested slides, clear it at a boundary, and then introduce another fixed action
   deeper in the workflow.
-- Core services may declare a service-only menu `surface` such as `platform`, `root`, `core`, `extensions`, or `settings`.
+- System services may declare a service-only menu `surface` such as `platform`, `root`, `core`, `extensions`, or `settings`.
 - `platform` is the global `/zelavis` management shell for owner/operator areas such as Access.
 - Service menus must not declare a `surface`; Zelavis always mounts them under `Extensions`.
 

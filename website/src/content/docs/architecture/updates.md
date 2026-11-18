@@ -274,7 +274,7 @@ The following state starts fresh or is omitted:
   Final-state imports preserve document references and graph links regardless of where their targets appear in the export.
 - Layout-2 idempotency receipts are omitted. Layout-4 receipts keep durable retries from applying a write again.
 
-The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44). The next engine writes layout 5, which binds
+The migration reads layouts 2 (up to alpha.42) and 4 (alpha.43 and alpha.44). Alpha.45 writes layout 5, which binds
 event cursors to the Tenant life that issued them. Apps on either source layout cross it through an explicit Project
 upgrade. See [Events and cursors](/api/database/#events-and-cursors).
 

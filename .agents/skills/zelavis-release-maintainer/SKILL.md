@@ -51,13 +51,19 @@ long steps in the background, and keep the machine awake (lid open) while they r
    then Docker qualification: the update gate from the actual previous npm release,
    the direct alpha.39 Agent conversion gate (`release:qualify:conversion`, retained
    until that conversion is retired), both on 2 CPUs / 4 GiB, the
+   Agent survival gate (`release:qualify:agent`: Linux recovery and systemd restart/cgroup proofs), the
    long-history gate (`release:qualify:history`: apps made by old releases, carried by live
    updates onto the candidate, every recipe upgrade with zero failed requests), the backup
    gate (`release:qualify:backups`: a serving WordPress Project backed up, drilled and restored,
    then the same run drilled on a second fresh machine from the target and recovery key), the
    failover gate (`release:qualify:failover`: a writer and a follower in separate containers with a
-   lease authority; a `SIGKILL`, a network partition and an unacknowledged tail), then the
-   worker installation). Nothing else may build in the
+   lease authority; a `SIGKILL`, a network partition and an unacknowledged tail), the remote
+   shard gate (`release:qualify:shards`: a shard on an Agent in another container, cut off,
+   silenced and released with no acknowledged write lost), then the worker installation
+   (`distribution:qualify:worker`); `node scripts/release-qualified.mjs` prints the result).
+   `release:qualify:registrar`, `:domains` and `:hosting` are not in it: run them when a
+   release changes registrars, domain automation or the hosting service (each script's header
+   names what it needs). Nothing else may build in the
    worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
    `Qualified <sha>`. A change to `CURRENT_FORMAT` also requires the
    [storage layout checks](#storage-layout-releases) on that candidate before publishing.
@@ -87,7 +93,7 @@ long steps in the background, and keep the machine awake (lid open) while they r
    still served 12). In the main checkout after the merge-back, `pnpm allowlist publish`
    writes `website/public/allowlist.json` from the shipped snapshot; commit it. Then ask the
    owner to approve the deploy, in the same message that reports the publish, and after the
-   approval build and deploy `website/` with
+   approval build the site (`pnpm --filter @zelavis/website build`) and deploy it from `website/` with
    `wrangler pages deploy dist --project-name zelavis-website --branch main`. The release is
    not finished until `curl -fsS https://zelavis.com/allowlist.json` answers with the
    snapshot's `sequence`; until then say so plainly in every status update.
@@ -100,7 +106,7 @@ long steps in the background, and keep the machine awake (lid open) while they r
     qualify the published path with real npm acquisition (`ZELAVIS_QUALIFY_UPDATE=npm`,
     below). Tell the owner what to do on their server, if anything. A release that changes the
     data layout gets an owner checklist in `website/.../architecture/updates.md` ("Data layout
-    changes"); alpha.43's (layout 2 to 4) is there. The owner's VPS counts as unqualified for a
+    changes"); alpha.45's (layouts 2 and 4 to 5, "Checklist for moving Projects to layout 5") is there. The owner's VPS counts as unqualified for a
     release until the owner has run that checklist on it; never update or test it yourself.
 
 ## Release rules
@@ -160,7 +166,8 @@ operator steps, downtime, and data that must be rebuilt in the
 ## First release with Zelavis Auth
 
 The first release after `2.0.0-alpha.45` replaces Identity, the earlier account engine, with Zelavis Auth
-(`AGENTS.md § Zelavis Auth`) and imports published accounts on **Update now**. Before
+(`AGENTS.md § Zelavis Auth`) and imports published accounts on **Update now** (operator view:
+`website/src/content/docs/architecture/updates.md` "Upgrading from Identity to Zelavis Auth"). Before
 publishing it:
 
 1. Run `pnpm release:qualify:history` and `pnpm release:qualify:update` on the candidate

@@ -437,7 +437,7 @@ Code in this folder runs with Platform authority, which is inherent to a folder
 on your own server — treat adding a package there as seriously as installing
 one. Discovery still refuses anything it cannot verify: an `exports` entry that
 resolves outside its own package directory, a missing entry file, an invalid
-manifest, an invalid capability, or a package claiming a reserved core service
+manifest, an invalid capability, or a package claiming a reserved system service
 name. Each is skipped with a logged reason, and a package that throws on import
 is skipped too, so one bad package cannot stop the Platform from booting.
 
