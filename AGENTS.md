@@ -93,8 +93,13 @@ architecture and workflow rules in this file and `.agents/`, and reviewer
 ownership in `.github/CODEOWNERS`. Do not duplicate those responsibilities in a
 root `MAINTAINERS.md`.
 
-`AGENTS.md` and `.agents/` are the only source of agent guidance: Claude Code reads
-`AGENTS.md` and the skills in `.agents/skills/` directly.
+`AGENTS.md` and `.agents/` are the only source of agent guidance. Claude Code reads
+`AGENTS.md` directly, but it loads skills only from `.claude/skills/` (forbidden here) or
+the user's `~/.claude/skills/`, so each maintainer links every `.agents/skills/<name>`
+folder into `~/.claude/skills/<name>` on their own machine
+(`ln -s "$PWD/.agents/skills/<name>" ~/.claude/skills/<name>` from the repository root).
+A skill that is not linked never loads; agents without it still reach it through the
+paths this file names.
 
 **`.claude/` is forbidden territory for agents.** It holds only what Claude Code itself
 writes for one person: `settings.local.json` and `worktrees/`. Never create, copy, link or
@@ -2051,20 +2056,16 @@ focused modules with transactional guarantees.
   Fabric/workload/Agent/runtime-driver machinery. It is exported through
   focused `zelavis/*` subpaths and does not own product menus or root authority.
 - `pnotes/` is the ignored, separate private repository holding one file,
-  `pnotes/TODO.md`: the maintained private roadmap, decisions and open work
-  (keep design context only where it supports unfinished work; do not turn it
-  into a release history, audit log or completed-work archive). Never stage or publish its contents in the main
-  repository, and never make public documentation checks or CI depend on it.
-- When available, update `pnotes/TODO.md` (its checkbox sections, such as
-  "Platform, Fabric and Agents" or "Cleanup list") when a core, App-versioning,
-  or Fabric capability changes state; never mark an exported contract as
-  operational behavior before its implementation exists.
-- Keep that roadmap current in the same change, never afterwards. Remove
-  completed items and their progress/validation history so the TODO shrinks;
-  do not retain checked-off entries or add a Done section. Preserve unfinished
-  follow-ups as concise open items, including any limits the work uncovered.
-  Completed behavior belongs in tests, maintained documentation and Git history.
-  Revisit nearby stale entries rather than leaving finished work marked open.
+  `pnotes/TODO.md`, the former private roadmap. Never stage or publish its contents in
+  the main repository, and never make public documentation checks or CI depend on it.
+- `pnotes/TODO.md` is being retired (owner, 2026-11-08): it may only shrink. Never add
+  to it or rewrite it. Delete an item once it is done, in the same change. Open work
+  lives in `.agents/plans/` (written with the `zelavis-plan` skill); a leftover from a
+  change becomes an added item in its plan's `## Progress`, or a new plan. When work
+  touches an area the TODO still covers, move its open items into a plan and delete
+  them from the TODO. Never mark an exported contract as operational behavior before
+  its implementation exists. Completed behavior belongs in tests, maintained
+  documentation and Git history.
 - `packages/zelavis/src/app` owns the built-in App stack exported as `zelavis/app`
   (Project-scoped workloads and email; authentication is `zelavis/auth` in
   `packages/zelavis/src/auth`, and the document-first database is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`
@@ -2438,7 +2439,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Executing Changes
 
 These rules hold for every change an agent makes here, with or without a plan. A plan
-written with `plan-writer` (`.agents/plans/`) adds the task-specific part (its steps,
+written with `zelavis-plan` (`.agents/plans/`) adds the task-specific part (its steps,
 checks, Done means and its implementer block, section 8), which applies these rules and
 wins where it is more specific. A small task needs no plan and nothing beyond these rules.
 
@@ -2489,7 +2490,7 @@ completed, and the next scope, prerequisites, and checks. Tell the next agent to
 governing instructions and section 8. When work is blocked, name what must change before
 resuming and how to verify it. The prompt is required even when the user does not ask for
 one. Keep working through the scope assigned to the current session, then hand it back.
-See [the plan-writer implementer block](.agents/skills/plan-writer/SKILL.md#8-instructions-to-the-implementer)
+See [the Zelavis Plan implementer block](.agents/skills/zelavis-plan/SKILL.md#8-instructions-to-the-implementer)
 for the full format.
 
 ## Code Change Expectations
@@ -2552,10 +2553,13 @@ When acting as an agent in this repo:
 - For UI tasks, remember that the runtime and UI may run separately in dev and together in production.
 - If something looks generated, verify before editing.
 - When asked to write an implementation plan for another model to execute, apply
-  [the Zelavis plan-writer supplement](.agents/references/plan-writer.md) on top of the
-  general [`plan-writer` skill](.agents/skills/plan-writer/SKILL.md) (`/plan-writer` in Claude
-  Code; the owner's `~/.claude/skills/plan-writer` is a link to it): plan only, verify every referenced symbol, and carry enough
+  [the Zelavis Plan supplement](.agents/references/plan-writer.md) on top of the
+  general [`zelavis-plan` skill](.agents/skills/zelavis-plan/SKILL.md) (`/zelavis-plan` in Claude
+  Code; the owner's `~/.claude/skills/zelavis-plan` is a link to it): plan only, verify every referenced symbol, and carry enough
   quoted context that the implementer needs no knowledge of Zelavis beyond the plan.
+- When asked to audit code, compare audit reports, prepare a fix handoff, or verify fixes,
+  use [`zelavis-audit`](.agents/skills/zelavis-audit/SKILL.md). Keep the audit read-only
+  except for report files in the designated output directory.
 - When asked to execute or continue a plan in `.agents/plans/`, start with its section 8: it
   applies [Executing Changes](#executing-changes) to that plan and keeps its `## Progress`
   and `## Execution report` current.

@@ -3,7 +3,7 @@ verified-at: 0e4548dbcc
 verified-on: 2026-11-16
 sources:
   - AGENTS.md
-  - .agents/skills/plan-writer/SKILL.md
+  - .agents/skills/zelavis-plan/SKILL.md
   - scripts/test/claude-folder.test.mjs
   - .agents/skills/zelavis-core-platform/SKILL.md
   - .agents/skills/zelavis-dashboard-ui/SKILL.md
@@ -28,8 +28,8 @@ sources:
 
 # Zelavis Plan-Writer Supplement
 
-The project supplement for the general `plan-writer` skill,
-`.agents/skills/plan-writer/SKILL.md` (Claude Code: `/plan-writer <job>`). The skill is
+The project supplement for the general `zelavis-plan` skill,
+`.agents/skills/zelavis-plan/SKILL.md` (Claude Code: `/zelavis-plan <job>`). The skill is
 project-neutral and lives here so `.agents/` holds every source. It wins over the skill where
 they conflict, and `AGENTS.md` wins over both. Without Claude Code, attach this file together
 with the skill's `SKILL.md`.
@@ -73,12 +73,16 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 
 - `AGENTS.md`, in full.
 - The skills the job touches: `.agents/skills/zelavis-{core-platform,dashboard-ui,release-maintainer,repo-maintainer}/SKILL.md`
-  (`.agents/skills/plan-writer/SKILL.md` is the general skill this supplement extends).
+  (`.agents/skills/zelavis-plan/SKILL.md` is the general skill this supplement extends, and
+  `.agents/skills/zelavis-audit/SKILL.md` its generic audit counterpart; both stay project-neutral).
+  Claude Code loads a skill only once it is linked into `~/.claude/skills/`
+  (`AGENTS.md § Agent Instruction Source Of Truth`), so name skill files by path in a plan.
 - Every `.agents/references/*` file `AGENTS.md` links from the sections the job touches. For
   Platform code, always include `tigerstyle-typescript.md`.
 - For Effect work: `repos/effect/LLMS.md`, `effect-v4-guidance.md`, and the Effect source and
   tests for each API used. Run `pnpm refs:sync` if the checkout is missing.
-- `pnotes/TODO.md`, if present.
+- `pnotes/TODO.md`, if present, for open items in the job's area: the plan takes them over and
+  section 6 deletes them from the TODO (`AGENTS.md § Repo Structure`).
 
 ## 4. Rules every decision is held to
 
@@ -184,8 +188,9 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 
 - Update `website/src/content/docs/` and package READMEs when public API or architecture changes.
 - Update `AGENTS.md` and `.agents/` together when durable guidance changes.
-- `pnotes/TODO.md`: remove completed items, add open follow-ups and limits, and keep no record of
-  completed work (`AGENTS.md § Repo Structure`).
+- `pnotes/TODO.md` is being retired and may only shrink: delete items the work completes or the
+  plan takes over, and never add any. Open follow-ups and limits become added items in the plan's
+  `## Progress` (`AGENTS.md § Repo Structure`).
 
 ## 9. Traps
 
@@ -205,7 +210,7 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
   live only in `AGENTS.md` and `.agents/`; `scripts/test/claude-folder.test.mjs` (in
   `pnpm test:repo-rules`) fails on anything there but `settings.local.json` and `worktrees/`
   (`AGENTS.md § Agent Instruction Source Of Truth`). This binds the plan writer too: the
-  supplement, the plans and the plan-writer skill live only in `.agents/`. If step 0 finds one of
+  supplement, the plans and the zelavis-plan skill live only in `.agents/`. If step 0 finds one of
   them in `.claude/` (a `plan-writer.md`, a `plans` or `references` folder or link, a copy of the
   skill), move any real file not already in `.agents/` to its `.agents/` place, remove the
   `.claude/` entry, and say so in section 0 of the plan.

@@ -14,8 +14,6 @@ Use this skill for changes in:
 
 ## Working rules
 
-- Follow [TigerStyle for TypeScript and Effect v4](../../references/tigerstyle-typescript.md). Apply bounded work, validated data, typed failures, scoped cleanup and invariant/fault tests. `pnpm check:tigerstyle` and `pnpm test:repo-rules` run in verification; the migrated TigerStyle gate has no debt allowances. Mechanical checks do not prove semantic safety.
-
 - Keep contributor-facing docs concrete and current.
 - The JS/TS SDK ships with `zelavis` from `packages/zelavis/src/sdk`. Draft cross-language generator recipes belong in `scripts/sdk-codegen`; do not describe them as published SDKs or check in generated output. Keep security reporting and community policy discoverable; remove obsolete planning notes rather than adding speculative root documentation.
 - Keep `CONTRIBUTING.md` a concise onboarding guide linking to canonical rules in `AGENTS.md` and focused `.agents/` guidance. Reviewer ownership belongs in `.github/CODEOWNERS`; do not duplicate it or workflow rules in a root `MAINTAINERS.md`.
@@ -25,8 +23,9 @@ Use this skill for changes in:
 - Treat `AGENTS.md` as the canonical coding-agent instruction file.
 - There is no `CLAUDE.md`; do not add one. Durable project guidance belongs in `AGENTS.md`.
 - Keep `.agents/` synchronized with `AGENTS.md`. When repo guidance affects a specific workflow, update the relevant skill or add a focused reference file.
-- Claude Code reads `AGENTS.md` and `.agents/skills/` directly. Keep nothing tracked in `.claude/`: no skills, references, hooks or symlinks.
-- Keep `pnotes/TODO.md` focused on unfinished work. Remove completed items and their progress/validation history; do not keep checked-off entries, a Done section, release histories or audit logs. Preserve concise open follow-ups and only the context they need. Completed behavior belongs in tests, maintained documentation and Git history.
+- Claude Code reads `AGENTS.md` directly but loads a skill only once it is linked into `~/.claude/skills/` (AGENTS.md § Agent Instruction Source Of Truth). Keep nothing tracked in `.claude/`: no skills, references, hooks or symlinks. A new skill in `.agents/skills/` needs that link on each maintainer's machine.
+- `pnotes/TODO.md` is being retired and may only shrink: delete done items, never add any. Open work goes into `.agents/plans/` (AGENTS.md § Repo Structure).
+- Repository and process code follows [TigerStyle for TypeScript and Effect v4](../../references/tigerstyle-typescript.md) like any other code; `pnpm check:tigerstyle` and `pnpm test:repo-rules` run in `pnpm verify`.
 - Follow the GitHub Zero-Spend Policy in `AGENTS.md` and [its operations guide](../../references/github-zero-spend.md): public standard Ubuntu CI only, no hosted macOS/ARM build matrices, paid runners, artifact uploads, release archives, or Actions caches without an explicit owner request changing the policy. Omit `cache` and set `package-manager-cache: false` on every `actions/setup-node` step. Use the Mac or disposable VPS environments for additional qualification; never run untrusted public PR code on the everyday Mac or production VPS.
 - Verify live $0 budgets and Stop usage settings before reporting them as configured. Do not add payment methods or paid capacity.
 - Upstream source references stay local under Git-ignored `/repos/`. Use `pnpm refs:sync` to derive the exact Effect version and maintain `scripts/reference-sources.json` with dependency upgrades. No `postinstall` or CI downloads; missing local references are allowed in verification, but present references must match and be clean. Keep [Effect guidance](../../references/effect-v4-guidance.md) aligned.

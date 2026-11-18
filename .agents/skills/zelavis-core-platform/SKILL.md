@@ -1,781 +1,138 @@
 ---
 name: zelavis-core-platform
-description: Use when changing the unified Zelavis package, its core runtime/Fabric, built-in App stack, or trusted product services, especially for authority boundaries, public API shape, and runtime-neutral architecture decisions.
+description: Use when changing the unified Zelavis package, its core runtime/Fabric, built-in App stack, database, Auth, adapters, or trusted product services, especially for authority boundaries, public API shape, and runtime-neutral architecture decisions.
 ---
 
 # Zelavis Core Platform
 
 Use this skill for changes in:
 
-- `packages/zelavis/src/core`
-- `packages/zelavis/src/app`
-- `packages/zelavis/src/platform`
-- `packages/zelavis/services/*`
-- `packages/zelavis/src/adapters`
-- `zelavis-services/*` when an officially maintained optional service (plugin,
-  provider or Project recipe) consumes the unified package's public contracts
+- `packages/zelavis/src/core`, `src/app`, `src/db`, `src/auth`, `src/platform`,
+  `src/backends`, `src/adapters` and `src/sdk`
+- `packages/zelavis/services/*` (the first-party product services)
+- `zelavis-services/*` when an officially maintained optional service consumes the
+  unified package's public contracts
 
-Start by reading `AGENTS.md` and the relevant `packages/zelavis` documentation
-before editing.
+`AGENTS.md` is the rulebook and is always loaded; this skill does not repeat it. It tells
+you which sections to read for the area you touch, the lessons that are not written
+there, and how to check the work. Where the two seem to differ, `AGENTS.md` wins and
+this skill is the one to fix.
 
-## Working rules
+## Read first, by area
 
-- Follow [TigerStyle for TypeScript and Effect v4](../../references/tigerstyle-typescript.md). Apply bounded work, validated data, typed failures, scoped cleanup and invariant/fault tests. `pnpm check:tigerstyle` and `pnpm test:repo-rules` run in verification; the migrated TigerStyle gate has no debt allowances. Mechanical checks do not prove semantic safety.
+| You are changing | Read in `AGENTS.md` | And |
+|---|---|---|
+| Any Platform code | TigerStyle Adaptation; Effect Version & Local Reference Source; Executing Changes; Verification | [TigerStyle](../../references/tigerstyle-typescript.md), [Effect v4 guidance](../../references/effect-v4-guidance.md), `repos/effect/LLMS.md` (`pnpm refs:sync`) |
+| A public capability, route, SDK method or CLI command | Endpoint-Backed Capability Rule (JS, HTTP, and CLI parity); Core Access-Control Rule | `test/capability-parity.test.mjs` |
+| Service loading, manifests, plugins, frontends, recipes | Service Loading Rules; Platform And App Service Boundary; Package Design Guidance; Marketplace Allow-List | `website/src/content/docs/guides/plugin-api.md` |
+| Projects, lifecycle, deletion, recipe upgrades, the app folder | Platform And App Service Boundary | |
+| Engine updates, handover, persistent hosts, Agents | Platform And App Service Boundary (handover paragraphs); Repo Structure (installer and updater) | `website/src/content/docs/architecture/updates.md` |
+| Fabric, placement, remote shards, failover | Platform And App Service Boundary (Fabric, placement and shard paragraphs) | [two-fabrics placement contract](../../references/two-fabrics-placement-contract.md), [node enrollment design](../../references/node-enrollment-design.md) |
+| `zelavis/db` | Database Architecture Rules, in full | [storage engine policy](../../references/storage-engine-policy.md), [Effect Cluster decision](../../references/effect-cluster-decision.md), [offline replication decision](../../references/offline-replication-decision.md), `website/src/content/docs/api/database.md` |
+| `zelavis/auth` | Zelavis Auth; Core Access-Control Rule | `src/auth/README.md`, `src/auth/upstream.json` |
+| Edge, domains, registrars, previews, TLS | Platform And App Service Boundary (Edge paragraphs); Runtime Independence Rule (previews) | |
+| Cloud capacity, providers | Cloud Capacity And Alchemy | [Alchemy architecture brief](../../references/alchemy-architecture-brief.md) |
+| Installer, uninstall, worker role, distribution | Distribution Trust Model; Repo Structure | `distribution/README.md` |
+| The Assistant | Endpoint-Backed Capability Rule (Assistant rules) | `src/assistant*.ts` |
+| Host and runtime bindings | Runtime Independence Rule; Platform And App Service Boundary (adapters and backends) | |
 
-- Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
-  package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
-  failure channels, scoped finalizers, and bounded Effect concurrency. Pure
-  synchronous calculations stay ordinary TypeScript. Public SDK/HTTP/CLI and
-  host integration contracts may present Promises; adapt individual external
-  calls at those boundaries, never wrap an entire async workflow in `tryPromise`.
-- `pnpm check:effect-usage` is part of `pnpm verify`. Its AST check rejects new or
-  changed async functions, Promise constructors and Promise coordination in
-  Platform code. `scripts/effect-migration-baseline.json` records unchanged
-  legacy occurrences outside the migrated lifecycle modules; this debt is not
-  permission to introduce or copy Promise orchestration. Its only maintenance
-  command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
-  entries. Never expand it to make a change pass. Migrate touched orchestration.
-- Project lifecycle, local/native runtime drivers, WordPress provisioning and
-  update orchestration are fully checked with no legacy allowances. Interruptions
-  must release coordination permits, stop partially acquired processes, preserve
-  frozen recipe rollback, and leave durable deletion checkpoints retryable.
-  Effect coordination does not replace persisted checkpoints, Fabric fencing,
-  authorization, or separately supervised production Agents.
-- Platform and App engines use the same Effect admission and handover primitives
-  under `core/runtime` and the Node host under `adapters/_node-runtime-*`.
-  Preparation must not acquire writable state. Drain before releasing the previous
-  owner, fence a failed candidate before rollback, and retain paused admission when
-  recovery cannot be proven. Flush durable journal checkpoints, hold its kernel
-  lock, and fence previous engines before granting a recovered generation. Never
-  reuse a candidate generation after an aborted attempt. Preserve immutable
-  recipe snapshots for rollback and external Gateway nonce history across engine
-  replacement; queued accepted callers receive fresh private worker authority.
-  The ordinary Node entrypoints share engine factories. Apps run through a
-  persistent host and qualified running recipe upgrades use a durable Project
-  update intent plus a host/Platform lock acknowledgement before traffic resumes.
-  Keep the Project host's imports limited to supervision and handover. Verify an
-  installed Project engine in a short-lived process before starting the engine.
-  Prepare an immutable candidate without replacing canonical files. Recover an
-  unfinished intent from proved host selection; deletion takes precedence. Stop
-  may fence failed ownership, but never erase the intent without proof. Re-key
-  surviving App hosts only over the authenticated private Agent-to-host control channel. Installed
-  Apps execute their exact engine/private Node and the updater retains qualified
-  engines. The main Platform uses the same persistent host, retains preview
-  listeners through its shared admission gate, and requires root acknowledgement
-  of the current link, private receipt and public version descriptor. Preserve
-  Fabric custody and separately supervised Project processes; qualify adoption
-  before releasing the old writer. New Apps and explicit App upgrades use the
-  latest qualified installed engine by default. Exact installed App engine selection
-  is public in dashboard, SDK, HTTP and CLI, including older qualified engines.
-  Freeze the selected engine's matching bundled App recipe; never couple it to
-  the parent's bundled version. Ordinary startup restores the fleet
-  asynchronously and must remain ready despite an unavailable Project. Persist
-  status refreshes under the Project lifecycle permit; Fabric fleet views remain
-  read-only so scheduling cannot re-enter its own Project permit.
-  Agent conversion holds only Project traffic and lifecycle changes. Keep the
-  dashboard, authentication, status, logs, diagnostics and repair controls usable.
-  Resume recovered public workloads before private integration warmup; failed
-  conversion releases its coordination hold without weakening Project ownership
-  fencing. Test stalled recovery, failed integration and expired coordination.
-  Restore previously used private integrations without starting backends for
-  hosting-only Projects. Surface private startup failures in ordinary Project logs.
-  Complete Agent conversion at public workload recovery; restore private Apps
-  independently with bounded concurrency and a deadline per Project. The root
-  updater must wait longer than the engine's public recovery budget.
-  Live updates refuse unsupported protocols. Future protocol evolution must ship
-  through Update now and pass the real previous-release update gate; do not
-  use a manual installer conversion as a release procedure.
+## Where a change belongs
 
-- Derive custom runtime classification and Project integration metadata from
-  the exact digest-verified frozen recipe manifest, never a catalogue summary.
-  Forward the verified definition through deployment-driver wrappers. Preserve
-  managed declarations in allow-list parsing/catalogues and release validation.
+1. **Core** (`src/core`): product-neutral, runtime-neutral contracts and machinery, exported
+   through `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,
+   `zelavis/artifact` and `zelavis/provider`. No product menus, no root Platform policy.
+2. **Platform** (`src/platform`): trusted control-plane and product behavior.
+3. **App stack** (`src/app`, `src/db`, `src/auth`): reuses the core implementation; never an
+   App-private dispatcher or server contract.
+4. **Backends** (`src/backends/<id>`): backend policy, capability and intent, with no `node:`
+   imports. **Adapters** (`src/adapters`): every host filesystem, process, socket, native,
+   command and virtualization effect.
+5. **First-party product services** (`packages/zelavis/services/*`): a face, never an
+   authority. Removing `@zelavis/auth` costs the settings page, not the ability to sign in.
+6. **Optional services** (`zelavis-services/*`): provider and domain capabilities, published
+   on their own cycle.
 
-- Managed third-party apps have an ordinary private Project Zelavis App by
-  default, under `.zelavis/integration`, with no separate Project card or opt-in
-  feature flags. Expose the normal setup `core` APIs and scoped HTTP/SDK/CLI
-  APIs. Persist service API usage independently of capability availability;
-  internal Auth database access is not service usage. Persist workloads in
-  the same private runtime store. Bound engine convergence uses the shared
-  persistent host journal and preserves recipe locks and third-party processes;
-  native App engine pins remain unchanged on parent updates.
-  A managed third-party App's own database (for example WordPress's MariaDB)
-  belongs to that application. Its bound Zelavis database supports additional
-  features built by services and extensions; it does not store, replace, or
-  automatically mirror the application's tables. Keep APIs and storage distinct.
+## Lessons not written elsewhere
 
-- All bundled packages, including UI, load through `loadPluginPackage` using
-  their `package.json` identity and static metadata. Exported metadata and raw
-  `api` objects are rejected. Host options supply scope and package location.
-- Use `register(configuration)` for per-load SDK declarations, `createAPI` or
-  `operations.create` for APIs, `zelavis.setup` for runtime-dependent work, and
-  `zelavis.frontend.configure` for static-frontend runtime shell/dev behavior.
-  Do not restore a dashboard service factory or cache loaded product services
-  globally to compensate for ESM module caching.
+Each of these cost a real bug or a long detour.
 
-- Services request Platform permissions through manifest `zelavis.principal.permissions`.
-  Every install path requires exact operator approval within their authority; the
-  Platform owns the sealed service-account token and supplies `core.fetch` as that
-  account (or anonymously without a principal). Project runtimes refuse principals
-  and supply no fetch. Disable revokes the account and refuses installed extenders.
+- **The loader must carry everything a plugin declares.** It once built its service object
+  field by field and dropped `setup`, so a plugin registering its API there installed with a
+  menu and no endpoints, while the same object composed in code worked. The supported path
+  was the broken one. Test the installed path, not only the composed one.
+- **A first-party service gets no private path.** It is built like a third-party one (a
+  `package.json` manifest and the official SDK) and loaded through `loadPluginPackage`. If it
+  needs a private way in, the extension point is incomplete: extend the public contract.
+- **Core names no capability owned by a product it does not ship.** Core once listed
+  `@zelavis/ecommerce:payments` among its capability hints and imported the plugin in its own
+  tests, so the Platform could not test itself without a shopping cart. Test core against a
+  fixture.
+- **A capability owner is recognised by containing a `/`.** `zelavis/auth:oauth` and
+  `@acme/shop:payments` name an owner; a bare word stays a Platform domain namespace. Naming an
+  owner asks to be considered and grants nothing: discovery stays a flat scan and the owner
+  validates.
+- **Do not switch features off in code.** There is no `frontend: false`: an installation with
+  no frontend has none installed, and the root path says so. A flag that says what a runtime
+  *is* is named for that (`role: "platform" | "project"`).
+- **Refuse a retired option rather than ignore it.** Passing `coreServices` is refused, because
+  dropping it silently would leave a caller believing a subsystem was off.
+- **Do not add a service kind nothing branches on.** The kind union once drifted to five dead
+  kinds while missing `frontend`. Trust is `scope`, never the kind.
+- **Prefer narrow exports** over broad `export *` surfaces.
+- **Project status refreshes persist under the Project lifecycle permit**, and Fabric fleet
+  views stay read-only, so scheduling never re-enters its own Project permit.
+- **Remote dispatch reads a request body only after its authority verifies**, and never
+  snapshots a Project that already has local runtime data.
+- **Root artifacts stay root-owned**: archive extraction must not keep the archive's UIDs.
+- **ID-only backend lifecycle dispatch refuses a missing or malformed stored assignment**; only
+  the Project manager's explicit stored-record repair may fill one in.
+- **The services database refuses startup after an interrupted restore** until the operator
+  finishes it with `zelavis services-database restore`.
+- **Logical schema transfer** (`schemas.export|import|types`) uses bounded v1 bundles,
+  preflights immutable version conflicts, dry-runs by default, and activates only through the
+  durable activation workflow.
 
-- Service credentials belong in per-service `core.secrets`, present beside
-  `core.store`, sealed and bound to service/name with the runtime's master secret.
-  Settings return configured flags/hints only. Service workers contribute through
-  `context.addRuntimePlugin` using the existing runtime start/cleanup lifecycle;
-  start after mounting and stop before databases close, including failed startup.
-  Native App public service callbacks use only `POST <api-base>/plugins/<namespace>/webhooks/<provider>`;
-  preserve raw bytes and signature headers, cap bodies at 256 KiB, strip Platform
-  authority, and let the owning service verify the signature. This is separate
-  from the exact public Auth allow-list and never exposes service administration.
+## Boundary tests that enforce the rules
 
-- Treat `new Zelavis(...)` as the public Platform entrypoint and the `zelavis`
-  package as the one official framework/App Platform distribution.
-- Do not recreate separate `@zelavis/server` or `@zelavis/core` packages, or a
-  second copy of the built-in App stack. Their responsibilities are public
-  subpaths of `zelavis`. (`@zelavis/app` is the official Project recipe package
-  under `services/`, not a framework package.)
-- Ship first-party product surfaces as their own packages under
-  `packages/zelavis/services/*` — `@zelavis/ui`, `@zelavis/marketplace`,
-  `@zelavis/auth` and the `@zelavis/app` Project recipe today. A product service owns a face, never an authority:
-  `@zelavis/auth` is the settings page for core auth, and removing it costs the
-  page rather than the ability to sign in. A product service is built the way a
-  third-party one is: a `package.json` manifest declaring `zelavis.kind`, and a
-  module that calls the official SDK. It is loaded through `loadPluginPackage`,
-  the same loader an installed plugin goes through, so it exercises the public
-  extension points rather than a private path into the Platform. If a
-  first-party service needs a private path, the extension point is incomplete —
-  extend the public contract instead of special-casing the service.
-- Edge owns DNS and registrar contracts; built-in Cloudflare and Namecheap
-  drivers live in `src/adapters` and are injected by the host. Plugins extend
-  `zelavis/edge:dns` and `zelavis/edge:registrar`; they cannot shadow built-ins.
-  Registrar operations are Platform-only, with system-scoped
-  `server.domains.view` and `server.domains.purchase` and SDK/HTTP/CLI parity.
-  Keep immutable purchase keys and durable submission checkpoints. Never retry
-  an ambiguous purchase: reconcile with its original account. Keep credentials
-  and contacts encrypted and transfer auth codes out of storage and logs.
-  Unconfirmed orders stay unknown after 24 hours; no manual resolution endpoint
-  exists yet. Local tests use fake APIs; live qualification uses only Namecheap's
-  sandbox, never production.
-- Keep `packages/zelavis/src/core` product-neutral and runtime-neutral. It owns
-  the contracts and implementations exported through `zelavis/core`,
-  `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,
-  `zelavis/artifact`, and `zelavis/provider`.
-- Do not create parent/child service graphs. Provider plugins are ordinary
-  installed services discovered by capability and validated against an explicit
-  public registration contract; never use `childServices` or service `extends`.
-- A capability names the service that owns it — `zelavis/auth:authenticator`,
-  `zelavis/auth:oauth`, `@acme/shop:payments` — not a bare domain. A domain
-  such as `provider:payments` says what a plugin implements and never whose
-  contract it satisfies, so two plugins scanning for it collect each other's
-  providers. An owner is recognised by containing a `/`; a bare word stays a
-  Platform domain namespace. Naming an owner asks to be considered by it and
-  grants nothing: discovery stays a flat scan and the owner still validates.
-- Core names no capability owned by a product it does not ship. Core once
-  listed `@zelavis/ecommerce:payments` in its capability hints and imported the
-  plugin in its own tests, so the Platform could not test itself without
-  building a shopping cart. Test core against a fixture, not a product.
-- Do not switch features off in code. There is no `frontend: false`: an
-  installation with no frontend is one with none installed, and the root path
-  says so. A flag that expresses what a runtime *is* rather than a preference
-  is named for that instead — `role: "platform" | "project"`.
-- `coreServices` is gone. Platform subsystems are `subsystems` on
-  `zelavis(...)` (auth, database, fabric, storage, workloads, site), frontend
-  options are the public `frontend` option, and the settings store is
-  `runtimeSettingsStore`. Passing `coreServices` is refused rather than
-  ignored, because silently dropping it would leave a caller believing they
-  had turned a subsystem off.
-- The official service kinds are `app`, `frontend`, and `plugin`, enforced at
-  manifest validation. Do not add a kind nothing branches on — that is how the
-  union previously drifted to list five dead kinds while omitting `frontend`.
-  Trust comes from `scope` (`system` for what the operator composed,
-  `extension` for what was installed at runtime), never from the kind.
-- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
-- The SDK contributes during package registration, inside the loader's
-  execution context. A service that needs the registry, a database, or
-  platform resources mounts an endpoint group from a `zelavis.setup` callback
-  with `context.addEndpointGroup` instead. A package never creates other
-  services: one package, one identity.
-- Native Platform subsystems (Server Control Plane, Auth, Database, Fabric)
-  mount as endpoint groups and are advertised as runtime `capabilities`; the
-  service inventory lists loadable packages only. Bundled packages come from the
-  distribution `services/*` folder through the same loader as installed ones.
-- Package menus are registered only with `zelavis.plugins.ui.menus.create`; the loader
-  rejects exported `menu`/`menus` fields. Runtime `menus` is the full SDK list;
-  `menu` is its primary catalogue entry, not another registration.
-- The loader must carry everything a plugin declares. It once built its service
-  object field by field and omitted `setup`, so a plugin registering its API
-  there installed as a package with a menu and no endpoints while the same
-  object composed in code worked — the supported path was the broken one.
-- Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
-  through `zelavis/app`, `zelavis/app/email`, and `zelavis/app/workloads`
-  (the database is `zelavis/db`; authentication is `zelavis/auth`, see the
-  Zelavis Auth bullet below). It reuses the core implementation; never create an
-  App-private dispatcher or server contracts.
-- Zelavis Auth (`zelavis/auth`, `packages/zelavis/src/auth`) is the one auth
-  engine, composed per runtime (`subsystems.auth`, `AGENTS.md § Zelavis Auth`).
-  Every module keeps its `<module>_<table>`
-  collections in the runtime's one Auth partition, Tenant `service:zelavis-auth`
-  (the Project database for an App, the Platform identity database
-  `<data>/identity-database/` for the Platform), and each mutation is
-  one `documents.transaction`, which is where uniqueness and single redemption
-  come from. Platform and App Auth never share a store, key or cookie. Auth
-  modules use Effect generators (never `async`/`await`), record derived
-  Apache-2.0 files in `src/auth/upstream.json` with provenance headers, run
-  tests in `test/auth-*.test.mjs` over `test/_auth.mjs`, and keep derived
-  files Apache-2.0 (`NOTICE`, `LICENSE-APACHE`).
-  Limits: no SAML/SCIM, one Auth writer per App, no live revocation push,
-  one passkey relying-party id per runtime.
-- Platform services share the private `<data>/services-database` through setup's
-  `core.database`, using `service:<name>` Tenants by convention. Never hand it to
-  Platform features, runtime database routes or a dashboard. The Node adapter
-  opens it without a backups host; the identity database's one Platform host
-  captures `identity`, `system-store` and `database`. Restore only host-locally
-  with `zelavis services-database restore`, under stopped-Platform ownership.
-  Refuse startup after an interrupted restore until the operator finishes it.
-- Use **Project recipe** as the canonical name for a versioned create-project
-  definition. A service with `kind: "app"` is a Project recipe; its optional
-  Project metadata declares runtime compatibility. The official kinds are
-  `app`, `frontend`, and `plugin`, and the union is enforced at manifest
-  validation — do not add a kind that nothing branches on. Trust comes from
-  `scope` (`system` for what the operator composed, `extension` for what was
-  installed at runtime), never from the kind.
-- Keep trusted Platform product behavior in `packages/zelavis/src/platform`
-  and dashboard rendering in `@zelavis/ui`. Core must not own Zelavis product
-  menus or root Platform policy.
-- Put framework or host behavior in `adapters/*`; put optional provider or
-  domain capabilities in `zelavis-services/*`.
-- Treat complete native installation removal as a host-local lifecycle
-  capability: the runtime-neutral contract belongs in core, concrete removal
-  belongs in the host adapter/distribution, and the packaged CLI is the
-  operator surface. It intentionally has no HTTP/dashboard equivalent because
-  it deletes the Platform, Agent, authority material, and all Project data.
-  Require a dry run and exact acknowledgement; remove only provably
-  installer-owned resources and retain shared host/operator state.
-  Debian owns only the incoming `/opt/zelavis/package` payload; immutable releases
-  and current links belong to the installer so upgrades preserve other instances.
-  When an installer starts owning a new resource, update the uninstall inventory,
-  staged script, destructive-path tests, and docs together.
-- Native release installation has the same host-local boundary. The shell
-  installer and create bootstrap call `zelavis install --from-npm`, and a Debian
-  `postinst` calls `zelavis install --from-release`, with the release's private
-  Node. Distribution has no signatures, keys, CI secrets or GitHub releases: trust
-  is npm, nodejs.org and zelavis.com (AGENTS.md "Distribution Trust Model"). Keep planning in core runtime, host effects in
-  adapters, unit/configuration templates in the release tree, and pins/checksums
-  in distribution staging. A default system installation enables Traefik ingress on ports 80 and 443, with a canonical HTTP fallback for `http://<server-ip>/zelavis/`; no domain is needed for HTTP. Management listeners stay on loopback unless explicitly exposed with `--public`. Refuse foreign public-port owners, honor persisted listener configuration on updates, and retain persistent host/proxy processes. Never add compatibility aliases or version branches. Updating is a request the unprivileged
-  Platform drops for a root-owned `zelavis-update` path/service pair; the updater trusts
-  nothing in the request and rolls back a release that does not answer (AGENTS.md). Updates prepare then swap
-  (`--stage-only`, `--live`), acknowledge root inventory before resuming queued
-  traffic, and keep the host, preview listeners and separate Project Agent running.
-  Named instances own their update units and custody; user installs use the same
-  handover as their own user. System installs always enable the Project Agent.
-  An older installation without the protocol needs one full local installer
-  conversion; this is a known update UX gap, not a future release procedure.
-  Every future release must work through dashboard **Update now**, even when
-  runtime protocols or installation layouts change. Plan and qualify the updater
-  transition from the previous installed release before shipping; required host
-  changes use the existing trusted updater authority. Never require terminal
-  commands for a normal update or introduce permanent legacy runtime paths.
-  Preserve data, Project locks, access URLs and rollback guarantees.
-  Root artifacts must remain root-owned; archive extraction must not
-  preserve foreign archive UIDs. Create uses the same bootstrap and plan.
-  Create takes no folder argument. Its sudo bootstrap fetches its own Node and
-  package into a private root-owned directory; never execute user package-cache
-  files as root. User mode owns only its
-  `~/.local/share/zelavis` prefix and command link. Runtime checksum helpers
-  have one distribution source; shipped copies are generated at build time.
-  Install/removal take an exclusive prefix lock and share the Node/Bun Platform
-  data ownership guard; never bypass live data or port conflicts with `--force`.
-  Current receipts carry source, entry, version, mode, selected instance, port
-  and Edge ownership. Named system instances share immutable releases but own
-  separate current/receipt/runtime descriptors, data/config/accounts/ports/units.
-  Only default may own host Edge, enforced by a persistent record and kernel
-  reservation; secondary instances run with Edge off. Removing an instance retains
-  shared releases/commands/templates/package state until the last receipt is
-  removed. Doctor remains read-only and host-local.
-- Keep first-run setup as a presentation over the one durable first-owner
-  bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
-  dashboard `/setup` route must call the same endpoint and must not introduce
-  separate completion state or owner-creation authority.
-- Keep Zelavis runtime targets to self-hosted Node.js, Bun, and future Deno; do
-  not make serverless function platforms the core runtime model.
-- Keep the canonical hierarchy explicit: the root Platform scales Projects,
-  Projects scale Apps or Tenants, and exceptional Tenants may later scale
-  Shards. Project, App, Tenant, and Principal/User are distinct boundaries.
-- Every Zelavis App Project locks an exact Zelavis recipe/runtime version.
-  Updating the parent Platform must not silently upgrade or rewrite child
-  Project locks. A driver may claim independent-version execution only after
-  it can materialize and run the locked artifact.
-- Custom recipe runtimes use verified digest-specific module paths under the
-  Project root so ESM caches cannot retain relative imports from a previous
-  recipe. These copies are derived from the locked artifact. Failed upgrade
-  preparation restores the previous artifact and host descriptor. Record the
-  locked driver before provisioning so cleanup survives failure and restart. Early failure
-  without a descriptor still permits exact-Project cleanup through the trusted
-  driver or Agent; malformed descriptors and cleanup errors remain refused.
-- Keep one root Platform Fabric. It owns physical Nodes, provider authority,
-  Project allocation, placement, routing, generation/fencing, and fleet policy.
-  Authenticated Zelavis Agents execute its decisions; runtime drivers are
-  Agent execution implementations.
-- Prepare for a future delegated Project Platform (Project Cell): a Project
-  may run scoped Platform capabilities and manage nested Apps/Projects inside
-  its allocation. The parent still places and moves the entire cell and its
-  descendants as one isolation/placement group. Promotion never implicitly
-  grants root provider credentials or unconstrained fleet authority.
-- Keep Project lifecycle behind capability-aware runtime-driver and Agent
-  contracts. The local Node process driver is Platform-owned and stops children
-  during `Zelavis.close()`; production worker Agents should be separately
-  supervised.
-- Linux Node system Project Agent handover uses validated boot/start-tick
-  records flushed before exec, kernel endpoint/runner locks, append-file output,
-  lease checks before adoption and bounded client rebind. Native/integration
-  hosts use authenticated private socket control with deduplicated commands.
-  Never replay ambiguous starts/operation submissions or persist Gateway keys.
-  Project units are process-only; root operation units retain cgroup controllers.
-  Project units omit `PrivateTmp` so temporary storage is independent of the Agent.
-  Prove database writes after the full installed sequence, not just PID survival.
-  Markerless stop stops workloads; uninstall kills remaining owned cgroup members.
-  Pre-protocol conversion is one explicit Update now restart under held admission.
-  Agent degradation must not roll back the committed engine. Embedded user Agents
-  follow on host restart; remote/Bun handover remains unqualified. The public contract
-  and its limits are in `website/src/content/docs/architecture/updates.md`.
+Keep these green, and read them before changing what they guard:
 
-- Project/service grants require exact route scopes and cannot authorize
-  unscoped routes. Unscoped/system grants match runtime-wide routes; top-level
-  permissions span scopes. Signed Gateway audiences confine concrete local
-  permissions to a child runtime; Project grants never imply Platform host-code
-  installation authority. Preserve this boundary across JS, HTTP, and CLI.
-- Keep deployment backend adapters centralized under `src/backends/<id>` with
-  one shared registry/policy contract. Native, Docker, and future backend logic
-  must not be scattered as Platform or Node-adapter special cases. Keep signed
-  authority, durable leases, audit state, and privileged execution in the
-  shared Agent subsystem rather than duplicating queues or command runners per
-  backend.
-- Centralized backend policy/capability/intent stays in `src/backends`, while
-  concrete host filesystem/process/socket/native/command/virtualization work
-  belongs behind runtime/Agent bindings in `src/adapters`. Share implementations
-  only for supported APIs or use injected host interfaces; `_shared.ts` currently
-  imports Node APIs. Runtime-neutral domain logic remains in core/App/Platform,
-  and browser SDK imports cannot reach host implementations. Firecracker requires
-  Linux/KVM and is a conditional host dependency; Windows/macOS native paths
-  need separate qualification. The intended adapter flow automatically provisions
-  pinned, verified dependencies through the authorized Agent and selects
-  Firecracker when the adopted profile requires it on a qualified Linux host.
-  Check usable KVM, permissions, compatible guest images and confinement, not OS
-  alone. Provisioning/selection remain planned until implemented. Required microVM
-  intent rejects unavailable hosts; VM/WSL labels alone do not establish usable
-  KVM or authorize a downgrade. Preserve explicit intent and Project locks.
-- `zelavis/backends` stays free of `node:` imports (enforced by
-  `test/backends-host-boundary.test.mjs`); detection uses injected
-  `ZelavisBackendHostProbes` from `src/adapters/_node-backend-host.ts`.
-  ID-only lifecycle dispatch refuses a missing/malformed stored assignment;
-  only the Project manager's explicit stored-record repair may fill one in.
-- Recipe isolation intent (`zelavis.project.isolation`, `src/project-isolation.ts`)
-  is validated at package load, locked with the recipe version, and assessed
-  against advertised backend capability. `required` shortfalls refuse create,
-  start and restart (409); never downgrade. Only creation may select another
-  enabled, healthy, executable backend that satisfies it; never move existing Projects.
-  Only `available` satisfies; advertised capability is not enforcement proof.
-- Gate authoritative file-storage access by declared coordination scope and a
-  successful session probe. Local replacement remains process-local. Registry
-  mutations use observed revisions, bounded fresh-read retries of intent, and
-  no unconditional fallback. System Store CAS must atomically compare the
-  optional observed value as well as its timestamp when supplied.
-- Treat Project deletion as a durable lifecycle operation. Persist its
-  tombstone, stop execution, run stable idempotent cleanup participants, remove
-  runtime data last, and delete the registry record only after all participants
-  succeed. Failed deletion must remain retryable and resume during
-  reconciliation. Every new Project-keyed Platform resource must register a
-  cleanup participant.
-- Reconcile desired-running Projects asynchronously with bounded concurrency.
-  Never use an unbounded fleet-wide `Promise.all`, and do not make Platform
-  readiness wait for every Project runtime.
-- Keep traffic balancing, authoritative placement, replication, and
-  infrastructure provisioning separate. A runtime URL is an Agent-reported
-  target, not placement authority.
-- Keep Zelavis Edge proxy-neutral. Domains, canonical routes, endpoint
-  generations, certificates and cutover state are Platform authority in the
-  System Store; Traefik, Caddy, Nginx and external load balancers are execution
-  adapters whose configuration is generated output. A proxy switch must be a
-  durable preflight/stage/verify/shift/drain/commit workflow with rollback, and
-  apps plus certificates must survive it. Refuse required capability loss;
-  mark proxy-specific extensions non-portable and let them block an automatic
-  switch rather than silently dropping behavior. Keep certificate private keys
-  out of logs and audit records, and do not claim safe switching before its
-  reconciliation and failure tests pass.
-- Treat the first-run Platform hostname as authenticated Edge onboarding after
-  the one-time owner claim. Accept apex or subdomain hostnames, allow provider
-  automation to preseed one, and offer managed HTTPS, external TLS, or defer.
-  “Verify DNS & enable HTTPS” must verify routing before ACME and remain
-  retryable without reopening/rolling back owner bootstrap. Keep child-app
-  domains separate and prefer per-instance certificates over sharing one
-  wildcard key across a provider fleet. Do not add wizard-only hostname/TLS
-  authority; JS, HTTP, CLI and UI must consume the same Edge operations.
-- Keep Fabric replica policy independent of Node count and runtime-driver mode.
-  Spare capacity alone must not create replicas, and drivers without stateless
-  replica capability remain single-replica.
-- Let optional provider plugins connect external deployment, storage, DNS,
-  CDN, email, images, or hosting services without defining Zelavis itself.
-- Prefer tightening exports over broad `export *` surfaces.
-- Preserve the service model; do not invent a parallel composition pattern.
-- Everything Zelavis can do must be reachable through a stable capability and
-  versioned endpoint. The dashboard is a client, not the authority layer.
-- Every official public capability must have matching JS SDK, HTTP, and CLI
-  operations. Inspect and update all three when changing a core API; a missing
-  surface is a gap, not a completed feature. Share operation schemas and domain
-  logic, including permissions, errors, defaults, ownership, and lifecycle.
-  Service-owned APIs use `zelavis.plugins.<namespace>.<resource>.<action>`,
-  `/api/v1/plugins/<namespace>/<resource>`, and
-  `zelavis plugins <namespace> <resource> <action>`, including official UI and
-  third-party services. Require an explicit validated `zelavis.namespace` in
-  executable package manifests and templates; reject runtime collisions and
-  exported namespace overrides. No singular `plugin` or root aliases. Core
-  Platform capabilities retain their domain namespaces. Provide
-  discoverable SDK/CLI operations and machine-readable CLI output, not just a
-  generic request escape hatch. Package-loading declarations also need parity
-  through declarative data or artifact references with equivalent ownership
-  and cleanup. Test adapter equivalence and document all three forms together.
-  See AGENTS.md's "JS, HTTP, and CLI parity" rule for the full contract.
-- Do not implement Platform behavior only in UI routes, framework server
-  actions, local component state, or dashboard-only helpers.
-- Keep confidential notes, decisions and the implementation roadmap in the single
-  file `pnotes/TODO.md` of the ignored `pnotes/` private repository. Never stage
-  or publish it in the main repository; public checks must work without access
-  to it.
-- When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
-  Fabric work changes a capability from planned to prepared or operational.
-  Remove completed items and their progress/validation history so the TODO
-  shrinks; retain only unfinished follow-ups and the context they need. Do not
-  append checked-off entries, release histories or audit logs.
-- Keep `AGENTS.md` as the canonical durable instruction source; there is no
-  `CLAUDE.md`, so do not add one.
-- If durable Platform guidance changes, update this skill or a focused
-  `.agents/references/*` resource so skill-loaded agents stay current.
-- For `zelavis/db`, follow "Database Architecture Rules" in `AGENTS.md`. In
-  short: one engine is one shard; each partition (a tenant, a part, or a
-  reserved partition) owns the key range under its name, with its own
-  identifiers, log, revision and writer; a transaction never writes another
-  partition's keys; records are single values whose retraction leaves a
-  versioned tombstone; events apply by version (and `follow` by position);
-  copies use a record scan plus the log tail; queries read clauses up to the
-  probe cap and check broad ones against manifests that must match the lenses;
-  a read that stops early resolves by window (`resolve(query, { after, limit,
-  within })`), a range alone driven by `within` under a check budget.
-  There is no raw SQL surface, and `surface` is never buried in metadata.
-- Logical schemas transfer through `schemas.export/import/types`: bounded v1
-  bundles, immutable version conflicts preflighted, dry run by default, activation
-  explicit through the durable workflow. Generated standalone types describe
-  active and historical versions; runtime constraints remain authoritative.
-- Follow [the storage engine policy](../../references/storage-engine-policy.md):
-  SQLite is the default; LMDB and RocksDB are optional. Both libSQL targets
-  were removed by owner decision. Do not restore aliases or substitute Turso.
-- Follow [the offline replication decision](../../references/offline-replication-decision.md):
-  retain fenced single-writer authority and adapter-neutral event replication;
-  device proposals are not commits. Independent multi-writer semantics require
-  an approved operation/collection specification before implementation.
-- Merging a Tenant branch back (`db/branch-merge.ts`, public contract in
-  `website/src/content/docs/api/database.md`) works per document from the branch point, no default
-  winner, explicit per-document resolution, repeatable by state. Storage
-  `durability` (`crash`/`power`) is chosen at open; an engine that cannot keep
-  `power` refuses it.
-- Treat every component of a bundle storage key as an authority boundary.
-  Validate Project/system ownership, service identity, bundle identity, prefix,
-  and asset paths before composition; filesystem root containment is not enough.
-  Disk service pages read only their named bundle directory below the package root, with realpath containment.
-  Never fall back to package-root files or follow a symlink into another bundle. Public service-page UI assets
-  contain static build code/styles only, never installation state. The component entry discovers tags and loads their
-  families on demand. `runtime/service-ui/:file` reads only exact own entries of the frontend's `serviceUi.modules`
-  map (flat content-hashed JS names); it never reads filesystem or service paths. Page code waits for
-  `customElements.whenDefined` before component methods or form reads. Folder-discovered Platform extensions belong
-  in the Extensions slide and are framed without `allow-same-origin`, just like Project extensions.
-- Treat local physical sharding as the official `@zelavis/app` default, not a
-  future multi-node migration. A new official App routes stable virtual shard
-  ranges across several SQLite files even when all placements share one Node.
-  Keep the low-level one-shard topology available only as the collapsed form of
-  the same router-backed architecture for embedding and focused tests.
-- Every ordered-KV batch atomically checks the shard's generation and fresh
-  writer session and the partition's revision observed before dependent reads,
-  then advances that revision. Include replication, allocator, maintenance and
-  format writes; acquire generations conditionally and refuse exhaustion. The
-  commit is the check: a partition handle keeps revision, lens state and move
-  fence instead of reading them per write, and drops them on a refused or failed
-  commit. The move fence is partition meta the store checks for every change.
-- A collection may declare `columns`; only those fields get column postings,
-  queries on other fields are refused with `UnindexedField`, and references
-  must read a declared field. JS, HTTP and CLI carry it together.
-- A consumer writing into its own partition (a time series) commits each batch
-  with its cursor in one transaction and rebuilds by generation; a projection's
-  `apply` is at least once and idempotent by `eventId`.
-- Search uses adjacent word-pair postings for phrase candidates (longer phrases
-  still verify order) and query-time single-word synonyms. Ranked scatter sums
-  matching-corpus statistics before scoring; there is no cross-partition
-  snapshot. Text/vector ranking uses bounded weighted reciprocal-rank fusion
-  under shared structured filters, qualified against exact rankings. Keep
-  hybrid/statistics and operator-only scatter in HTTP/SDK/CLI parity.
-- A multi-step read runs in one engine snapshot (`store.reading`); writes,
-  upkeep and the handle's beliefs (revision, lens state, fence, relocation) always read the
-  engine live. Every engine implements `snapshot`, taken at its first read.
-- Tenant handles route per operation (`PartitionRouter.operations`): every store
-  call of one operation goes to one placement under an in-process lease, and a
-  move drains those leases before dropping the source whole, fence included
-  (`PlacementInUse` past `drainTimeout`, finished by `resume`), leaving only
-  the map version that moved it (`relocate`): a call routed by an older map
-  (`RoutedBy`) is refused with `TenantRelocated`, never answered empty. Occupancy is
-  partition existence (`tenantsOn`), not a marker. Followers are kept level by
-  `levelFollower`/`followLeader`, which copy again only when carrying on cannot
-  be exact.
-- A live query across Tenants reads a cross-Tenant index
-  (`db.crossTenantIndexes`, `cross-tenant-index.ts`), never a fan-out: one
-  collection from every Tenant in 1–32 fixed derived shard placements, fed from each
-  Tenant partition's log by a per-partition cursor committed with its entries,
-  trusted only in the same partition `incarnation`; otherwise that partition is
-  derived again from its records. `service:` partitions are never read.
-  A source partition hashes to one placement, keeping entries and cursor atomic;
-  query pages merge bounded chunks with incarnation/query-bound cursors. Geometry,
-  vectors and non-unique composites use source paths. Durable re-derivation
-  markers refuse queries until refresh completes, including after interruption.
-  Persist full-refresh status and failures in its registry. The native Database
-  cross-Tenant index page uses those public operations and URL-backed query state.
-- A branch (`db.branchTenant`, `seed(source, { branch: true })`) copies a
-  Tenant as of one source position: records, then the source's log up to the
-  position read after them, under the target's writer. It records its lineage,
-  the only way a partition accepts another's cursor (up to the branch point, and
-  only from the source life it was branched from), which keeps copied
-  checkpoints valid without rewriting them. An event cursor names its
-  partition's life (`incarnation`); a read refuses one of another life
-  (`CursorFromAnotherLife`), since a Tenant removed and written again restarts
-  its log, and the cursor encoding is part of the data layout. The layout-4-to-5 migration
-  starts new lives and refuses branches whose lineage would be lost. It exports App-wide data
-  explicitly, verifies live durable records (including the idempotency receipts workflows can
-  need on retry), and rebuilds cross-Tenant indexes from their definitions. Old checkpoints do
-  not name the new log. An unfinished
-  branch refuses reads and writes (`TenantBranching`) until run again or the
-  database reopens. Only the target is leased; the source is read a page per
-  routed call so it can move meanwhile. The outbox is left behind by default
-  (copied, then retracted in the branch's own log before it finishes);
-  receipts are kept. A divided Tenant branches part by part, each part as of its own position
-  (per-part consistency only; cross-part writes are sagas, so one cut would not
-  make them atomic). `db.tenants` and `tenants/overview` list Tenants, a divided
-  one as one entry with its `parts`; `db.partitions` lists partition keys. No merge back.
-  JS, HTTP (`POST database/tenants/:id/branch`), SDK
-  (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
-  the dashboard's Database → Tenants Branch action.
-- A change to `CURRENT_FORMAT` includes the packaged automatic Project
-  migrator for the ten most recent distinct shipped layouts, or all shipped
-  predecessors if fewer. Use the ordinary explicit Project upgrade to move
-  directly to the new layout. Follow the
-  [storage layout release checks](../zelavis-release-maintainer/SKILL.md#storage-layout-releases).
-- Long readers (copy, branch, follower, export) hold the source's log
-  (`holdLog`, raise-only, time-limited, with the writer, at most 64) so compaction stops
-  at the lowest hold and reports `heldAt`; a move carries live holds to the target; it
-  only prevents starvation, the readers' own `CursorCompacted`/`LogCompacted` detection
-  stays the correctness.
-- Followers on other hosts use the leader transport (`db/leader.ts`): the leader serves
-  stats, record and log pages, holds, acknowledgments and a change feed
-  (`…/database/followers/*`, `database.replicate`, `client.followers(projectId)`,
-  `zelavis followers`); `remoteLeader`/`remoteAcknowledgments`/`remoteChanges` feed the
-  unchanged `levelFollower`/`followLeader`; `db.followers.follow` follows into a
-  database and tells its cross-Tenant indexes, which also take
-  `crossTenantRefresh.notifications`. Remote App shard placement (an Agent hosts the shard, the App moves Tenants into it with `db.movement`) is built; see the placement contract.
-- Managed app backups: manifest `directories[].backup` (`files` | `recipe`), the recipe
-  `backup` phase (`dumpMariaDb` for MariaDB recipes, pinned `mariadb-dump`), staged by the
-  integration runtime as the `app` component (`stageRecipeBackup`). `drillFrom`
-  (`POST runtime/backups/drills`, `client.runtime.backups.drillFrom`, `zelavis backups
-  drill-from`) drills a run from the target and recovery key alone;
-  `pnpm release:qualify:backups` qualifies both on two disposable machines. The export
-  stream (`db.exportPage`, `POST database/tenants/:id/export`,
-  `client.projects.exportTenantPage`, `zelavis projects export-stream`) is the one
-  online read-out of a Tenant: records + log pages, applied by version, `consistent`
-  once the log was read to its end after the records and true from then on, opaque
-  validated cursor, hold only until consistent, a divided Tenant one export with a
-  cursor per part (consistent per part). `exportTenant` is built on it. Database
-  images (`db.maintenance.image`, `POST database/maintenance/images`,
-  `client.projects.createDatabaseImage`, `zelavis projects create-image|images`)
-  are engine-agnostic physical backups through the key-value interface only; restore
-  is the operator's with the Project stopped, never a route. No native OLAP in the core.
-- The transactional outbox is `documents.write({ emit })` plus
-  `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
-  the batch, read in log order, at least once, deduplicated by id. JS, HTTP,
-  SDK (`client.data(id).outbox`) and CLI (`zelavis data outbox*`) carry it.
-  Reject unsupported coordination rather than using read-then-write fencing.
-  RocksDB exclusive-file mode does not support concurrent process takeover. Use
-  LMDB's abortable child transactions for batches; queued transaction callbacks
-  can retain partial writes on failure. A store written by another layout is
-  refused, never upgraded; retain current ownership metadata during recovery.
-- Never expose a physical database driver, filename, or one-file global event
-  sequence as the normal App data API. Bind ordinary data access to an explicit
-  logical Tenant, keep cross-shard semantics explicit, and require current
-  writer generations even for colocated local placements.
-- For remote App shard placement, follow the request/grant authority contract
-  in `../../references/two-fabrics-placement-contract.md`. It is built: a shard
-  is a remote key-value engine hosted by an Agent under a signed grant and an
-  epoch-fenced access token, and the App moves Tenants into it with
-  `db.movement`. Do not extend the Project-local `PartitionMap` into physical
-  Node authority or a remote `ObjectStoreApi`: named eligible Tenant reads run on the shard's Node under the router lease,
-  while similarity/hybrid queries and writes stay on the writer. Never fall back after a remote failure; the limits are in the contract.
-  A shard can have one disk-only durability replica on another Node. Keep its store outside the routing and
-  maintenance map and drive it from `db.shardLeaderFor(shard)` through the shared follower. Its first level
-  turn establishes readiness. Tenant reads and primary write acknowledgments do not use replicas.
-- Cloud capacity is a core capability over the `CapacityProvider` contract;
-  Alchemy (exact pin, bundled inside `zelavis` from `src/adapters/capacity`, loaded
-  only on first provider use) is the default provisioning engine, and Fabric keeps all placement,
-  fencing and draining authority. Existing servers must work with no provider.
-  Compose capacity on Platforms with enrollment; the machine policy is stored through
-  `/runtime/cloud/policy`. The signed HTTPS `webhook` provider runs operator automation
-  on their endpoint and releases only locally recorded machine ids. Keep the adapter
-  import-boundary and no-connection lazy-load tests green.
-  Do not write a general infrastructure-as-code engine. Follow
-  `../../references/alchemy-architecture-brief.md` and the "Cloud Capacity And
-  Alchemy" section of `AGENTS.md`.
-- Project runtime ownership uses the Platform System Store CAS record in
-  `src/platform/project-placement-authority.ts`. The Project manager must
-  acquire it before start; the Agent process lease supervisor fences local
-  workloads on a foreign/missing/expired record. Remote Project start is
-  implemented: signed destination-bound single-use dispatch and a signed lease
-  feed (`src/core/agent/project-dispatch.ts`, `remote-placement.ts`), a
-  pinned-CA HTTPS worker (`src/adapters/_project-dispatch-https.ts`,
-  `_remote-project-agent.ts`) with durable replay protection and
-  fence-before-takeover, and digest-verified install-once artifact preparation
-  (`_remote-project-snapshot.ts`). Read a request body only after its authority
-  verifies, and never snapshot a Project that already has local runtime data.
-  Still unproven: multi-host partition drills and Bun as the Agent runtime.
-  Remote App shard placement is built and proven on one machine (see the placement contract).
-- App data delegates only `database.read|write|define`; definitions (collections,
-  schemas, indexes, analyzers, constraints and semantic lenses) require define
-  separately from record writes. The Project grants are `project.data.*`.
-  Child operations enforce permissions even for POST reads. Operator scatter
-  uses the proxy and inspect authority. The Tenant change feed is the existing
-  event log in HTTP/SDK/CLI; persist its returned cursor on empty pages too.
-  Service-account CLI permissions remain explicit: `--permission` is global;
-  pair `--project` with repeated `--project-permission` for scoped grants.
-  Naming a Project must never add implicit operator authority.
-- The public logical database boundary is `db.forTenant(tenantId)`. Documents,
-  events, and time-series reads live on that Tenant handle; schema, projection,
-  and time-series definitions remain logical database concerns. Do not restore
-  implicit Tenant fields, `DatabaseApi.driver`, or logical `db.sql` aliases.
-  Event continuation uses opaque `DatabaseEvent.cursor` values and `read({
-  after })`; physical positions stay inside drivers and topology routing.
-- Migrate published Project layouts through the explicit Project upgrade.
-  Recreate development Projects from unreleased layouts. Remove stale runtime
-  shapes and retired package or recipe names. A Project that cannot be prepared
-  fails at preparation with the reason.
+- `test/capability-parity.test.mjs`: every route has an SDK method and a CLI command.
+- `test/backends-host-boundary.test.mjs`: `zelavis/backends` imports no `node:` module (host
+  probes come from `src/adapters/_node-backend-host.ts`).
+- `test/provider-adapter-boundary.test.mjs`: Alchemy is imported only from the capacity adapter.
+- `test/project-host-footprint.test.mjs`: a persistent Project host loads only supervision and
+  handover.
+- `pnpm check:effect-usage`, `pnpm check:tigerstyle`, `pnpm test:repo-rules`: all in `pnpm verify`.
 
-Host-operation validation must retain an immutable snapshot of request fields
-and arguments across asynchronous authorization/journal work, require own
-manifest argument declarations, enforce protocol and manifest bounds, and
-revalidate the deadline immediately before execution. The Node executor must
-re-prove artifact/parent inode identity at execution, spawn a private copy of
-the verified bytes rather than the registered path, and kill the operation's
-process group at the deadline and when its leader exits. Host operations are
-installed as plain manifests in a root-owned tree (the Agent refuses a manifest
-that is not a root-owned regular file when root ownership is required); scripts
-name their interpreter in the manifest.
-On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
-and never fall back from it silently. This does not substitute for pinned
-shared libraries or destination fencing.
+## Admin Agent (Assistant)
 
-Agent authority is Ed25519: only the Platform holds the private key, Agents
-trust its public file, and envelopes bind the exact arguments
-(`argumentsDigest`). The Platform issues authority only through the host
-operation broker, for installed operations whose manifest names
-the permission and scope, after recording an audit entry; there is no general
-command runner. Agents reach operations only over their local socket.
-Operation output is journaled only when the manifest declares a bounded
-JSON `result`; submissions are rate limited per actor, and audit reads never
-return argument values.
-`zelavis agent --operations-only` refuses every process protocol message and
-does not open/reclaim Project state. System installations ship a separate
-root-owned operation Agent with a group-limited endpoint; Project supervision
-remains unprivileged. Never turn
-the combined process Agent into a root package installer.
-`zelavis/recipe` is the initial Effect authoring contract, not yet connected to
-package admission or Project execution. Recipe revisions and software versions
-are separate. Select a named method at creation, persist it in the Project,
-and never reselect automatically at start. JS/OCI driver integration remains
-planned; RecipeHost is not a JS sandbox.
-Service setup hooks have a deadline; an abandoned setup cannot add services.
-
-Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
-catalogue: clients revalidate every call and never cache past revocation.
-Package admission may only run concurrently or enforce a deadline when the
-plugin context storage propagates async context; an abandoned package's
-context is sealed. Recipe `isolation.resources` limits and required intent may
-select another enabled, healthy, executable backend at creation only.
-
-## Admin Agent
-
-The Assistant's authority rules (caller's authority checked at execution,
-audited, approvals as a second gate, untrusted model and data, per-scope
-providers, Project chats confined to their Project) are in AGENTS.md's
-Endpoint-Backed Capability section. Code lives in `src/assistant*.ts`; read them
-before adding a tool, and give every tool an `access` requirement, an operator
-`describe` label, and a test. A tool that changes anything must declare
-`mutation` so it becomes an approval request.
-
-
-Managed third-party app recipe updates refresh Zelavis integration, not the app's
-software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
-their software updates. The native managed-runtime path must keep the service
-running, stage a verified integration recipe, persist its update intent, and
-commit metadata/artifact without provisioning, rewriting runtime configuration,
-or start/stop/restart. Activate SDK menus, operation discovery, REST/setup
-endpoints and disk-backed dashboard pages in a separate Project-scoped Zelavis
-integration runtime behind the existing Gateway. It uses the shared persistent
-host/Effect handover, its private state lives below the Project's `.zelavis/integration`,
-and it shares the workload's existing Agent/Fabric placement. Never mount recipe
-endpoints into the Platform or forward Platform authority to third-party software.
-Adopt integration hosts separately from app processes through the same Agent;
-keep the app supervisor serving. Recover an interrupted live update from proved
-host selection, including a missing canonical recipe; passive updates restore
-previous snapshots. Never claim activation from metadata-only tests. Preserve app identity, runtime
-entry, host package set and isolation intent; refuse changed deployment contracts
-without disturbing the existing app. Native Zelavis App upgrades and version
-switches replace the full engine through the same Effect handover as the outer
-Platform; Fabric authority remains with that outer control plane.
+Code lives in `src/assistant*.ts`. Read it before adding a tool. Every tool needs an `access`
+requirement, an operator `describe` label and a test, and a tool that changes anything declares
+`mutation` so a model's call becomes an approval request instead of an action.
 
 ## Design checklist
 
-1. Start from the public API and authority boundary.
-2. Decide whether the change belongs in core, App, Platform product behavior,
-   an adapter, or a plugin.
-3. Define the domain capability before the transport or dashboard surface.
-4. Expose dashboard operations through versioned service endpoints.
-5. Keep defaults ergonomic and authority explicit.
-6. Update the nearest public README and, when available, private `pnotes/TODO.md` when behavior changes. Keep confidential design details out of the public README.
-7. Add or update focused tests in `packages/zelavis/test`.
+1. Start from the public API and the authority boundary.
+2. Decide where it belongs (above).
+3. Define the domain operation and its schemas before any transport or dashboard surface; then
+   adapt it to JS, HTTP and CLI together.
+4. Keep defaults ergonomic and authority explicit.
+5. Register a cleanup participant for any new Project-keyed Platform resource.
+6. Update the nearest README and `website/src/content/docs/` when public behavior changes. Open
+   follow-ups go into a plan under `.agents/plans/`; `pnotes/TODO.md` only shrinks.
+7. Add focused tests in `packages/zelavis/test`, including failure, interruption and recovery
+   paths for anything stateful.
 
 ## Validation
 
-Run the smallest useful checks first, then broaden as needed:
+Run the focused check first, then the gate that counts, from the repository root:
 
 ```bash
-pnpm run verify              # from the repository root; the check that counts
-pnpm --filter zelavis test
-pnpm --filter @zelavis/ui test
-pnpm --filter @zelavis/ecommerce test
-pnpm run docs:check
+pnpm --filter zelavis test          # or node --test on the touched test files
+pnpm run verify                     # builds, typechecks and tests the whole workspace
+pnpm run ci:ui                      # when the dashboard or anything it calls changed
+pnpm run docs:check                 # when docs changed
 ```
 
-
-System installations use a separate root `zelavis-host-agent` in operation-only
-mode for signed, fixed host operations. Its group-limited endpoint is configured
-through `ZELAVIS_HOST_OPERATIONS_ENDPOINT`, separate from Project supervision.
-Recipes declare bounded named `hostPackages` sets; create-project package approval
-requires `server.packages.install` independently of `projects.create`. Never add
-APT/sudo or root escalation to a Project recipe. The package operation preserves
-existing host service policy, suppresses only its APT process tree, and uninstall
-restores only its recorded policy; shared dependencies remain installed.
-
-Project preview ingress belongs to Zelavis Edge (`edge.previews` in the System
-Store), never the runtime driver's private URL. Node previews bind one stable
-HTTP port per local top-level Project, public on default system installations with Edge, otherwise following the Platform's listen host.
-Stop closes the listener; deletion removes its durable intent. Preserve the
-visitor Host, redirects and site cookies through host transport while stripping
-Platform cookies and authority headers. Cookie-authenticated mutations require
-the same browser origin; ports do not isolate cookies. Remote placements must
-not publish a local listener pointing at another Node's loopback address.
-
-Platform System Store inspection is read-only under `/runtime/system-store`,
-`client.runtime.systemStore` and `zelavis system-store`. Require system-scoped
-`server.database.inspect`, paginate in the store adapter and redact authority
-material before any transport. Never expose it as a Project database.
+Host-operation tests need a real `TMPDIR` on macOS (for example `TMPDIR=/private/tmp/...`),
+because the sandbox's `/tmp` symlink fails their path checks.

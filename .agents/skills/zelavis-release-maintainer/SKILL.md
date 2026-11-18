@@ -15,13 +15,6 @@ Use this skill for:
 - package publish flow
 - release-impacting dependency or API changes
 
-## Working rules
-
-- Keep release changes separate from unrelated refactors when possible.
-- Prefer explicit release notes over vague changelog language.
-- Make sure package README usage still matches the shipped API.
-- Call out breaking changes clearly and early.
-
 ## Release runbook
 
 A release is a sequence with a human in it: the owner types npm's login and approves
@@ -34,7 +27,10 @@ long steps in the background, and keep the machine awake (lid open) while they r
 1. **Start from `dev`.** It must hold every change for the release, committed; another
    agent's uncommitted files in the main checkout are never staged. Each change carries
    a changeset (`.changeset/*.md`) saying what users get, in their words.
-2. **Use a temporary release worktree**, detached at `dev`, outside the Projects folder:
+2. **Use a temporary release worktree**, detached at `dev`, outside the Projects folder. This is
+   the one sanctioned use of a worktree in this repository (otherwise all work happens in the main
+   checkout on `dev`): it has no branch, lives only for this release, and its commits come back to
+   `dev` by fast-forward in step 8.
    `git worktree add --detach <empty temp dir>/zelavis-release dev` (on macOS or Linux,
    `"$(mktemp -d)/zelavis-release"`; elsewhere any new directory outside the repository), and note its path. It
    exists only for this release and is removed in step 8; never create a standing folder
@@ -95,10 +91,11 @@ long steps in the background, and keep the machine awake (lid open) while they r
    `wrangler pages deploy dist --project-name zelavis-website --branch main`. The release is
    not finished until `curl -fsS https://zelavis.com/allowlist.json` answers with the
    snapshot's `sequence`; until then say so plainly in every status update.
-10. **Prune the roadmap:** remove completed release tasks from `pnotes/TODO.md` and keep
-    only unfinished follow-ups. Do not append a release history or validation log;
-    completed behavior belongs in tests, maintained documentation and Git history.
-    Commit and push private notes separately.
+10. **Prune the roadmap:** delete completed release items from `pnotes/TODO.md` (it may only
+    shrink; never add to it) and put any open follow-up in a plan under `.agents/plans/`.
+    Do not record a release history or validation log anywhere; completed behavior belongs
+    in tests, maintained documentation and Git history. Commit and push private notes
+    separately.
 11. **After publishing:** installed servers offer the version in **Update now**. Optionally
     qualify the published path with real npm acquisition (`ZELAVIS_QUALIFY_UPDATE=npm`,
     below). Tell the owner what to do on their server, if anything. A release that changes the

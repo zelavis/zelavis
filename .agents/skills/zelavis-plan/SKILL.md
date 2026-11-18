@@ -1,10 +1,10 @@
 ---
-name: plan-writer
-description: "Write a context-rich implementation plan for another model (e.g. Sonnet, Codex) to execute, without writing any code, or list the open plans and the line that hands each one over, or refresh open plans against the code so none goes stale. Plans can live in, or reach into, other repositories on the machine (`in <repo>:`, `with <repo>:`). Use when asked to plan a job for another agent, write a handoff plan, prepare work for a workhorse model, or show which plans are open and how to start or continue one. When the user points you at work in a repository outside the current project, such as a dependency that needs a patch, and the work is more than a few edits, offer once in one line to plan it with this skill (`/plan-writer in <repo>: <job>`)."
+name: zelavis-plan
+description: "Write a context-rich implementation plan for another model (e.g. Sonnet, Codex) to execute, without writing any code, or list the open plans and the line that hands each one over, or refresh open plans against the code so none goes stale. Plans can live in, or reach into, other repositories on the machine (`in <repo>:`, `with <repo>:`). Use when asked to plan a job for another agent, write a handoff plan, prepare work for a workhorse model, or show which plans are open and how to start or continue one. When the user points you at work in a repository outside the current project, such as a dependency that needs a patch, and the work is more than a few edits, offer once in one line to plan it with this skill (`/zelavis-plan in <repo>: <job>`)."
 argument-hint: "[in <repo>] [with <repo>, …]: <the job to plan> | list | refresh"
 ---
 
-# Plan Writer
+# Zelavis Plan
 
 **The job to plan:** $ARGUMENTS
 
@@ -22,10 +22,10 @@ only this. Write no plan, and change no file.
    the `[~]` line if there is one, the number of `[!]` items, and how far it is
    behind: the commits since its `Verified-at` (`git rev-list --count <Verified-at>..HEAD`) and
    whether any path it cites changed since. Mark one with changed paths as **needs refresh**
-   (`/plan-writer refresh`).
+   (`/zelavis-plan refresh`).
 3. Under each row, give the line to copy:
    - `planned`: `Execute the plan in <path>. Start with its section 8.`
-   - `needs replanning`: `/plan-writer refresh`, with the decision named under its header,
+   - `needs replanning`: `/zelavis-plan refresh`, with the decision named under its header,
      since an implementer cannot carry out the steps that wait on it.
    - anything else not `done`: `Continue the plan in <path>. Start with its section 8.`
    - For a split plan, only the first part that is neither `done` nor `partly done` gets a line,
@@ -44,13 +44,13 @@ By default the job is in the repository you were started in. The job can name ot
 either of these forms, or in plain words that say the same:
 
 - `in <repo>: <job>`: plan the job in another repository. The plan lives there, and it is that
-  repository the plan is about ("use plan-writer in fuzor and plan: …" means the same).
+  repository the plan is about ("use zelavis-plan in mylib and plan: …" means the same).
 - `with <repo>[, <repo>…]: <job>`: plan the job here, and allow it to change those
   repositories too, such as a dependency that needs a patch for this job. Both forms combine:
   `in <repo> with <repo>: <job>`. `list` and `refresh` take `in <repo>` as well.
 
 `<repo>` is a path (absolute, `~/…` or relative), or a bare name, which means the folder of that
-name beside the current repository (`fuzor` from `~/Projects/zelavis` is `~/Projects/fuzor`). It
+name beside the current repository (`mylib` from `~/code/app` is `~/code/mylib`). It
 must be a git checkout; a path inside one means that checkout's root
 (`git -C <path> rev-parse --show-toplevel`). When no such folder or checkout exists, say so in
 one line and stop: that is the one thing you cannot decide.
@@ -62,7 +62,7 @@ The plan's **home** is the `in` repository, or the current one. Everything this 
   files, gates and conventions: a change in a repository follows that repository's rules, and
   where two repositories' rules differ, each binds its own files.
 - **One plan, in the home.** Steps that change another repository say which in their Files
-  line (`fuzor: src/router.ts`), run their check from that repository's root, and come before
+  line (`mylib: src/router.ts`), run their check from that repository's root, and come before
   the home steps that rely on them. Section 1 gives each repository its own System today and
   Pattern to mirror, and section 7 runs each repository's own full verification. Say how the
   home picks up the change (a sibling checkout it builds from, a workspace link, a local
@@ -294,7 +294,7 @@ sources:
 ```
 
 Then these sections. Each fact cites its source as a path, plus a symbol for code
-(`test/_platform.mjs` → `startPlatform`) or a heading for docs (`AGENTS.md § Verification`).
+(`test/helpers.ts` → `startServer`) or a heading for docs (`AGENTS.md § Verification`).
 Never cite line numbers here: they shift with every edit, so they would read as changes on every
 run and point at the wrong line in between. Plans still cite `path:line`, because a plan is used
 once, right after it is checked.
@@ -778,7 +778,7 @@ End with this block, adapted to the project and the plan:
 >   verification and stopping point for the next session. The prompt must work without this chat.
 > - If no step can run yet, name the concrete prerequisite and tell the next session how to
 >   confirm it before resuming. For a plan that needs replanning, name the decision and use
->   `/plan-writer refresh` as the next action. If the entire plan and its final checks are
+>   `/zelavis-plan refresh` as the next action. If the entire plan and its final checks are
 >   complete, report completion and omit the prompt.
 
 ## Self-check before you hand over the plan
