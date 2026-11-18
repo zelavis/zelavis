@@ -1,8 +1,9 @@
 # Hosting Provider service
 Job: Build `@zelavis/hosting` as its own officially maintained service in `zelavis-services/hosting`, installed from the Marketplace and requiring `@zelavis/ecommerce`: plan creation, billing through Ecommerce, customers who are ordinary Zelavis principals, self-service Projects within their plan's limit, and suspension (never deletion) when payment lapses.
 Date: 2026-11-13
-Status: planned
-Verified-at: b04fa02d95
+Status: done
+Note (2026-11-16): Its Auth citations were refreshed against Zelavis Auth (done); its HTTP contracts (`PUT /auth/accounts/:accountId/access`, `/auth/roles`) are unchanged.
+Verified-at: b04fa02d95 (Auth citations refreshed 2026-11-16; the rest as of `b04fa02d95`)
 Part: 14 of 14. Read 00-overview.md first.
 
 To start:    Execute part 14 in .agents/plans/2026-11-13-accounts-billing-domain-automation/14-hosting-provider.md. Read 00-overview.md first, then start with the part's section 8.
@@ -10,17 +11,17 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Confirm the handovers from parts 6, 11, 12 and 13.
-- [ ] 2. Scaffold the `@zelavis/hosting` package.
-- [ ] 3. Add Hosting settings.
-- [ ] 4. Add plans and their roles.
-- [ ] 5. Add checkout, subscriptions and the fulfillment handler.
-- [ ] 6. Add self-service Projects within the plan limit.
-- [ ] 7. Add grace, suspension and resume.
-- [ ] 8. Add the operator and customer pages.
-- [ ] 9. Document the Hosting Provider service.
-- [!] 10. Qualify against Stripe test mode. (blocked by: a Stripe test-mode secret key in `STRIPE_TEST_SECRET_KEY` and the Stripe CLI logged in (`stripe login`) on the machine that runs it; check: `pnpm release:qualify:hosting` prints `PASS subscribe`, `PASS project`, `PASS limit`, `PASS suspend` and exits 0)
-- [ ] 11. Self-audit.
+- [x] 1. (2026-11-18) Confirmed all four handovers and passed the workspace build.
+- [x] 2. (2026-11-18) Package installed through Marketplace with exact approval; dependency and reverse-dependency refusals passed.
+- [x] 3. (2026-11-18) Settings persistence, access, provider selection and unconfigured responses passed.
+- [x] 4. (2026-11-18) Passed role, delegation and revision checks. Auth limits plans to 20 Projects.
+- [x] 5. (2026-11-18) Signed fake-provider fulfillment, checkout reuse, stale/duplicate events, portal and SDK customer isolation passed.
+- [x] 6. (2026-11-18) Passed two-of-eight quota, recipe enforcement, Project authority, grant recovery and slot reuse.
+- [x] 7. (2026-11-18) Grace, failed-stop recovery, suspension, renewed access without restart and disable behavior passed.
+- [x] 8. (2026-11-18) Desktop/mobile Hosting page flows, sandboxed hosted links and the full dashboard browser suite passed.
+- [x] 9. (2026-11-18) Operator guide, package README, public operations and Marketplace documentation passed docs:check.
+- [x] 10. (2026-11-18) Qualified against Stripe test mode (`pnpm run release:qualify:hosting` printed `PASS subscribe`, `PASS project`, `PASS limit`, `PASS suspend` and exited 0).
+- [x] 11. (2026-11-18) Local self-audit, workspace verification, dashboard browser suite, docs, pack and whitespace checks passed.
 
 ## 0. Summary and finish line
 
@@ -28,7 +29,7 @@ This is the WHMCS-style layer: a service an operator installs when they want to 
 
 - **In scope**: the package, its manifest (Marketplace entry with the operator-facing explanation, extension of Ecommerce, principal permissions); settings; plans as roles (part 6); checkout and portal through Ecommerce; subscription state from Ecommerce fulfillment events; self-service Projects with reservations and reconciliation; grace and suspension; operator and customer pages; docs; a live Stripe test-mode run.
 - **Out of scope**: domain resale to customers (a paid order whose registration then fails needs an automatic refund, and a bought domain needs a DNS zone created at the provider; both are separate designs, so customers bring their own domains through the TXT flow or use hosted subdomains from part 7); resellers and delegated Project Platforms; taxes, invoices as documents, coupons, metered usage; selling whole managed Platforms; first-class dashboard placement (as an installed service its menus appear under the Platform's Extensions entry and its pages are framed, `AGENTS.md § Platform And App Service Boundary`).
-- **Done means**: (a) installing `@zelavis/hosting` without Ecommerce is refused with the existing "extends @zelavis/ecommerce, which is not installed" message; with Ecommerce it asks for approval of its permissions (part 13) and installs once approved; (b) disabling Ecommerce while Hosting is installed is refused (part 13); (c) the operator saves a plan and a role `hosting-plan-<id>` exists with the plan's Project permissions; (d) a signed-in customer starts checkout, and once the provider's signed events arrive through Ecommerce their subscription is `active`; (e) they create Projects up to the plan limit, the next is 409 `plan_limit_reached`, eight concurrent creates with limit 2 yield exactly 2 Projects, and they hold the plan's permissions on exactly those Projects; (f) a lapse keeps access for the grace period, then stops the Projects and narrows access to view and logs, and payment restores the plan role without starting anything; nothing is deleted; (g) a customer who deletes a billed Project frees its slot within a reconciliation pass; (h) the Stripe test-mode run passed (step 10, `[!]` until the user supplies the key); (i) the package's tests, `verify`, `ci:ui`, `docs:check` pass.
+- **Done means**: (a) installing `@zelavis/hosting` without Ecommerce is refused with the existing "extends @zelavis/ecommerce, which is not installed" message; with Ecommerce it asks for approval of its permissions (part 13) and installs once approved; (b) disabling Ecommerce while Hosting is installed is refused (part 13); (c) the operator saves a plan and a role `hosting-plan-<id>` exists with the plan's Project permissions; (d) a signed-in customer starts checkout, and once the provider's signed events arrive through Ecommerce their subscription is `active`; (e) they create Projects up to the plan limit, the next is 409 `plan_limit_reached`, eight concurrent creates with limit 2 yield exactly 2 Projects, and they hold the plan's permissions on exactly those Projects; (f) a lapse keeps access for the grace period, then stops the Projects and narrows access to view and logs, and payment restores the plan role without starting anything; nothing is deleted; (g) a customer who deletes a billed Project frees its slot within a reconciliation pass; (h) the Stripe test-mode run passed (step 10); (i) the package's tests, `verify`, `ci:ui`, `docs:check` pass.
 - **Owner decision (2026-11-13, this conversation)**: "@zelavis/hosting can be its own service with the hosting plan creation and other features like billing which requires zelavis ecommerce." Cloud capacity and autoscaling are core (part 10); Hosting is not.
 - **Supplement**: updated in this run (overview section 0).
 - **Sources read**: `AGENTS.md § Core Access-Control Rule`, `§ Platform And App Service Boundary`, `§ Marketplace Allow-List`, `§ Endpoint-Backed Capability Rule`, `§ Repo Structure` (`zelavis-services/*`); parts 6, 11, 12, 13; files below.
@@ -51,15 +52,15 @@ This is the WHMCS-style layer: a service an operator installs when they want to 
 
 **System today.**
 - Package pattern: `zelavis-services/ecommerce` (`package.json` manifest with `kind`, `capabilities`, `namespace`, `marketplace`, `peerDependencies`; `tsc` build; `dashboard/*.html` pages; tests load the package the way an installation does through `test/load-plugin.mjs`, which uses `loadPluginPackage` from `packages/zelavis/dist/service.js`); `zelavis-services/ecommerce/plugins/stripe/package.json` (`peerDependencies` on `@zelavis/ecommerce`, workspace dev dependency).
-- Projects: `POST /runtime/projects` (`projects.create`, `packages/zelavis/src/index.ts:6201-6213`); `POST /runtime/projects/:projectId/start|stop` (`project.runtime.manage`, `:6336-6381`); `GET /runtime/projects/:projectId`.
-- Accounts: `PUT /auth/accounts/:accountId/access` (`packages/zelavis/src/app/identity/identity-service.ts:428-445`; input `SetAccountAccessInputSchema`, `domain/account-access.ts:32-40`: `expectedRevision`, `role`, `permissions`, `grants`, 100 entries combined).
+- Projects: `POST /runtime/projects` (route id `runtime.projects.create`, `projects.create`, `packages/zelavis/src/index.ts`); `POST /runtime/projects/:projectId/start|stop` (`project.runtime.manage`); `GET /runtime/projects/:projectId`.
+- Accounts: `PUT /auth/accounts/:accountId/access` (route `auth.accounts.access.set` in `packages/zelavis/src/auth/routes/admin.ts`; input `SetAccountAccessInputSchema` in `packages/zelavis/src/auth/access/access.ts`: `expectedRevision`, `role`, `permissions`, `grants`, 100 entries combined; 409 `account_access_conflict` on a stale revision; a change ends the account's sessions).
 - Part 6 handover: role catalogue (`GET|POST /auth/roles`, `PUT|DELETE /auth/roles/:roleId`, `RoleDefinition` with `projectPermissions`), `roleAssignments` on account access (≤ 10 assignments, ≤ 20 Project ids each), `system.roles.manage`.
 - Part 11 handover: services on the Platform get `core.database`.
 - Part 12 handover: capability `@zelavis/ecommerce:fulfillment`; `EcommerceApi.fulfillment.registerHandler`, `api.checkouts.create`, `api.customers.portal`; `commerce_customers.principalId`; fulfillment message types `commerce.checkout.completed`, `commerce.subscription.updated`, `commerce.payment.succeeded`, `commerce.payment.failed`; `core.secrets`; permission names `ecommerce.view` / `ecommerce.manage`.
 - Part 13 handover: manifest `zelavis.principal.permissions`; install approval; `core.fetch` authenticated as the service's principal; refusal to disable an extended service.
 - Release plumbing for a new service: Changesets (`.changeset/`) and `pnpm allowlist update` / `pnpm allowlist publish` (`AGENTS.md § Marketplace Allow-List`); in a checkout, `pnpm dev` offers `zelavis-services/*` from the folder.
 
-**Pattern to mirror.** Part 9's durable order state machine for provisions; part 12's delivery loop for bounded reconciliation; the enrollment slot reservation by CAS (`packages/zelavis/src/app/identity/services/registration-service.ts:268-330`) for the quota; Ecommerce's package and test layout throughout.
+**Pattern to mirror.** Part 9's durable order state machine for provisions; part 12's delivery loop for bounded reconciliation; a `documents.transaction` over the customer's Hosting record in the services database (part 11), which re-checks what it read under the partition's writer, for the quota (the pattern Zelavis Auth uses for sign-up limits, `packages/zelavis/src/auth/registration/policy.ts`); Ecommerce's package and test layout throughout.
 
 **Traps.**
 - A runtime import of `@zelavis/ecommerce`: Hosting uses only `import type` from it; at runtime it receives the API from Ecommerce's `register(api)` call. A value import would need the package bundled or installed beside Hosting (R3).
@@ -176,7 +177,7 @@ Success and cancel URLs are built from `settings.publicBaseUrl`, never from the 
 
 ### 1. Confirm the handovers from parts 6, 11, 12 and 13
 
-- **Check**: `rg -n "roleAssignments" packages/zelavis/src/app/identity/domain/account-access.ts; rg -n "servicesDatabase" packages/zelavis/src/index.ts; rg -n "ecommerce:fulfillment" zelavis-services/ecommerce/src; rg -n "principal" packages/zelavis/src/core/service/manifest.ts; rg -n "fetch\?" packages/zelavis/src/service.ts`; each finds a match. `pnpm run build; echo "exit $?"` prints `exit 0`.
+- **Check**: `rg -n "roleAssignments" packages/zelavis/src/auth/access/access.ts; rg -n "servicesDatabase" packages/zelavis/src/index.ts; rg -n "ecommerce:fulfillment" zelavis-services/ecommerce/src; rg -n "principal" packages/zelavis/src/core/service/manifest.ts; rg -n "fetch\?" packages/zelavis/src/service.ts`; each finds a match. `pnpm run build; echo "exit $?"` prints `exit 0`.
 
 ### 2. Scaffold the `@zelavis/hosting` package
 
@@ -265,7 +266,7 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - First compare `Verified-at` with `HEAD`. If any path the plan cites changed since (`git diff --name-only <Verified-at>..HEAD`), check each quoted excerpt you are about to rely on against the code before its step. Adapt a stale step to the current code and record the deviation. Use `[!]` only if a concrete prerequisite prevents execution. If the whole plan needs a separate design, record `Status: needs replanning` and the decision it depends on.
 > - `Status: planned`: you are the first. Set `Status: in progress`.
 > - Anything else (`in progress`, `stopped at step <n>`, `partly done`): you are continuing someone else's work. First read every entry under `## Execution report`. Then confirm the last `[x]` step's check still passes. Reopen it if its check fails and resolve it using the rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff` on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]` lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
-> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, end the session with one line naming the decision and saying the plan needs `/plan-writer refresh`.
+> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, name the decision and give a `/plan-writer refresh` handoff.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another agent may still be working on it. Check, do not ask: if this plan file, or any file a step's Files line names, changed in the last 15 minutes, end the session with one line saying the plan is being worked on; otherwise carry on as if asked to continue.
 >
 > In a split plan, also read the execution reports of the earlier parts. If a deviation there affects this part, adapt this part to it and record how.
@@ -300,5 +301,122 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+### Session 1: 2026-11-18
+
+Part 14 is **partly done**. Steps 1–9 and the local self-audit in step 11
+passed in the existing `dev` checkout at `0e4548dbcc`. Step 10 has a runner and
+awaits the Stripe test-mode inputs.
+
+- **1.** confirmed the role, service database, Ecommerce fulfillment and
+  principal handovers against the working tree. The workspace build passed.
+- **2.** added the separate package, lockfile entry and Changeset. Real
+  Marketplace installation proved the Ecommerce dependency, exact principal
+  approval and reverse-dependency refusal.
+- **3.** saved the public origin, registered payment provider and grace period.
+  Tests proved access restrictions and unconfigured and invalid input responses.
+- **4.** saved plans with revisioned Auth roles and a durable pending write
+  across the Hosting and Auth stores. The plan cap is 20 Projects per
+  subscription. Quota reductions check current allocations and reservations in
+  the same transaction.
+- **5.** Ecommerce hosted checkout and portal use the owning verified customer.
+  Signed fixture callbacks activate subscriptions. Tests proved checkout reuse,
+  duplicate and stale event handling, account isolation and generic SDK discovery.
+- **6.** eight simultaneous creates against a limit of two produced two
+  Projects. Tests proved recipe restrictions, exact Project scope, recovery of a
+  failed grant on the original Project, and slot reuse after customer deletion.
+- **7.** the original grace deadline survives queued or repeated failures.
+  Suspension narrows Hosting-managed access to view and logs and stops billed
+  Projects, including retry after a stop failure. Renewal restores access and
+  leaves Projects stopped. Disable preserves Project state and role assignments.
+- **8.** settings, plan editing, subscriptions, checkout, portal, and Project
+  creation worked in the built dashboard at desktop and mobile sizes. The
+  browser test opened the hosted URL from the parent dashboard.
+- **9.** added the Hosting guide and package README and updated the Marketplace
+  and extension API documentation.
+- **10. Blocked.** implemented `pnpm run release:qualify:hosting`, checked its syntax,
+  and exercised both the missing-key and missing-CLI refusals. This checkout had
+  no `STRIPE_TEST_SECRET_KEY` or Stripe CLI. A live run needs the CLI signed into
+  the same Stripe sandbox as the test key and must print all four PASS lines.
+- **11.** reviewed the session changes, package archive, permission
+  boundaries, queue bounds, and failure paths. The live success condition
+  remains recorded in step 10.
+
+#### Verification after the final code edit
+
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` passed. Zelavis reported
+  3,427 passing tests and 30 skips, Ecommerce reported 45 passing tests, and
+  Hosting reported eight passing tests. No suite reported a failure.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui` passed, including the nested
+  mount browser run.
+- `pnpm run docs:check` and `git diff --check` passed. The 28 new files also
+  passed a separate trailing-whitespace check.
+- `pnpm --filter @zelavis/hosting pack` included the runtime entry and all
+  dashboard HTML, CSS, and JavaScript assets.
+
+#### Decisions and deviations
+
+- Auth permits one assignment per role with up to 20 Projects, so the plan
+  limit uses the documented 20-Project fallback. Plan permissions are the
+  seven Project permissions in the approved service principal request.
+- Checkout requires a verified customer email and a revision-checked Auth
+  preflight before billing. This establishes that the service can grant and
+  later narrow the account's Hosting access. Auth's access updates can end
+  the customer's current sessions.
+- A customer can reopen an existing open checkout. An ambiguous or expired
+  checkout can leave the account pending. Retaining the pending purchase
+  prevents a retry from starting another Checkout Session.
+- The real browser test exposed local Marketplace services labeled as system
+  services. Fixed the local catalogue to assign extension scope. The dashboard
+  opens approved hosted links from a scoped parent dialog and keeps the
+  originating frame opaque.
+- The qualification runner uses the documented Stripe CLI cancellation request
+  with explicit confirmation for the subscription it creates in the sandbox.
+  Temporary package copies provide the injected clock. [Stripe CLI reference](https://docs.stripe.com/cli)
+
+This session added no follow-up steps.
+
+### Session 2: 2026-11-18
+
+Part 14 remains **partly done**. Confirmed existing local Hosting tests and checks pass; step 10 remains blocked pending a Stripe test-mode secret key (`sk_test_...`) and completed Stripe CLI login in the same test sandbox.
+
+- **1–9, 11.** unchanged (`0e4548dbcc`); confirmed `pnpm --filter @zelavis/hosting test` still passes (8/8).
+- **10. Blocked.** `STRIPE_TEST_SECRET_KEY` was not set and Stripe CLI had no active session (`stripe get /v1/account` failed). Initiated device login (`ZZNK-VDDL`) and requested `STRIPE_TEST_SECRET_KEY`; the secret prompt first received the device code and the follow-up prompt timed out while browser CLI approval remained pending. Stopped the background device-login listener before handing back.
+
+#### Verification
+
+- `pnpm --filter @zelavis/hosting test`: passed (8/8, typecheck + tests).
+- `pnpm run docs:check`: passed.
+- `git diff --check`: passed.
+- `pnpm run release:qualify:hosting`: not run (blocked on `STRIPE_TEST_SECRET_KEY` and `stripe login` in the same Stripe test sandbox).
+
+#### Decisions and deviations
+
+- None.
+
+This session added no follow-up steps.
+
+### Session 3: 2026-11-18
+
+Part 14 is **done**. Step 10 passed against Stripe test mode (`acct_1DstxnIOdKYPsoH4`) and all final gates passed.
+
+- **10.** logged the Stripe CLI into the test sandbox via `stripe login --interactive` using the user-supplied `STRIPE_TEST_SECRET_KEY`, updated `distribution/scripts/qualify-hosting.mjs` to handle Stripe Checkout's `elements-inner` iframe (`#payment-numberInput` et al., with email prefill when empty) alongside the classic DOM and to use a short `/tmp` directory on macOS so Project Unix socket paths stay within the 104-byte `sun_path` limit, then ran `pnpm run release:qualify:hosting` and saw `PASS subscribe`, `PASS project`, `PASS limit`, and `PASS suspend` (exit 0).
+- **11.** re-ran the full workspace and browser verification after editing `distribution/scripts/qualify-hosting.mjs`.
+
+#### Verification
+
+- `pnpm run release:qualify:hosting` (with `STRIPE_TEST_SECRET_KEY` via secret file): passed (`PASS subscribe`, `PASS project`, `PASS limit`, `PASS suspend`, exit 0).
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run verify`: passed (Zelavis 3,427 passes, 30 skips; Ecommerce 45 passes; Hosting 8 passes; zero failures across all workspace packages).
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui`: passed.
+- `pnpm run docs:check` and `git diff --check`: passed.
+
+#### Decisions and deviations
+
+- Logged the Stripe CLI into the test sandbox via `stripe login --interactive` under a PTY using the provided `sk_test_` key rather than waiting on browser OAuth device approval, avoiding a separate manual CLI login step.
+- Updated `distribution/scripts/qualify-hosting.mjs` to inspect `page.frames()` for Stripe's `elements-inner` Checkout form and use `/tmp` on macOS for short Unix socket paths.
+
+This session added no follow-up steps.

@@ -1,7 +1,7 @@
 # Ecommerce billing on the Platform
 Job: Make `@zelavis/ecommerce` safe and complete enough to bill hosting customers from the Platform: every route authorized, provider credentials stored sealed, hosted checkout and customer portal, verified provider webhooks applied exactly once, and a fulfillment extension point that tells other services (Hosting) what was paid, at least once.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 12 of 14. Read 00-overview.md first.
 
@@ -10,16 +10,16 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Record the baseline.
-- [ ] 2. Add sealed per-service secrets to the setup context.
-- [ ] 3. Authorize every Ecommerce route.
-- [ ] 4. Extend the payment provider contract and add checkouts and portal sessions.
-- [ ] 5. Receive and apply provider webhooks exactly once.
-- [ ] 6. Add the fulfillment extension point.
-- [ ] 7. Implement checkout, portal, webhooks and credentials in the Stripe plugin.
-- [ ] 8. Update the Ecommerce and Stripe dashboard pages.
-- [ ] 9. Document billing through Ecommerce.
-- [ ] 10. Self-audit.
+- [x] 1. (2026-11-17) Baseline Platform build, 22 Ecommerce tests and Stripe typecheck passed.
+- [x] 2. (2026-11-17) Sealed service secrets, namespace binding, concurrent limits and Effect gate pass.
+- [x] 3. (2026-11-17) All routes authorized; anonymous/forbidden/view/manage cases and all 23 tests pass.
+- [x] 4. (2026-11-17) Checkout/portal persistence, validation and HTTP/SDK/CLI tests pass; 25 tests green.
+- [x] 5. (2026-11-17) Signed events, concurrent duplicates, ordering, unknown references and body/event bounds pass; 27 tests green.
+- [x] 6. (2026-11-17) Retry/backoff, per-handler acknowledgements, restart recovery and lifecycle cleanup pass; 29 Ecommerce and 3 core tests green.
+- [x] 7. (2026-11-17) Stripe build/typecheck and all 32 Ecommerce tests pass with fake checkout/portal clients and real test signatures.
+- [x] 8. (2026-11-17) All 33 Ecommerce tests and ci:ui pass; opaque-frame desktop/mobile credential saves, reload, gateway paths and failures proved.
+- [x] 9. (2026-11-17) Ecommerce/Stripe READMEs, service/extension guides, durable guidance and changeset added; docs:check passed.
+- [x] 10. (2026-11-17) Session diff/new files reviewed; 45 Ecommerce tests, full verify, ci:ui, docs and whitespace checks pass; no blocker remains.
 
 ## 0. Summary and finish line
 
@@ -243,7 +243,7 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - First compare `Verified-at` with `HEAD`. If any path the plan cites changed since (`git diff --name-only <Verified-at>..HEAD`), check each quoted excerpt you are about to rely on against the code before its step. Adapt a stale step to the current code and record the deviation. Use `[!]` only if a concrete prerequisite prevents execution. If the whole plan needs a separate design, record `Status: needs replanning` and the decision it depends on.
 > - `Status: planned`: you are the first. Set `Status: in progress`.
 > - Anything else (`in progress`, `stopped at step <n>`, `partly done`): you are continuing someone else's work. First read every entry under `## Execution report`. Then confirm the last `[x]` step's check still passes. Reopen it if its check fails and resolve it using the rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff` on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]` lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
-> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, end the session with one line naming the decision and saying the plan needs `/plan-writer refresh`.
+> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, name the decision and give a `/plan-writer refresh` handoff.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another agent may still be working on it. Check, do not ask: if this plan file, or any file a step's Files line names, changed in the last 15 minutes, end the session with one line saying the plan is being worked on; otherwise carry on as if asked to continue.
 >
 > In a split plan, also read the execution reports of the earlier parts. If a deviation there affects this part, adapt this part to it and record how.
@@ -278,5 +278,58 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+
+### Session 1: 2026-11-17
+
+Final status: **done**, in the main `dev` checkout at
+`0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`, resumed after a usage-limit interruption.
+Steps 1–10 are complete. A session-start snapshot distinguished these changes from
+all earlier working-tree work. Existing edits were preserved; no branch, worktree,
+staging, commit, push, publication or deployment was made. No real payment provider
+was called. No blocker remains for Part 12; Part 13 is next.
+
+Steps carried out:
+
+- 1 done: read section 8, AGENTS.md, the overview, governing skill/reference guidance and earlier execution reports; compared Verified-at with HEAD and checked the actual working-tree contracts. Baseline Platform build, 22 Ecommerce tests and Stripe typecheck passed. No pre-existing failure was established.
+- 2 done: added per-service `core.secrets` on both runtime roles, using the runtime master secret, AES-GCM purpose binding, strict credential names and persisted envelopes, a 4096-byte value limit and a shared per-store/service mutation permit enforcing the 32-secret limit. Round-trip, ciphertext transplant, corrupt-record, byte-bound and concurrent-limit tests pass; Effect checking passes.
+- 3 done: every Ecommerce read requires `ecommerce.view`, every write `ecommerce.manage`, with only the signature-authorized webhook exempt. Tests inspect the whole route inventory and exercise 401, 403, view-only and manage callers. Auth already validates permission syntax rather than an enumerated vocabulary, so no permission whitelist was needed.
+- 4 done differently: added provider contracts, persisted checkout/customer/subscription fields, checkout and portal services, typed discovered SDK operations and CLI parity tests. Used the existing generic plugin convention for path arguments: `.checkouts.get(undefined, { params: { id } })` and CLI `--param id=ID`. Customer provider-reference updates use a document transaction so concurrent providers cannot replace each other's references. Checkout inputs are bounded and snapshotted, return URLs and safe integer totals are validated, and corrupt persisted fields fail as typed storage errors.
+- 5 done differently: applied events through one version-checked `documents.write` with its idempotency key and transactional outbox emission, retrying bounded version conflicts. The actual outbox field is `topic`, with `{ record, occurredAt }` as its JSON payload. Tests cover invalid signatures, exact bytes, concurrent duplicates, ordering, unknown references and body/event limits. Added the narrow generic native-App public callback convention so a real provider can reach the child route without going through the authenticated administration Gateway.
+- 6 done differently: added a per-handler durable delivery repository, bounded worker, retries, paged failures and the fulfillment extension. Added `context.addRuntimePlugin` over the existing server plugin lifecycle because setup had no runtime-owned worker hook. Workers start only after mounting and stop before storage closes, also on failed startup. Tests prove automatic delivery, restart recovery, independent acknowledgements/backoff, the physical four-call bound after timeouts, and cleanup of failure records belonging to a removed handler. Cleanup deletes bounded delivery pages before removing the message; an interruption can cause redelivery, not an unreachable orphan. Custom billing CRUD repositories must supply an atomic events repository and matching outbox rather than receiving a false atomicity guarantee.
+- 7 done differently: Stripe now creates hosted checkout/portal sessions lazily, verifies raw-body signatures with Web Crypto, normalizes subscription/invoice/checkout events, and reads sealed settings. Code options override stored credentials without unnecessary store reads. Per-runtime handles are keyed by the opaque runtime scope so a reused loaded module cannot cross runtime credentials. Added the narrow `@zelavis/ecommerce/errors` entrypoint so bundling error contracts does not evaluate the Ecommerce plugin and its menu declarations. Errors cross bundle boundaries by tag; provider exceptions never enter the generic response/error logger. Renewals create payment attempts linked to a known subscription, without inventing an order; `orderId` is consequently optional, with `subscriptionId`/`checkoutId` for hosted billing. Adjusted PayPal's private refund helper parameter type for this shared contract, without adding PayPal checkout/webhooks. Stripe also handles delayed-checkout success so an initially unpaid session cannot later be paid without fulfillment.
+- 8 done differently: Payments displays checkout support, webhook paths, provider catalogue and paged failures; Stripe has password inputs, configured flags/hint and save/reload behavior without returned secrets. Browser code uses the official service-page fetch broker and Effect, bundled into each page bundle. Catalogue data comes from Ecommerce's own endpoint, since an opaque extension frame cannot call `runtime/extensions`. The save action uses an explicit button because opaque frames forbid native form submission. Desktop/mobile opaque-frame tests prove credential save, reload, field clearing, webhook paths and failure rendering. npm dry-runs exposed Git's ignore rule excluding generated modules; focused `.npmignore` files and package-content regressions now prove the modules ship.
+- 9 done: updated Ecommerce and Stripe READMEs, official-service and plugin-authoring guides, and matching AGENTS.md/core-platform skill guidance. Added the Changeset for `zelavis`, Ecommerce and Stripe; versions and allow-list digests remain release work. No private roadmap additions were made.
+- 10 done: reread the session delta and new files against the finish line, resolved the omissions above, checked forbidden patterns and preservation of existing work, and ran the final gates sequentially after the last implementation changes.
+
+Verification observed:
+
+- Step-specific Platform/Ecommerce/Stripe builds and checks passed as recorded above.
+- Final focused Ecommerce run: **45 passed**, zero failures, including both npm package-content checks and desktop/mobile opaque-frame actions.
+- Final focused core secrets/lifecycle, public ingress and capability-parity run: **26 passed**, zero failures (also rerun through full verification).
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run verify`: **exit 0**, all workspace builds, typechecks and tests passed. Zelavis: **3403 passed, 30 skipped, zero failures** (3433 total); Ecommerce: **45 passed**; UI unit tests: **95 passed**. Effect usage, TigerStyle and repository rules passed without suppressions or baseline growth.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui`: **exit 0**, including production assets, desktop/mobile route/action qualification, nested mounts, opaque service frames, native App and account/auth flows.
+- `pnpm run docs:check` and `git diff --check`: **exit 0**. New untracked session files were separately checked for trailing whitespace. No generated source, forbidden-folder, private-note or Effect-baseline edits were introduced.
+
+Failures investigated and resolved:
+
+- New authorization exposed anonymous calls in old persistence fixtures; they now supply the owner and close their runtimes instead of relying on public commerce writes.
+- The opaque-frame test first used an authenticated asset URL instead of a page capability, then exposed the real native-form restriction; the test and page were fixed, and the final browser regression passes.
+- The first full workspace build exposed PayPal's assumption that every payment has an order. Its private helper now accepts the shared optional order id. An intermediate audit used the wrong numeric-bound constructor shape; corrected it to Effect v4's `{ minimum, maximum }`, then reran the complete gates from the settled code. Neither failure was pre-existing and no check was weakened.
+- npm dry-runs initially omitted `dashboard/api.js` in both packages. The npm ignore overrides fix the actual package contents, now asserted by tests.
+
+Deviations and decisions taken for the user:
+
+- The real API base is `/plugins/ecommerce/*`, not `/plugins/ecommerce/commerce/*`; `/commerce` is the dashboard path. Tests, pages and documentation use the actual API.
+- Native App ingress admits only `POST <api-base>/plugins/<namespace>/webhooks/<provider>`, with a 256-KiB bound and no Platform credentials. The owning plugin still verifies the signature. This stays product-neutral in core and separate from the public Auth allow-list; the parity test declares the provider-callback exemption without importing Ecommerce.
+- Kept pending messages when no handler is registered, so installing a fulfillment extension later can consume them. Limited handlers to 32 and concurrent live calls to four. A Promise that times out retains its slot until it settles, because the handler contract supplies no cancellation signal; this prevents a hung provider from causing unbounded calls. Documented the limit.
+- Stored only a generic handler-failure description and returned safe provider error codes. Arbitrary exception text can contain payment credentials and must not reach records, responses or logs.
+- Added subscription/checkout linkage for payment attempts, delayed checkout success, transactional customer-reference merging, and bounded obsolete-handler cleanup to make the planned billing/recovery behavior hold in actual use. These extend the starting file list as needed; no separate billing system or core payment-provider coupling was introduced.
+- Built the service-page broker helper into the package bundles, with npm ignore overrides so generated assets remain ignored by Git while present in published tarballs. No service runtime dependencies or install scripts were added.
+- Live Stripe qualification stays in Part 14 as planned. This part proves fake-client behavior and locally generated signatures; it does not claim a real payment was qualified.
+
+Added items: none. Part 13 is ready.

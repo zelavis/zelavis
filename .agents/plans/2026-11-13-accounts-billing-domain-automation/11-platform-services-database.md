@@ -1,8 +1,8 @@
 # A durable database for services on the Platform
 Job: Give services that run in the Platform runtime the same `core.database` a Project gives its services, durable, backed up with the Platform, and reachable by nothing else, so Ecommerce and Hosting can keep business records on the Platform.
 Date: 2026-11-13
-Status: planned
-Verified-at: b04fa02d95
+Status: done
+Verified-at: 0e4548dbcc (refreshed 2026-11-16 against the Zelavis Auth working tree, before it was committed; line numbers dropped in favour of symbols)
 Part: 11 of 14. Read 00-overview.md first.
 
 To start:    Execute part 11 in .agents/plans/2026-11-13-accounts-billing-domain-automation/11-platform-services-database.md. Read 00-overview.md first, then start with the part's section 8.
@@ -10,30 +10,32 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Record the baseline.
-- [ ] 2. Open the Platform services database in the Node adapter.
-- [ ] 3. Hand it to services only.
-- [ ] 4. Back it up with the Platform and restore it host-locally.
-- [ ] 5. Prove Ecommerce persists on the Platform.
-- [ ] 6. Document the services database.
-- [ ] 7. Self-audit.
+- [x] 1. (2026-11-17) Baseline build, 25 Platform tests and 21 Ecommerce tests passed.
+- [x] 2. (2026-11-17) Services database opens without backups host; build and six focused tests passed.
+- [x] 3. (2026-11-17) Service-only wiring, absent database routes and environment 503 proved; build and seven tests passed.
+- [x] 4. (2026-11-17) Shared host-local restore, interruption guard and rollback; build and 14 focused/parity tests passed.
+- [x] 5. (2026-11-17) Ecommerce installed through the Node Platform retains a product after restart; build and 22 Ecommerce tests passed.
+- [x] 6. (2026-11-17) Storage, backup and restore docs plus matching durable guidance; docs check passed.
+- [x] 7. (2026-11-17) Reviewed session diff and new files; focused tests, full verify, ci:ui, docs and whitespace checks passed.
 
 ## 0. Summary and finish line
 
-A service installed on the Platform today gets no `core.database`: the Node adapter turns the database subsystem off for the Platform role (`packages/zelavis/src/adapters/node.ts:280-291`: `database: false`), and `activateServiceRegistry` passes `core.database` only when the runtime has one (`packages/zelavis/src/index.ts:7043-7050`). Ecommerce then treats the host as deliberately database-less and keeps everything in memory (`zelavis-services/ecommerce/src/ecommerce-plugin.ts:177`, `:544-549`), which is unacceptable for money. This part opens one `zelavis/db` database for the Platform's services at `<data>/services-database/`, hands it to services through `core.database` and to nothing else (no HTTP endpoints, no dashboard, not the Platform's own features), includes it in the Platform's backups, and adds a host-local restore.
+A service installed on the Platform today gets no `core.database`: the Node adapter turns the database subsystem off for the Platform role (`packages/zelavis/src/adapters/node.ts`, `databaseOptions` and the Platform `nextSubsystems` with `database: false`), and service activation passes `core.database` only when the runtime has one (`...(resolvedDatabaseApi === undefined ? {} : { database: resolvedDatabaseApi })` in `packages/zelavis/src/index.ts`). Ecommerce then treats the host as deliberately database-less and keeps everything in memory (`zelavis-services/ecommerce/src/ecommerce-plugin.ts` → `hasNoDatabase` and the setup that uses it), which is unacceptable for money. This part opens one `zelavis/db` database for the Platform's services at `<data>/services-database/`, hands it to services through `core.database` and to nothing else (no HTTP endpoints, no dashboard, not the Platform's own features), includes it in the Platform's backups, and adds a host-local restore.
 
 - **In scope**: the database, its wiring, backup component and restore command, an Ecommerce persistence test on a Platform, docs.
 - **Out of scope**: per-service isolation inside that database (services on one runtime share it, as a Project's services share the App database; see Decisions); an operator Database page for it; Bun.
-- **Done means**: (a) a Platform started by the Node adapter opens `<data>/services-database/shards` and closes it on shutdown; (b) a service's setup receives `core.database` with `forTenant`; (c) the Platform's own subsystems still see no database: `GET /runtime/config` reports `database.available: false` on the Platform, no `/database/*` route is mounted there, and remote environment routes still answer their existing 503 for session persistence; (d) a Platform backup run holds both `system-store` and `database` components, and `zelavis services-database restore DIR --confirm restore` replaces the database with a restored image while the Platform is stopped; (e) Ecommerce installed on a Platform keeps a product across a Platform restart; (f) `verify`, `docs:check` pass.
+- **Done means**: (a) a Platform started by the Node adapter opens `<data>/services-database/shards` and closes it on shutdown; (b) a service's setup receives `core.database` with `forTenant`; (c) the Platform's own subsystems still see no database: `GET /runtime/config` reports `database.available: false` on the Platform, no `/database/*` route is mounted there, and remote environment routes still answer their existing 503 for session persistence; (d) a Platform backup run holds the `identity`, `system-store` and `database` components, and `zelavis services-database restore DIR --confirm restore` replaces the database with a restored image while the Platform is stopped; (e) Ecommerce installed on a Platform keeps a product across a Platform restart; (f) `verify`, `docs:check` pass.
 - **Owner decision (2026-11-13, this conversation)**: money lives in Ecommerce, which must run on the Platform for hosting billing; Ecommerce stays a service. This part is the storage that makes that possible.
 - **Supplement**: updated in this run (overview section 0).
+- **Refreshed 2026-11-16** (Zelavis Auth plan part 16): the Platform's one backups host now belongs to the identity database (Zelavis Auth plan part 3), opened in `node.ts` with `backups: { directory: <data>/backups, componentName: "identity", scope }` and the System Store as an extra component. The services database joins that host as its `database` component and opens no backups host of its own; its restore command mirrors `zelavis identity-database restore`.
 - **Sources read**: `AGENTS.md § Platform And App Service Boundary` (System Store, App database), `§ Database Architecture Rules` (backups, images), `§ Service Loading Rules`; files below.
 
 ## 1. Context packet
 
 **Glossary.**
 - **Services database**: the one `zelavis/db` database the Platform opens for its services. Not the System Store and not an App database.
-- **Service Tenant**: the Tenant a service writes, by convention `service:<package name>` (Ecommerce already uses it: `ecommerce-plugin.ts:545-547`).
+- **Service Tenant**: the Tenant a service writes, by convention `service:<package name>` (Ecommerce already uses it in its setup in `ecommerce-plugin.ts`).
+- **Identity database**: the Platform's Zelavis Auth database at `<data>/identity-database/` (`AGENTS.md § Zelavis Auth`), which owns the Platform's backups host. Never touched by this part except to add a component to its host.
 
 **Governing rules.**
 - R1 > "The Platform process does not mount an app-facing `zelavis/db` service by default." `AGENTS.md § Platform And App Service Boundary`. The services database is not app-facing: no routes, no dashboard.
@@ -43,36 +45,36 @@ A service installed on the Platform today gets no `core.database`: the Node adap
 - R5 > "This is operational isolation for trusted Project code, not a hostile-code security sandbox." `AGENTS.md § Platform And App Service Boundary` (the same holds for services in one runtime).
 
 **System today.**
-- `packages/zelavis/src/adapters/node.ts:280-291`: `databaseOptions = options.database ?? (isProjectRuntime ? {} : false)`; Platform `nextSubsystems` has `database: false, storage: false, workloads: false`.
-- `node.ts:309-322`: Platform backups host `backupsHost({ directory: join(dataDirectory, "backups"), components: [systemStoreComponent(systemStore, writeLines)], scope })`, passed on as `platformBackups` (`:708`) and served by `platformBackupRoutes` (`packages/zelavis/src/index.ts:2774`).
-- `node.ts:327-352`: Project database options (`directory`, `nodeId: "local"`, `backupComponents`).
-- `packages/zelavis/src/db/node-host.ts:57-82` `OpenNodeDatabaseOptions` (`directory`, `engine`, `shards`, `virtualRanges`, `nodeId`, `backupComponents`, `leases`, `lease`, `appShards`, `crossTenantRefresh`); `:277-298`: it creates its own `backupsHost({ directory: join(options.directory, "..", "backups"), components: [databaseComponent(database, engine), ...(options.backupComponents ?? [])] })` and an `imagesHost` at `join(options.directory, "..", "images")`, and returns `{ database, api, partitionMap, engine, close }`.
-- `packages/zelavis/src/db/node-backups.ts:222-226` `databaseComponent` (name `"database"`); `:210` `restore(name, runId, { recoveryKey })` unpacks to `<backups>/restored/<name>-<runId>`, one subdirectory per component.
-- `packages/zelavis/src/platform/platform-backups.ts:26` `systemStoreComponent`.
-- `packages/zelavis/src/index.ts:1594-1613` `resolveDatabaseCoreService` (accepts a `DatabaseRuntimeApi` as is); `:6909-6922` the runtime's `databaseSubsystem`, `databaseEndpointGroups`, `resolvedDatabaseApi`; `:7043-7050` `core.database` for services; `:7635` `database: { available: Boolean(databaseSubsystem) }`; `:7716` the Platform endpoint group receives `resolvedDatabaseApi` (remote environment sessions use it, `:3944-4302`); `:7770` mounts `databaseEndpointGroups`.
-- CLI host-local precedent: `zelavis system-store import RECORDS.jsonl --confirm import [--replace] [--data-dir DIR]` (`packages/zelavis/src/cli/system-store.ts:12`, `:56-60`); restore hint text `packages/zelavis/src/cli/backups.ts:72`.
-- Ecommerce: `isDatabaseRuntimeApi` `ecommerce-plugin.ts:161-167`, `hasNoDatabase` `:177`, setup `:523-549`.
+- `packages/zelavis/src/adapters/node.ts`: `databaseOptions = options.database ?? (isProjectRuntime ? {} : false)`; Platform `nextSubsystems` has `database: false, storage: false, workloads: false`.
+- `node.ts`, the block commented "The Platform's own backups": for the Platform role it makes `backupScope`, opens the identity database with `openNodeDatabase({ directory: join(dataDirectory, "identity-database", "shards"), nodeId: "local", shards: ["identity-0"], backups: { directory: join(dataDirectory, "backups"), componentName: "identity", scope: backupScope }, backupComponents: [systemStoreComponent(systemStore, writeLines)] })`, sets `platformBackups = identity.backups` and `nextSubsystems.identityDatabase = identity.api`; `platformBackups` is passed on and served by `platformBackupRoutes` (`packages/zelavis/src/index.ts`).
+- `node.ts`: Project database options (`directory`, `nodeId: "local"`, `backupComponents`).
+- `packages/zelavis/src/db/node-host.ts` `OpenNodeDatabaseOptions` (`directory`, `engine`, `shards`, `virtualRanges`, `nodeId`, `backupComponents`, `backups?: { directory?, componentName?, scope? }`, `leases`, `lease`, `appShards`, `crossTenantRefresh`); `openNodeDatabase` always builds a `backupsHost({ directory: options.backups?.directory ?? join(options.directory, "..", "backups"), components: [databaseComponent(database, engine, options.backups?.componentName), ...backupComponents] })` and an `imagesHost` beside the shards, and returns `{ database, api, partitionMap, engine, backups, close }`.
+- `packages/zelavis/src/db/node-backups.ts` → `databaseComponent(database, engine, name = "database")`; `restore(name, runId, { recoveryKey })` unpacks to `<backups>/restored/<name>-<runId>`, one subdirectory per component.
+- `packages/zelavis/src/platform/platform-backups.ts` → `systemStoreComponent`.
+- `packages/zelavis/src/index.ts`: `ZelavisSubsystemOptions` (has `identityDatabase?`, documented "Never mounted as routes, never `core.database`"); `resolveDatabaseCoreService` (accepts a `DatabaseRuntimeApi` as is); the runtime's `databaseSubsystem`, `identityDatabaseSubsystem`, `databaseEndpointGroups`, `resolvedDatabaseApi`; `core.database` for services (`...(resolvedDatabaseApi === undefined ? {} : { database: resolvedDatabaseApi })`); `database: { available: Boolean(databaseSubsystem) }` in `runtime/config`; the Platform endpoint group receives `resolvedDatabaseApi` (remote environment sessions use it); `databaseEndpointGroups` mounted.
+- CLI host-local precedents: `zelavis identity-database restore DIR --confirm restore [--data-dir DIR] [--json]` (`packages/zelavis/src/cli/identity-database.ts`, dispatched from `cli/commands.ts`) and `zelavis system-store import` (`cli/system-store.ts`); restore hint text in `cli/backups.ts`.
+- Ecommerce: `isDatabaseRuntimeApi`, `hasNoDatabase` and the setup in `zelavis-services/ecommerce/src/ecommerce-plugin.ts`.
 
-**Pattern to mirror.** The Project path in node.ts for opening a database with backup components; `system-store import` for a host-local, confirmed, Platform-stopped command that refuses while the data directory is owned by a running Platform (read `cli/system-store.ts` in full for how it detects that).
+**Pattern to mirror.** The identity database's opening in node.ts (one host, several components); `zelavis identity-database restore` (`cli/identity-database.ts`, read in full) for a host-local, confirmed, Platform-stopped restore that moves the current shards aside and refuses while a Platform owns the data directory.
 
 **Traps.**
 - Passing the services database as `subsystems.database`: the Platform's own features would start using it (remote environment sessions, `runtime/config` database availability, `/database/*` routes). Use a separate `subsystems.servicesDatabase`.
-- Two backup schedules on one Platform: open the services database so its own backups host *is* the Platform's (same directory, both components), instead of a second host.
+- Two backups hosts on one Platform: the services database opens with no backups host of its own, and its component joins the identity database's host, which stays the Platform's one host.
 - A route to restore it: refused by R3; restore is a CLI command with the Platform stopped.
 
 ## 2. Design
 
 **Authority and scope.** The database belongs to the Platform runtime; services reach it only through `core.database` in their setup context. Operators reach it only through backups (existing `server.backups.*` routes) and the host-local restore command.
 
-**Persistence.** `openNodeDatabase({ directory: join(dataDirectory, "services-database", "shards"), nodeId: "local", shards: ["s0"], backupComponents: [systemStoreComponent(systemStore, writeLines)] })` (check `ShardId`'s format in `packages/zelavis/src/db/topology.ts` and use the smallest valid single-shard list). Its backups host is then at `<data>/services-database/backups`; to keep the Platform's backups where they are today, add NEW option `backupsDirectory?: string` to `OpenNodeDatabaseOptions` (default `join(options.directory, "..", "backups")`) and pass `join(dataDirectory, "backups")`. The returned `api.backups` replaces the separately built `platformBackups` host, which is deleted from node.ts. Images: `<data>/services-database/images`.
+**Persistence.** Open the services database before the identity database: `openNodeDatabase({ directory: join(dataDirectory, "services-database", "shards"), nodeId: "local", shards: ["services-0"], backups: false })` (check `ShardId`'s format in `packages/zelavis/src/db/topology.ts`; `"identity-0"` is the precedent). NEW: `OpenNodeDatabaseOptions.backups` accepts `false`, in which case `openNodeDatabase` builds no backups host and returns `backups: undefined` (type `DatabaseBackupsHost | undefined`; update the callers that read it), and the runtime API it returns has no backups. Then add `databaseComponent(services.database, services.engine, "database")` to the identity database's `backupComponents`, beside `systemStoreComponent`. The Platform keeps one backups host at `<data>/backups` with the `identity`, `system-store` and `database` components. Images: `<data>/services-database/images`.
 
-**Wiring.** NEW `ZelavisSubsystemOptions.servicesDatabase?: DatabaseRuntimeApi` (`packages/zelavis/src/index.ts:485-500`), set only by the Node adapter for the Platform role. In the composition, `core.database` for services is `resolvedDatabaseApi ?? options.subsystems?.servicesDatabase`, observed through `apiUsage.observe(…, "database")` as today. Nothing else reads `servicesDatabase`. node.ts closes it with the runtime (`stores.add({ close: opened.close })`).
+**Wiring.** NEW `ZelavisSubsystemOptions.servicesDatabase?: DatabaseRuntimeApi` (`packages/zelavis/src/index.ts`, beside `identityDatabase`), set only by the Node adapter for the Platform role. In the composition, `core.database` for services is `resolvedDatabaseApi ?? options.subsystems?.servicesDatabase`, observed through `apiUsage.observe(…, "database")` as today. Nothing else reads `servicesDatabase`. node.ts closes it with the runtime (`stores.add({ close: () => services.close() })`), after the identity database is closed.
 
-**Restore.** NEW `zelavis services-database restore DIR --confirm restore [--data-dir DIR]`: host-local, refuses while the Platform owns the data directory (same check as `system-store import`), refuses unless `DIR` opens as a database (`openNodeDatabase({ directory: DIR })` then close), moves `<data>/services-database/shards` to `<data>/services-database/shards.replaced-<UTC timestamp>`, then moves `DIR` into place. `cli/backups.ts:72` prints both apply commands after a restore.
+**Restore.** NEW `zelavis services-database restore DIR --confirm restore [--data-dir DIR] [--json]`, built the way `zelavis identity-database restore` is (share its helper if it factors cleanly; do not copy it a second time): host-local, refuses while the Platform owns the data directory, refuses unless `DIR` opens as a database, moves `<data>/services-database/shards` to `<data>/services-database/shards.replaced-<UTC timestamp>`, then moves `DIR` into place. The restore hint in `cli/backups.ts` names the `database` component's command beside the `identity` and `system-store` ones.
 
 **Invariants.**
 1. On the Platform role, `databaseSubsystem` stays undefined; only services see the services database.
-2. One backups host per Platform, holding `database` and `system-store`.
+2. One backups host per Platform (the identity database's), holding `identity`, `system-store` and `database`.
 3. Restore never runs while a Platform holds the data directory.
 
 **Failure model.** A failure to open the services database fails Platform start with the database's own error (as an unopenable System Store does). Restore errors: `"The Platform is running; stop it first."`, `"<DIR> is not a database image."`, each exit 1.
@@ -80,7 +82,7 @@ A service installed on the Platform today gets no `core.database`: the Node adap
 **Concurrency, bounds, interruption.** The database's own writer lease and fencing apply. Restore moves the current `shards` aside first and the image in second; if the second move fails it moves `shards.replaced-*` back before exiting. A crash between the two moves leaves `shards.replaced-*` and no `shards`, and since `openNodeDatabase` would create an empty database in a missing directory, the Node adapter refuses to start the Platform when `<data>/services-database/shards.replaced-*` exists without `shards`, with the message "An interrupted services-database restore needs finishing: run zelavis services-database restore again." Rerunning the command finishes the move.
 
 **Decisions and rejected alternatives.**
-- One shared services database, service Tenants by convention, over one database per service: a per-service database would need a per-service setup context and multiply open stores; the isolation it would add is not a security boundary in one process (R5). A narrowed `DatabaseRuntimeApi` view was rejected: the interface is large (`packages/zelavis/src/db/runtime-api.ts:345-385`) and a view that hides parts of it would be a second contract to keep in step.
+- One shared services database, service Tenants by convention, over one database per service: a per-service database would need a per-service setup context and multiply open stores; the isolation it would add is not a security boundary in one process (R5). A narrowed `DatabaseRuntimeApi` view was rejected: the interface is large (`DatabaseRuntimeApi` in `packages/zelavis/src/db/runtime-api.ts`) and a view that hides parts of it would be a second contract to keep in step.
 - Implementing Ecommerce repositories over `core.store` (System Store) instead: rejected; it would duplicate Ecommerce's persistence and lose the documents API's checks, outbox and idempotency receipts that part 12 relies on.
 
 **Decisions taken for the user.** The directory name `services-database`; one shard.
@@ -90,33 +92,33 @@ A service installed on the Platform today gets no `core.database`: the Node adap
 ## 3. Contracts
 
 - `ZelavisSubsystemOptions.servicesDatabase?: DatabaseRuntimeApi` (internal, host-supplied).
-- `OpenNodeDatabaseOptions.backupsDirectory?: string`.
-- CLI `zelavis services-database restore DIR --confirm restore [--data-dir DIR]`, host-local, no HTTP or SDK form by design (R3), listed in `test/capability-parity.test.mjs`'s exemptions only if that test enumerates CLI commands without routes (check the file; host-local commands such as `system-store import` show where they are declared).
+- `OpenNodeDatabaseOptions.backups` also accepts `false` (no backups host); `OpenNodeDatabase.backups` becomes `DatabaseBackupsHost | undefined`.
+- CLI `zelavis services-database restore DIR --confirm restore [--data-dir DIR] [--json]`, host-local, no HTTP or SDK form by design (R3), listed in `test/capability-parity.test.mjs`'s exemptions only if that test enumerates CLI commands without routes (check the file; host-local commands such as `system-store import` show where they are declared).
 
 ## 4. Execution steps
 
 ### 1. Record the baseline
 
-- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/platform-backups.test.mjs test/services-runtime.test.mjs test/db-scheduled-backups.test.mjs; echo "exit $?"`; `pnpm --filter @zelavis/ecommerce test; echo "exit $?"`. Record failures at `HEAD` in the execution report.
+- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/platform-backups.test.mjs test/platform-identity-database.test.mjs test/services-runtime.test.mjs test/db-scheduled-backups.test.mjs; echo "exit $?"`; `pnpm --filter @zelavis/ecommerce test; echo "exit $?"`. Record failures at `HEAD` in the execution report.
 
 ### 2. Open the Platform services database in the Node adapter
 
-- **Files**: `packages/zelavis/src/db/node-host.ts:57-82`, `:277-282` (`backupsDirectory`); `packages/zelavis/src/adapters/node.ts:309-322`, `:651-655`; NEW `packages/zelavis/test/platform-services-database.test.mjs`.
-- **Change**: replace the separate `backupsHost` block with opening the services database as section 2 says (import `openNodeDatabase` from `"../db/node-host.js"` in node.ts; `systemStoreComponent` is already imported at `:7`); set `platformBackups = opened.api.backups`; return `subsystems.servicesDatabase = opened.api` for the Platform role; close it with the runtime.
+- **Files**: `packages/zelavis/src/db/node-host.ts` (`OpenNodeDatabaseOptions.backups: … | false`, `OpenNodeDatabase.backups` optional); `packages/zelavis/src/adapters/node.ts` (the "Platform's own backups" block); callers of `OpenNodeDatabase.backups` (`rg -n "\.backups\b" packages/zelavis/src/adapters packages/zelavis/src/db`); NEW `packages/zelavis/test/platform-services-database.test.mjs`.
+- **Change**: open the services database as section 2 says, before the identity database, and pass its component into the identity database's `backupComponents`; return `nextSubsystems.servicesDatabase = services.api` for the Platform role; close it with the runtime.
 - **Depends on**: 1.
-- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/platform-services-database.test.mjs test/platform-backups.test.mjs; echo "exit $?"` prints `exit 0`; the new test asserts `<data>/services-database/shards` exists after start and the runtime closes cleanly.
+- **Check**: `pnpm --filter zelavis run build; pnpm --filter zelavis exec node --test test/platform-services-database.test.mjs test/platform-backups.test.mjs test/platform-identity-database.test.mjs; echo "exit $?"` prints `exit 0`; the new test asserts `<data>/services-database/shards` exists after start, no `<data>/services-database/backups` exists, and the runtime closes cleanly.
 
 ### 3. Hand it to services only
 
-- **Files**: `packages/zelavis/src/index.ts:485-500`, `:7043-7050`; `packages/zelavis/test/platform-services-database.test.mjs`.
+- **Files**: `packages/zelavis/src/index.ts` (`ZelavisSubsystemOptions`, service activation's `core.database`); `packages/zelavis/test/platform-services-database.test.mjs`.
 - **Change**: section 2 "Wiring".
 - **Depends on**: 2.
 - **Check**: rebuild; the test composes a Platform with a test service whose `zelavis.setup` records `typeof context.core.database?.forTenant`; asserts `"function"`; asserts `GET /runtime/config` capabilities `database.available === false`; asserts `GET /zelavis/api/v1/database/tenants` (or whichever database route `defineDatabaseEndpointGroups` mounts first; read it) is 404; `exit 0`.
 
 ### 4. Back it up with the Platform and restore it host-locally
 
-- **Files**: NEW `packages/zelavis/src/cli/services-database.ts`; `packages/zelavis/src/cli/commands.ts` (usage line beside `:146`, dispatch); `packages/zelavis/src/cli/backups.ts:72`; `packages/zelavis/test/platform-services-database.test.mjs`; `packages/zelavis/test/capability-parity.test.mjs` only if step's contract note applies.
-- **Context**: Pattern: `packages/zelavis/src/cli/system-store.ts` in full.
+- **Files**: NEW `packages/zelavis/src/cli/services-database.ts` (or a shared restore helper with `cli/identity-database.ts`); `packages/zelavis/src/cli/commands.ts` (usage line beside `identity-database restore`, dispatch); `packages/zelavis/src/cli/backups.ts` (restore hint); `packages/zelavis/test/platform-services-database.test.mjs`; `packages/zelavis/test/capability-parity.test.mjs` only if step's contract note applies.
+- **Context**: Pattern: `packages/zelavis/src/cli/identity-database.ts` in full.
 - **Change**: section 2 "Restore"; restore-hint text names both commands; the interrupted-restore start refusal from section 2 "Concurrency" in `packages/zelavis/src/adapters/node.ts` before the database opens (add `packages/zelavis/src/adapters/node.ts` to this step's files), with a test that creates `shards.replaced-1` and no `shards` and expects start to fail with that message.
 - **Depends on**: 3.
 - **Check**: rebuild; test: write a document through a test service, run a Platform backup (`POST` the existing backup-run route or the backups host directly), stop, restore the run, write a second document, stop, `zelavis services-database restore` the restored `database` component, start, and see only the first document; restore while running → exit 1 with the message; `exit 0` overall.
@@ -130,7 +132,7 @@ A service installed on the Platform today gets no `core.database`: the Node adap
 
 ### 6. Document the services database
 
-- **Files**: `website/src/content/docs/architecture/` page that describes Platform storage and backups (`rg -ln "system-store import" website/src/content/docs`); `AGENTS.md § Platform And App Service Boundary`, after "The Platform process does not mount an app-facing `zelavis/db` service by default." add: "Services installed on the Platform share one private services database (`<data>/services-database`), reachable only as their `core.database`; each keeps to its `service:<name>` Tenant, it has no routes or dashboard, it is backed up with the System Store, and it is restored host-locally with `zelavis services-database restore`."
+- **Files**: the docs that describe Platform storage and backups (`rg -ln "identity-database restore" website/src/content/docs`: `architecture/platform-project-recipes.md`, `api/database.md`, `cli/index.md`); `AGENTS.md § Platform And App Service Boundary`, after "The Platform process does not mount an app-facing `zelavis/db` service by default." add: "Services installed on the Platform share one private services database (`<data>/services-database`), reachable only as their `core.database`; each keeps to its `service:<name>` Tenant, it has no routes or dashboard, it is backed up with the System Store and the identity database, and it is restored host-locally with `zelavis services-database restore`."
 - **Depends on**: 5.
 - **Check**: `pnpm run docs:check; echo "exit $?"` prints `exit 0`.
 
@@ -140,7 +142,7 @@ A service installed on the Platform today gets no `core.database`: the Node adap
 
 ## 5. Tests
 
-`packages/zelavis/test/platform-services-database.test.mjs`: opened and closed with the runtime; services get `forTenant`; Platform reports no database and mounts no database routes; remote environment session route still 503 "Environment session persistence is unavailable." (arrange a principal with the needed permission; read `index.ts:4177` for the route); backup run contains `database` and `system-store` components; restore round trip; restore refused while running; restore of a non-database directory refused and the original left in place. `zelavis-services/ecommerce/test/platform-persistence.test.mjs`: product survives restart.
+`packages/zelavis/test/platform-services-database.test.mjs`: opened and closed with the runtime; services get `forTenant`; Platform reports no database and mounts no database routes; remote environment session route still 503 "Environment session persistence is unavailable." (arrange a principal with the needed permission; find the route with `rg -n "Environment session persistence is unavailable" packages/zelavis/src/index.ts`); backup run contains `identity`, `system-store` and `database` components; restore round trip; restore refused while running; restore of a non-database directory refused and the original left in place. `zelavis-services/ecommerce/test/platform-persistence.test.mjs`: product survives restart.
 
 ## 6. Docs and project notes
 
@@ -158,7 +160,7 @@ From the root: `pnpm run verify`, `pnpm run docs:check`, `git diff --check`. Use
 > - First compare `Verified-at` with `HEAD`. If any path the plan cites changed since (`git diff --name-only <Verified-at>..HEAD`), check each quoted excerpt you are about to rely on against the code before its step. Adapt a stale step to the current code and record the deviation. Use `[!]` only if a concrete prerequisite prevents execution. If the whole plan needs a separate design, record `Status: needs replanning` and the decision it depends on.
 > - `Status: planned`: you are the first. Set `Status: in progress`.
 > - Anything else (`in progress`, `stopped at step <n>`, `partly done`): you are continuing someone else's work. First read every entry under `## Execution report`. Then confirm the last `[x]` step's check still passes. Reopen it if its check fails and resolve it using the rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff` on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]` lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
-> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, end the session with one line naming the decision and saying the plan needs `/plan-writer refresh`.
+> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, name the decision and give a `/plan-writer refresh` handoff.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another agent may still be working on it. Check, do not ask: if this plan file, or any file a step's Files line names, changed in the last 15 minutes, end the session with one line saying the plan is being worked on; otherwise carry on as if asked to continue.
 >
 > In a split plan, also read the execution reports of the earlier parts. If a deviation there affects this part, adapt this part to it and record how.
@@ -193,5 +195,46 @@ From the root: `pnpm run verify`, `pnpm run docs:check`, `git diff --check`. Use
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+
+### Session 1: 2026-11-17
+
+Final status: **done**, in the main `dev` checkout at
+`0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`. Steps 1–7 are complete. Existing
+working-tree changes were preserved, with a session-start snapshot used to review
+only this session's changes. No branch, worktree, staging, commit, push, publication
+or deployment was made. No blocker remains; part 12 is next. The overview remains
+in progress for its remaining parts.
+
+Steps carried out:
+
+- 1 done: read section 8, the overview, repository/skill guidance and earlier execution reports; Verified-at equals HEAD, and current working-tree sources were checked before their steps. Platform build, 25 backup/identity/service/schedule tests and 21 Ecommerce baseline tests passed. No pre-existing failure was found.
+- 2 done differently: added `backups: false` and an optional returned backups host; opened one `services-0` database before identity and attached its `database` component to the identity host. One cleanup group stops backup schedules, closes identity, then services, including partial acquisition. Build and six focused tests passed. Updated the existing identity backup assertion to expect the third component.
+- 3 done: `servicesDatabase` is read only for service setup's observed `core.database`. The fixture proves `forTenant`, no runtime database/capability/routes, unchanged environment-session 503, private image placement and refused writes after shutdown. The initial build and seven focused tests passed; the expanded proof passed again in the final runs.
+- 4 done differently: shared the identity restore implementation with the new host-local services command, including dispatch, help and backup restore hints. Added image validation, live-owner refusal, rollback and interrupted-restore startup refusal/retry. Services images move; identity images still copy. Actual CLI subprocesses prove success and exit-1 refusals. Injected move failure proves the old shards return and maintenance ownership releases. Build and 14 focused/parity tests passed at this step; final focused run passed 15 after the audit added the startup-failure case. Capability parity needs no exemption because it derives remote operations rather than enumerating host-local commands.
+- 5 done differently: the Ecommerce test uses the real Node adapter and ordinary service activation route, with the operator-checkout catalogue and no network sources. A product created over HTTP survives a Platform restart while the Platform still reports no app-facing database. Build and all 22 Ecommerce tests passed. An initial injected-catalogue fixture duplicated the shipped marketplace's available Ecommerce entry; using the real activation path fixed the fixture and strengthened the proof.
+- 6 done: documented the services database, shared backup components, source-consuming restore, rollback and interrupted recovery in the storage architecture, database API and CLI pages. Updated AGENTS.md and the core-platform skill together. Docs check passed.
+- 7 done: reread the session diff and all new files against the finish line, preserved earlier edits, checked forbidden patterns and reran every added/touched suite through full verification. The audit found that failed database acquisition could leave its explicit scope open; `openNodeDatabase` now closes it on database/backup-host open failure. A corrupt-services-database startup/recovery test proves the original database error is retained and resources release. Final gates all passed after the last implementation/test edit.
+
+Verification observed:
+
+- `pnpm --filter zelavis run build` passed at each required milestone.
+- Baseline targeted Platform tests: 25 passed; baseline Ecommerce: 21 passed.
+- Final focused `pnpm --filter zelavis exec node --test test/platform-services-database.test.mjs test/platform-backups.test.mjs test/platform-identity-database.test.mjs test/capability-parity.test.mjs`: 15 passed, zero failures.
+- `pnpm --filter @zelavis/ecommerce test`: 22 passed, zero failures; rerun successfully in root verification after the final source edit.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run verify`: exit 0, all workspace builds/typechecks/tests and Effect/TigerStyle/repository gates passed. Zelavis: 3,398 passed, 30 skipped, zero failures (3,428 total). Ecommerce: 22 passed. No baseline was expanded and no gate was suppressed.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui`: exit 0; production bundle, desktop/mobile route/sidebar/action checks, Server Backups, extensions, embedded Platform, nested mounts and account/auth qualifications passed.
+- `pnpm run docs:check` and `git diff --check`: exit 0. New untracked files also passed a separate trailing-whitespace check. Final docs/whitespace checks were repeated after updating this report.
+
+Deviations and decisions taken for the user:
+
+- Kept one shared restore protocol rather than duplicating the identity command. Identity retains its existing source-preserving copy semantics, now staged before replacement; services consumes its source as the plan requires. Both validate the current local Platform image's required SQLite shards before opening it, because opening an empty/missing shard would otherwise create a database and falsely validate it. Moves run without interruption between replacement and rollback; a process crash remains covered by the specified services startup guard and retry.
+- `backups: false` passes no host into `runtimeApiFor`; the existing required `DatabaseRuntimeApi.backups` member consequently uses its existing no-backups refusal surface. There is no second runtime-API shape and no services backups host or schedules directory.
+- Core's test uses a statically composed service fixture to capture the setup API without product coupling. Ecommerce separately proves the real package-loader/activation path. The small scope-cleanup fix in `node-host.ts` is required for failed image validation/startup to release resources.
+- Restore-fault injection initially targeted an immutable ESM namespace and then a noncanonical macOS `/var` path. The final test mocks the builtin's mutable default export, synchronizes its ESM bindings and uses real paths; its assertions prove that replacement actually failed after the old shards moved and that rollback occurred. No assertion was weakened to claim a pass. A post-close cached count was replaced with an actual write, which meaningfully checks release of the writer.
+
+Added items: none.

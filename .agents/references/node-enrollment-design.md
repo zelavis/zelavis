@@ -109,7 +109,7 @@ Paths below are relative to `packages/zelavis` unless stated otherwise.
 | Join, pinning and certificates | `src/cli/worker.ts`, `src/adapters/_pinned-fetch.ts`, `_agent-certificate.ts`; join, pinning and certificate tests |
 | Listener and trust refresh | `src/adapters/_enrollment-listener.ts`, `_platform-tls.ts`, `_trust-refresh.ts`, `src/cli/agent.ts` |
 | Install, doctor and removal | `src/core/runtime/worker-installation-plan.ts`, `src/cli/install/worker.ts`, `src/adapters/_node-worker-uninstaller.ts`; worker installation/doctor tests |
-| Cloud first boot | `services/zelavis-cloud/src/first-boot.ts`, `src/platform/cloud-engine.ts`; cloud first-boot and engine tests |
+| Cloud first boot | `src/core/provider/worker-first-boot.ts`, `src/platform/cloud-engine.ts`; cloud first-boot and engine tests |
 
 `distribution/scripts/qualify-worker.sh` proves the real installer, accounts,
 units/path activation, real pinned enrollment and ready inventory, worker

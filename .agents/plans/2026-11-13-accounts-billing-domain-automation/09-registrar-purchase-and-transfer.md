@@ -2,7 +2,7 @@
 
 Job: Let the Platform owner check, register, transfer in and renew domains with their own registrar account (Namecheap first, built into core), with durable orders that never buy twice.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 9 of 14. Read 00-overview.md first.
 
@@ -11,17 +11,17 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Confirm part 7's provider pattern and the baseline.
-- [ ] 2. Define the registrar capability contract.
-- [ ] 3. Add the built-in Namecheap registrar driver with a fake API.
-- [ ] 4. Add the registrar connection and contact profile.
-- [ ] 5. Add durable orders and reconciliation.
-- [ ] 6. Expose the operations over HTTP.
-- [ ] 7. Add SDK and CLI parity.
-- [ ] 8. Add the Server → Domains registrar section.
-- [!] 9. Qualify against the Namecheap sandbox. (blocked by: a Namecheap sandbox API user, API key and whitelisted client IP from the user; check: `pnpm release:qualify:registrar` prints `PASS check`, `PASS register`, `PASS renew`, `PASS list` and exits 0)
-- [ ] 10. Document registrar operations.
-- [ ] 11. Self-audit.
+- [x] 1. Confirm part 7's provider pattern and the baseline. (2026-11-16: build and edge-dns tests pass.)
+- [x] 2. Define the registrar capability contract. (2026-11-16: package build and root typecheck pass.)
+- [x] 3. Add the built-in Namecheap registrar driver with a fake API. (2026-11-16: build, driver and boundary tests pass.)
+- [x] 4. Add the registrar connection and contact profile. (2026-11-16: build and connection/contact tests pass.)
+- [x] 5. Add durable orders and reconciliation. (2026-11-16: build and all 9 state/connection tests pass.)
+- [x] 6. Expose the operations over HTTP. (2026-11-16: build and 10 controller/HTTP tests pass.)
+- [x] 7. Add SDK and CLI parity. (2026-11-16: build, controller, HTTP, SDK/CLI and capability-parity tests pass.)
+- [x] 8. Add the Server → Domains registrar section. (2026-11-16: typecheck, 95 UI unit tests and ci:ui pass; registrar browser scenario passes at both sizes.)
+- [x] 9. Qualify against the Namecheap sandbox. (2026-11-17: live sandbox printed PASS check, register, renew and list; exit 0. Lowercase pricing category fix passed all 24 focused tests.)
+- [x] 10. Document registrar operations. (2026-11-17: guide and README record successful sandbox qualification, retaining the production limit; docs:check passed.)
+- [x] 11. Self-audit. (2026-11-17: final root verify, ci:ui, docs:check, focused regression and whitespace checks passed after the live sandbox fix.)
 
 ## 0. Summary and finish line
 
@@ -280,5 +280,88 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+
+### Session 1: 2026-11-16
+
+Final status: **partly done**. Steps 1–8, 10 and 11 are complete in the main
+`dev` checkout at `0e4548dbcc`; step 9 needs the owner's sandbox account inputs.
+No commit, push, publication, deployment or production registrar call was made.
+Earlier parts' uncommitted changes were preserved.
+
+Steps carried out:
+
+- 1 done: read the overview, section 8 and earlier execution reports; compared `b04fa02d95` with HEAD (committed differences were plans/guidance) and checked the current working-tree provider pattern. Platform build and the five Edge DNS baseline tests passed.
+- 2 done differently: added the runtime-neutral registrar contract, plugin discovery/refusals, public subpath, Edge re-export, capability and host resources. Added domain-specific `quote` and passed `confirm` into purchase methods so a premium quote can actually be enforced by its driver. Package build and root typecheck passed.
+- 3 done: added the built-in Namecheap driver, bounded XML subset parser, Node injection/export, fake XML tests, adapter-boundary coverage and sandbox qualification command. Checked the official Namecheap command documentation. Transfers add one year and encode EPP codes with the documented `base64:` prefix; premium registration/renewal use domain-specific prices, and unsupported premium transfers/EAP registrations are refused. The driver uses POST bodies, refuses redirects, bounds streamed XML to 1 MiB, includes returned ICANN fees, and calculates decimal totals exactly. Availability batches reuse their check and same-TLD price within that batch; purchase quotes are fresh. The driver exposes a validated numeric API error code with fixed text, because arbitrary provider text may echo secrets.
+- 4 done differently: credentials **and contacts** are encrypted with separate purpose keys. Contact GET returns the private profile only to purchase-authorized callers, as the explicit endpoint contract requires; no other response, order or log carries it. Revisions use CAS and refuse exhaustion. Tests cover validation, encryption and stale writes.
+- 5 done differently: added durable immutable intents, a bounded active-order index, CAS submission, per-key replay, original-account binding, price confirmation and reconciliation. Active intents precede the key index so an interrupted two-write gap is repairable without submitting. Price/contact/ownership checks occur before claiming a key, so a changed price leaves no key to release. Orders retain provider/mode, connection revision and pre-renewal expiry. Worker lifetime follows the existing Email worker (`start` after successful composition, stop before storage closes), because composition's `Effect.scoped` ends when the runtime is returned. Its idle timer does not keep an embedded process open. Shutdown aborts calls and drains the purchase permit. Tests include lost receipts, malformed receipts, definite refusal, timeout, idempotency, transfer status, expiry reconciliation, corruption, pagination and the 200-active-order bound. A real Platform shutdown/reopened SQLite-store test proves reconciliation completes with exactly one registration call.
+- 6 done: added 13 Platform-only, system-scoped registrar routes with bounded bodies, no-store responses and sanitized audit/error handling, plus permission vocabulary. HTTP tests prove exact system authority, view-only restrictions, stale-price refusal, request bounds and absence from Project runtimes.
+- 7 done: added `client.registrar` and `zelavis registrar`, including the extra quote operation; SDK/CLI behavioral and derived capability parity pass without exemptions.
+- 8 done differently: added the Server Domains registrar workspace, encrypted connection/contact forms, sandbox warning, quote and typed-confirmation dialog, URL-retained purchase key, paged inventory/orders and nameserver controls. The Domains menu accepts Edge view or registrar view; the page only loads each authorized surface. The action proof belongs in `scripts/test-embedded-server-views.mjs` beside the existing DNS/role cases, using a loopback XML API and the actual built-in driver. The route parity suite already visits `/server/domains`. Browser proof passes at desktop and mobile sizes, including reload before/after purchase and one registrar create per key.
+- 9 skipped, blocked: all three `NAMECHEAP_SANDBOX_*` inputs were absent. The secure API-key request timed out without a value. `pnpm release:qualify:registrar` exited 1 at its missing-input preflight, before any network request. Supply the sandbox API user/key and this machine's whitelisted outgoing IPv4; the same command must print all four `PASS` lines and exit 0 before this step can be checked off.
+- 10 done: added the registration guide, complete operation map and guide index link, package README, and matching durable guidance in `AGENTS.md` and the core-platform skill. Docs state sandbox qualification is still pending and describe the unresolved-order limit.
+- 11 done: reviewed new files and the relevant shared-file diffs, checked the invariants and forbidden patterns, reran all touched suites through final workspace verification, and ran the full production browser gate, docs and whitespace checks.
+
+Verification:
+
+- `pnpm --filter zelavis run build` and `pnpm run typecheck` passed during the relevant steps.
+- Focused registrar/driver/boundary/parity/Agent run: 38 tests passed; the subsequently added Platform/SQLite restart test also passed independently and in the final full suite.
+- Final focused registrar/Namecheap/boundary/capability-parity run passed all 26 tests, including explicit HTTP 201/replay-200 and stale-price 409 assertions, after the last test assertion edit. Application source was unchanged after the final full gates.
+- Focused writer-host-and-engine failover test passed after fixture hardening, proving real lease expiry, promotion and data access.
+- `pnpm --filter @zelavis/ui typecheck` and `pnpm --filter @zelavis/ui test` passed (95 UI unit tests).
+- Final `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` passed: all workspace builds/typechecks/suites, including 3,310 Zelavis tests passed, 0 failed and 30 skipped (3,340 total). Effect usage, TigerStyle and repository gates passed without baseline changes.
+- Final `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui` passed, including the registrar scenario at both sizes and the existing nested-auth suite.
+- Final `pnpm run docs:check` and `git diff --check` passed.
+- Sandbox qualification preflight exited 1 with the three input names only; this is a remaining prerequisite, not live qualification evidence.
+
+Additional adjustments from the audit:
+
+- BigInt constructors retain exact arithmetic while allowing the Next.js example's older TypeScript target to consume the SDK source. No example configuration was changed.
+- A required Agent replay test could detach before `ready` reached the Agent. It now waits for the actual output with a bounded timer rather than assuming process start flushed stdout.
+- A required failover fixture's three-second lease could expire during its planned Platform restart under full-suite load, before the intended writer kill. All fixture modes now use the existing race case's 20-second lease; assertions still exercise actual expiry, promotion, restart and data recovery. No production lease policy or assertions were weakened.
+- The exact control-plane route inventory gained the registrar routes. The XML tokenizer is sticky so malformed runs of opening brackets fail without repeatedly rescanning the input.
+
+**Decisions taken for the user:**
+
+- An outcome still unconfirmed after 24 hours remains `unknown`, with a check-the-registrar message, rather than becoming `failed` solely because time passed. It keeps the domain/account blocked against another spend, and reconciliation continues with bounded backoff. There is no manual resolution endpoint in this part. This is deliberately more conservative than the planned timeout-to-failed transition: elapsed time is not evidence that a charge did not happen.
+- An idempotency key binds the complete non-secret intent and its principal; changed intent or another principal cannot repurpose it. Active orders prevent changing/disconnecting the original account so they cannot be reconciled against a different registrar account.
+- Contact profiles are encrypted rather than stored in plaintext. Only the explicitly purchase-authorized contact read returns them.
+
+Added items: none.
+
+### Session 2: 2026-11-17
+
+Final status: **done**, in the main `dev` checkout, qualifying the working-tree
+candidate based on `0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`. Steps 1–8 remain
+complete; this session finished steps 9–11. No commit, push or publication was made.
+
+- 9 done differently: the owner authorized a zero-cost sandbox run. Opened the separate free Namecheap sandbox account in Chrome; the owner completed its password and account terms. Enabled sandbox API access with the owner's action-time approval and saved one whitelisted entry, `Zelavis sandbox Mac`, for this Mac's outgoing IPv4. Verified the UI's successful-add notice and one-IP inventory. Credentials were consumed through one-use secure inputs for the CLI and were not written into the repository or qualification logs.
+- 9 done: the entrypoint behind `pnpm release:qualify:registrar` (`distribution/scripts/qualify-registrar.mjs`, invoked with a secure environment wrapper) printed `PASS check`, `PASS register`, `PASS renew`, `PASS list` and exited 0. The run used only `https://api.sandbox.namecheap.com/xml.response`, sandbox test credit, a random `zelavis-<uuid>.com` and synthetic qualification contacts. No real money was spent and no production registrar API was called. Live qualification covers those four planned checks; transfers retain their local fixture coverage.
+- 10 done: the registration guide and package README now record the successful November 17 sandbox qualification and retain the production-purchases-unqualified limit. `pnpm run docs:check` passed.
+- 11 done: reviewed the pricing change, reproducing regression, guide and README against the finish line; preserved the earlier parts' dirty-tree changes. Final `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` passed (Zelavis: 3,312 passed, 30 skipped, zero failures; 3,342 total). `pnpm run ci:ui` passed, including built-in Namecheap connection, encrypted contacts, typed confirmation, reload-safe purchase and nameservers at desktop/mobile sizes and nested mounts. Focused driver/controller/provider-boundary tests passed all 24 tests. Docs, JavaScript syntax and `git diff --check` passed.
+
+Failure investigated and deviation:
+
+The initial run stopped before registration with `Namecheap does not offer this
+duration`. Read-only diagnostics showed successful availability and pricing API
+envelopes, with the sandbox returning `ProductCategory Name="register"` rather than
+the uppercase category in Namecheap's documented example. Fixed the Namecheap
+pricing decoder to compare category names without case sensitivity and require the
+`ProductCategory` tag. Added a regression for the sandbox lowercase form and the
+documented uppercase form; it failed before the fix and passed afterwards. The
+successful live retry also proved lowercase renewal pricing. This extends the live
+qualification's scope to a small required fix in the driver and its existing test.
+Reference: [Namecheap getPricing documentation](https://www.namecheap.com/support/api/methods/users/get-pricing/).
+
+**Decisions taken for the user:** used a separate free sandbox account and one named
+Mac-IP whitelist entry, as approved. Left its API access, whitelist entry and virtual
+test domain in place for inspection and repeatable sandbox testing. The qualification
+used the script's synthetic contacts and test credit. Production account settings,
+real domains and real balance were not changed.
+
+Added items: none.

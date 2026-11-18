@@ -1,6 +1,6 @@
 <!-- plan-writer supplement
-verified-at: b04fa02d95
-verified-on: 2026-11-13
+verified-at: 0e4548dbcc
+verified-on: 2026-11-16
 sources:
   - AGENTS.md
   - .agents/skills/plan-writer/SKILL.md
@@ -18,6 +18,12 @@ sources:
   - packages/zelavis/services/zelavis-ui/scripts/test-route-parity.mjs
   - packages/zelavis/test/capability-parity.test.mjs
   - .github/workflows/ci.yml
+  - scripts/check-effect-usage.mjs
+  - scripts/effect-migration-baseline.json
+  - packages/zelavis/src/auth/README.md
+  - packages/zelavis/src/auth/upstream.json
+  - scripts/auth-upstream.mjs
+  - scripts/reference-sources.json
 -->
 
 # Zelavis Plan-Writer Supplement
@@ -44,7 +50,9 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 - `packages/zelavis`: the unified package.
   - `src/core` holds runtime-neutral contracts and Fabric.
   - `src/platform` holds the trusted control plane.
-  - `src/app` is the built-in App stack.
+  - `src/app` is the built-in App stack (workloads, email).
+  - `src/auth` is Zelavis Auth (`zelavis/auth`), the per-runtime auth engine backed by tenant
+    document transactions; `upstream.json` records Apache-2.0 provenance (`AGENTS.md § Zelavis Auth`).
   - `src/adapters` holds host bindings.
   - `src/sdk` is the SDK.
   - `test/*.test.mjs` are its tests.
@@ -52,7 +60,7 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
   - `zelavis-app` is the `@zelavis/app` recipe.
   - `zelavis-ui` is the dashboard.
   - `zelavis-ui-legacy` is reference only: never fix it or depend on it.
-  - The others are `zelavis-auth`, `zelavis-marketplace` and `zelavis-cloud`.
+  - The others are `zelavis-auth` and `zelavis-marketplace`.
 - `packages/create-zelavis`: the create bootstrap.
 - `zelavis-services/*`: optional services published to npm on their own release cycle, such as
   the recipes (wordpress, drupal, joomla and others), `ecommerce` and `auth-oidc`.
@@ -127,6 +135,9 @@ Workspaces: `packages/**`, `zelavis-services/**`, `examples/*` and `website`
 
 - `packages/zelavis/test/*.test.mjs` run with `node --test` (`packages/zelavis/package.json`),
   using helpers such as `_platform.mjs`, `_database.mjs` and `_runtime.mjs`.
+- Auth tests are `test/auth-*.test.mjs` over the `test/_auth.mjs` harness (an Auth instance on an
+  in-memory database with a controllable clock); a ported upstream case keeps its name and
+  assertions (`AGENTS.md § Zelavis Auth`).
 - Tests import the built output (`../dist/...`), so build first with `pnpm --filter zelavis run build`
   from the repository root. Run focused tests from the root with
   `pnpm --filter zelavis exec node --test test/<file>.test.mjs`. Some suites inspect package-relative
@@ -164,8 +175,10 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 - `pnpm run docs:check` when docs changed.
 - How an executor works and reports is `AGENTS.md § Executing Changes` (validate at milestones,
   stop only the piece a conflict touches, pre-existing failures only with evidence, the
-  Implemented / Validation / Issues / Deviations / Status report). Section 8 of a plan applies
-  it and does not copy it; a plan adds only its own steps, checks and stop conditions.
+  Implemented / Validation / Issues / Deviations / Status report). Section 8 applies that
+  protocol and the automatic copy-ready handoff in `AGENTS.md § Next-session prompt for plan
+  execution`. When work remains, the executor's final reply includes the prompt even if the
+  session ends between parts or at a blocker.
 
 ## 8. Docs and notes
 
@@ -177,14 +190,15 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
 ## 9. Traps
 
 - Express or Hono-style handlers → define one operation and let the transports adapt it.
-- Promise chains or `async` orchestration → Effect.
+- Promise chains or `async` orchestration → Effect. This includes code copied from another project: `check:effect-usage` reports every `async` function and `await` under `packages/zelavis/src` and its baseline is empty (`scripts/check-effect-usage.mjs` → `inventory`, `scripts/effect-migration-baseline.json`), so ported code is translated line for line to `Effect.fn` generators, never pasted.
+- Auth module changes → use Effect generators over `tx.db` (never `async`/`await`), keep any derived file's Apache-2.0 provenance header and `src/auth/upstream.json` entry (`pnpm auth:upstream` checks upstream diffs). Putting an Auth module's tables in a Tenant of its own breaks atomic sign-up: they live in the runtime's one Auth partition (`AGENTS.md § Zelavis Auth`).
 - `try/catch` with logging → a typed failure.
 - A React route → a Fuzor screen.
 - Reading before the transaction → check inside it.
 - A per-Tenant loop → a change-driven design.
 - A shim to keep old data working → delete it; recreate development Projects, and move published
   Project layouts only through the explicit Project upgrade.
-- A static import of identity, the database or the `effect` barrel into a file the Project's
+- A static import of Auth, the database or the `effect` barrel into a file the Project's
   persistent host loads → `effect/<Module>` imports and a lazy `import()`
   (`test/project-host-footprint.test.mjs`, `AGENTS.md § Effect Version`).
 - Writing anything in `.claude/` → never, not even a link: guidance, skills, references and plans

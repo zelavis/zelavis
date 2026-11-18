@@ -2,8 +2,8 @@
 
 Job: Let an operator connect a DNS provider (Cloudflare first, built into core) so Zelavis can manage records in operator zones: automatic customer subdomains under an operator-hosted zone, ACME DNS-01, and wildcard certificates.
 Date: 2026-11-13
-Status: planned
-Verified-at: b04fa02d95
+Status: done
+Verified-at: b04fa02d95 (plugin-discovery citations refreshed 2026-11-16 against the Zelavis Auth working tree; the Edge citations are as of `b04fa02d95`)
 Part: 7 of 14. Read 00-overview.md first.
 
 To start:    Execute part 7 in .agents/plans/2026-11-13-accounts-billing-domain-automation/07-dns-providers-and-wildcard-certificates.md. Read 00-overview.md first, then start with the part's section 8.
@@ -11,17 +11,17 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Confirm part 1's resolver and the Edge baseline.
-- [ ] 2. Define the DNS provider capability contract.
-- [ ] 3. Add the built-in Cloudflare DNS driver.
-- [ ] 4. Add DNS connections and adopted zones.
-- [ ] 5. Add ACME DNS-01 and wildcard certificate orders.
-- [ ] 6. Add automatic hosted subdomains to Project domains.
-- [ ] 7. Expose the operations over HTTP.
-- [ ] 8. Add SDK and CLI parity.
-- [ ] 9. Add the dashboard pages.
-- [ ] 10. Document DNS automation.
-- [ ] 11. Self-audit.
+- [x] 1. (2026-11-16) Confirm part 1's resolver and the Edge baseline. Resolver found, build and the four suites pass.
+- [x] 2. (2026-11-16) Define the DNS provider capability contract. `edge/dns-provider.ts`, export `zelavis/edge/dns-provider`; built-ins arrive as a host resource; build and typecheck pass.
+- [x] 3. (2026-11-16) Add the built-in Cloudflare DNS driver. `adapters/_dns-cloudflare.ts`, Node adapter wiring, driver and boundary tests pass.
+- [x] 4. (2026-11-16) Add DNS connections and adopted zones. `edge/dns-connections.ts`; `edge-dns.test.mjs` passes.
+- [x] 5. (2026-11-16) Add ACME DNS-01 and wildcard certificate orders. Checkpoint before create, propagation read at every authority, `attachDns` cleanup; certificate and DNS suites pass.
+- [x] 6. (2026-11-16) Add automatic hosted subdomains to Project domains. Claim, records with persisted ids, wildcard activation, exact cleanup; `project-domains.test.mjs` and `edge-dns.test.mjs` pass.
+- [x] 7. (2026-11-16) Expose the operations over HTTP. NEW `platform/edge-dns-routes.ts`, `hosted-zones` in `project-domain-routes.ts`; HTTP case passes.
+- [x] 8. (2026-11-16) Add SDK and CLI parity. `client.edge.dns.*`, `client.projects.hostedZones`, `zelavis edge dns-*`, `projects hosted-zones`, `add-domain --dns`; capability-parity passes.
+- [x] 9. (2026-11-16) Add the dashboard pages. `app/dns-automation.ts` (Server → Domains with `setFlash`/`flashNotice`), hosted-subdomain choice in `project-domains-page.ts`, and `qualifyDnsAutomation` in `scripts/test-embedded-server-views.mjs`; UI typecheck, unit tests and browser qualification pass.
+- [x] 10. (2026-11-16) Document DNS automation. `edge.md` section, `guides/dns-automation.md`, `platform-operations` rows, `AGENTS.md` Edge line; `docs:check` passes.
+- [x] 11. (2026-11-16) Self-audit. Updated `test/zelavis-server.test.mjs` control-plane route list; `verify`, `ci:ui`, `docs:check` and `git diff --check` pass.
 
 ## 0. Summary and finish line
 
@@ -59,7 +59,7 @@ Every Project domain today needs the customer to create TXT and address records 
 - Project domains: `packages/zelavis/src/edge/project-domains.ts` (`AddProjectDomainSchema` `:85-88`, `ProjectDomain` `:97-107`, controller `:159`, `cleanup(projectId)` `:156`); hostname normalization rejects wildcards (`normalizeProjectDomainHostname`, `:29`); Project deletion runs `projectDomains.cleanup` in the `edge-routes` participant (`packages/zelavis/src/index.ts:7512-7520`).
 - Edge HTTP: `packages/zelavis/src/index.ts:4829-5170` (`/edge`, `/edge/routes`, `/edge/certificates`, `/edge/certificates/renew`), access `server.edge.view` / `server.edge.manage`.
 - Domain HTTP for customers: `packages/zelavis/src/platform/project-domain-routes.ts` (116 lines; `project.domains.view|manage`).
-- Plugin discovery by capability: `collectAuthMethodPlugins` `packages/zelavis/src/index.ts:1737-1753` with `declaresServiceCapability(capabilities, owner, name)`. OAuth definitions as data plus `defineOAuthProviders` `packages/zelavis/src/app/identity/providers/oauth-contract.ts:56-80`.
+- Plugin discovery by capability: `collectOAuthProviders(serviceRegistry)` in `packages/zelavis/src/auth/oauth/plugins.ts` (scans installed `kind: "plugin"` entries for `zelavis/auth:oauth` and decodes their `service.oauthProviders` with a Schema), called from the runtime composition in `packages/zelavis/src/index.ts` (`oauthProviders: collectOAuthProviders(serviceRegistry)`); `declaresServiceCapability(capabilities, owner, name)` in `packages/zelavis/src/core/service/capability.ts`. Definitions as data: `defineOAuthProviders` in the same `plugins.ts`.
 - Part 1 handover: `createAuthoritativeDnsTxtResolver` (`packages/zelavis/src/adapters/_node-authoritative-dns.ts`) and `test/_dns-authority.mjs`.
 - Host injection of Platform resources: `nodeAdapter` composes Edge pieces and returns `subsystems` (`packages/zelavis/src/adapters/node.ts:280-290`, `:651-655`); adapters are flat `_name.ts` files in `packages/zelavis/src/adapters/` (`_enrollment-listener.ts`, `_pinned-fetch.ts`).
 
@@ -295,5 +295,30 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+### Session 1: 2026-11-16 (stopped: usage limit)
+
+Status: stopped at step 9. Steps 1-8 done, step 10 written, step 11 not started. Nothing committed.
+Deviations: the edge DNS options are composition options plus host resources (`edgeDnsProviders`, `edgeAuthoritativeTxt`), not a constructor option. The authoritative resolver gained `txtAtEveryAuthority`. Crash cleanup is tested with a failed removal and a pre-seeded intent checkpoint, not a killed fiber. The wildcard route answers 200, not 202 (it orders synchronously). The 409 code `dns_in_use` is new. Zone targets are at most 2 A plus 2 AAAA. The browser scenario cannot reach "Active" without an HTTPS Edge adapter; the activation path is covered by `project-domains.test.mjs`.
+Not run yet: root verify, ci:ui, git diff --check.
+
+### Session 2: 2026-11-16
+
+- **Final status**: `done`. Carried out steps 9, 10 and 11.
+- **Steps worked on**:
+  - Step 9 (done): Updated `packages/zelavis/services/zelavis-ui/app/dns-automation.ts` to use `setFlash`/`flashNotice` (`"dns"` key) from `./page-kit.ts` and call either `context.setSearch(search)` or `context.refresh()` in `act()` so query-parameter navigations do not trigger a duplicate intermediate reload that consumes the flash notice; updated `packages/zelavis/services/zelavis-ui/app/project-domains-page.ts` `syncMode()` to set `aria-label` on the hostname input (`"Subdomain"` vs `"Hostname"`) and `aria-hidden="true"` on the hosted suffix so `getByLabel("Subdomain", { exact: true })` matches when a hosted zone is selected.
+  - Step 10 (done): Rechecked `pnpm run docs:check` after step 9.
+  - Step 11 (done): Added the eight `runtime.edge.dns.*` route IDs to the expected Platform control-plane route inventory in `packages/zelavis/test/zelavis-server.test.mjs`, audited the full diff and untracked files against sections 0–5 and section 8 forbidden patterns, and ran full verification.
+- **Verification**:
+  - `TMPDIR=/private/tmp/zelavis-verify node packages/zelavis/services/zelavis-ui/scripts/test-embedded-server-views.mjs` → passed (`DNS automation: Cloudflare connection, zone adoption, hosted subdomain records and their removal passed at desktop and mobile sizes.`).
+  - `pnpm run docs:check` → passed (`Docs check passed.`).
+  - `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` → passed (all workspace builds, typechecks, unit/integration suites and reference checks exit 0).
+  - `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui` → passed (all UI browser qualification suites including `--nested-auth` exit 0).
+  - `git diff --check` → passed (exit 0).
+- **Deviations**: Updated `packages/zelavis/test/zelavis-server.test.mjs` to include the 8 new `runtime.edge.dns.*` route IDs in the Platform control-plane route list when optional services are disabled.
+- **Decisions taken for the user**: none.
+- **Added items**: none.

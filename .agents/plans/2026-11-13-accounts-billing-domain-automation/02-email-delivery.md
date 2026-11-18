@@ -2,7 +2,7 @@
 
 Job: Give the Platform and each native App its own email delivery (SMTP settings, durable outbox, test send), as the foundation for verification, recovery and invitation emails.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 2 of 14. Read 00-overview.md first.
 
@@ -11,17 +11,17 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Prove the baseline at HEAD.
-- [ ] 2. Define email contracts and schemas.
-- [ ] 3. Add the SMTP fixture and the Node SMTP client.
-- [ ] 4. Add encrypted settings storage.
-- [ ] 5. Add the durable outbox and delivery loop.
-- [ ] 6. Expose the email endpoint group on every runtime.
-- [ ] 7. Add the exact Project Gateway routes.
-- [ ] 8. Add SDK and CLI parity.
-- [ ] 9. Add the dashboard settings cards.
-- [ ] 10. Document email delivery.
-- [ ] 11. Self-audit.
+- [x] 1. Prove the baseline at HEAD. (2026-11-13) Build and the three suites exit 0 at 0e4548dbcc.
+- [x] 2. Define email contracts and schemas. (2026-11-13) Strict schemas, errors, link-base check and `zelavis/app/email` export build.
+- [x] 3. Add the SMTP fixture and the Node SMTP client. (2026-11-13) `_node-smtp.ts` and fixture; 11 client cases pass three runs in a row.
+- [x] 4. Add encrypted settings storage. (2026-11-13) `settings.ts`: strict persisted schema, CAS revisions, password encrypted and kept only for the same host and user; checked by `email-service.test.mjs`.
+- [x] 5. Add the durable outbox and delivery loop. (2026-11-13) `outbox.ts`, `email-service.ts`: due index, CAS leases, 1/5/30/120/360 min retries, sweep; checked by `email-service.test.mjs`.
+- [x] 6. Expose the email endpoint group on every runtime. (2026-11-13) Composed for both roles, worker stopped by `close()`, Node adapter supplies SMTP; 12 cases pass.
+- [x] 7. Add the exact Project Gateway routes. (2026-11-13) Four exact routes with `project.settings.manage`; real App case and 403/503 authority case pass.
+- [x] 8. Add SDK and CLI parity. (2026-11-13) `client.email`, Project methods, `zelavis email`, `zelavis projects email-*`; capability parity passes.
+- [x] 9. Add the dashboard settings cards. (2026-11-13) UI typecheck, unit tests and browser suites pass. Test email reaches separate SMTP fixtures from the Platform and an App.
+- [x] 10. Document email delivery. (2026-11-13) New guide `guides/email-delivery.md`, Platform operations table, package README; docs:check passes.
+- [x] 11. Self-audit. (2026-11-13) Workspace verification, production browser suites, docs and diff checks pass.
 
 ## 0. Summary and finish line
 
@@ -360,3 +360,54 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
 
 ## Execution report
+
+### Session 1: 2026-11-13
+
+Final status: **done**. Steps 1-11 carried out.
+
+- Step 1: done. Build and the three suites exit 0 at `0e4548dbcc` (only plan files changed since `Verified-at`; part 1's uncommitted changes left as they were).
+- Step 2: done. `src/app/email/{contracts,errors,index}.ts`, `zelavis/app/email` export.
+- Step 3: done. `src/adapters/_node-smtp.ts` (`sendSmtp`, `buildMimeMessage`, `smtpTransport`), `test/_smtp-server.mjs`, `test/smtp-client.test.mjs` (11 cases: section 5's eight plus an unverified certificate, AUTH not offered, refused connection).
+- Step 4: done. `src/app/email/settings.ts`.
+- Step 5: done differently (see deviations). `src/app/email/outbox.ts`, `src/app/email/email-service.ts`.
+- Step 6: done differently (worker lifetime). Composition in `src/index.ts`, `subsystems.email`, Node adapter supplies `smtpTransport()`; `test/email-service.test.mjs` (12 cases).
+- Step 7: done. Four exact Gateway routes in `src/platform/project-gateway.ts`.
+- Step 8: done. `client.email`, four `client.projects` methods, `src/cli/email-operations.ts` (`zelavis email`), `zelavis projects email-settings|set-email-settings|send-test-email|email-deliveries`; capability parity passes with no declarations.
+- Step 9: done. `services/zelavis-ui/app/email-settings.ts` (settings, test, deliveries cards), `/settings/email`, App cards on `/projects/:projectId/auth`, Settings overview link and account-settings menu entry; route parity script configures and delivers on both runtimes against two local SMTP servers.
+- Step 10: done. `website/src/content/docs/guides/email-delivery.md`, Platform operations section, package README.
+- Step 11: done (results below).
+
+Deviations:
+- The worker is not `Effect.forkScoped` in the composition scope: `zelavis()` runs its composition in `Effect.scoped`, which closes when the runtime is returned, so a scoped fork would stop at once. It follows `serveDurableWorkloads` instead: `start()` forks it, it is started after everything that can fail in composition, and `close()` stops it before the System Store closes.
+- Pending bound: no `outbox-count` record. Waiting deliveries are indexed in `zelavis.email.due` (one small record each, `{ dueAt }`), and `enqueue` counts that index under an in-process permit. One process owns a runtime's System Store, so the bound is exact without a counter to repair. The worker reads only the due index to find work, so the up to seven days of finished deliveries cost each pass nothing; the hourly sweep walks the outbox to remove expired entries (at most 200 a sweep) and re-index a delivery a crash left unindexed.
+- `EmailOutbox.enqueue` can also fail `EmailSettingsInvalid` (an invalid message); the plan's union had no failure for it.
+- A runtime composed without a transport (`zelavis()` with no `send`) keeps settings but refuses sends with `email_unavailable`; the Node adapter always supplies SMTP.
+- Recorded failure texts add `invalid message` (content that cannot be decoded, or a header with control characters) and `no transport` (the master secret unavailable at send time) to the plan's list.
+- Deliveries listing `limit` defaults to 50; an invalid `limit` or `after` is `400 invalid_email_settings`, the plan's only 400 code.
+- `test/zelavis-server.test.mjs`'s exact route inventory gains the four Gateway routes, and that test (optional subsystems off) also turns email off.
+- The App-independence case runs a real Platform and a real `@zelavis/app` Project; the App process trusts the fixture's certificate through `NODE_EXTRA_CA_CERTS`, which the Project process environment already passes through. The route parity script does the same for its Platform.
+
+Decisions taken for the user:
+- A stored SMTP password is kept on a write only while the host and username are unchanged; otherwise the write must carry the password again. Reason: a kept password must never be sent to a server it was not given for.
+- `AUTH PLAIN` only, and only over TLS; a server that does not offer it with a username configured fails `auth unavailable` (permanent). `STARTTLS` mode refuses a server that does not offer `STARTTLS` (permanent). TLS handshake and certificate failures are transient (`tls failed`), like network errors.
+- EHLO name is the link base URL's host (`localhost` without one).
+- Delivery ids are 24 base64url characters (18 random bytes); the outbox key is the creation time in milliseconds, zero-padded to 15 digits, then the id.
+- Disabling email keeps queued deliveries waiting rather than failing them.
+- The dashboard follows a test send by re-reading the listing once a second, at most 30 times, while a delivery shown is queued or sending, and stops when the page is left.
+
+Added items: none.
+
+### Session 2: 2026-11-13
+
+Final status: **done**. Finished the dashboard qualification and self-audit.
+
+- Step 3: Verified STARTTLS against the configured SMTP address, including literal IPs. A regression test reproduced acceptance of a certificate for `localhost` at `127.0.0.1` and now proves the client refuses it before authenticating.
+- Step 6: Reopened the SQLite System Store from disk in the restart test and waited for the recorded delivery result before asserting it.
+- Step 9: Load a Project's email cards after reaching its App runtime, which keeps the stopped Project's Auth page to one error. Keep unsaved settings on validation errors. Browser actions save and send at both Platform viewport sizes and prove App isolation with a separate SMTP fixture.
+- Step 11: `pnpm run verify` passed with 2,919 Zelavis tests passing and 30 skipped. `pnpm run ci:ui`, `pnpm run docs:check` and `git diff --check` passed. Dashboard typecheck, 93 dashboard unit tests, and the 24 SMTP and email service tests passed. Used `TMPDIR=/private/tmp/zelavis-verify` for the workspace and browser suites. An earlier overlapping build cleared `dist` during the workspace test run. Running the gates sequentially resolved the missing modules.
+
+Decisions taken for the user: App email controls require a reachable runtime. The form preserves edits after validation errors and reloads persisted settings when a revision conflicts.
+
+Notes for later: `zelavis/app/email` exports `EmailOutbox`. Inside the runtime composition, pass `emailSubsystem?.outbox` into Identity before constructing its endpoint groups. The current composition constructs email after Identity, and the returned runtime exposes it as `email`.
+
+Added items: none.

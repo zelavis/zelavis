@@ -2,7 +2,7 @@
 
 Job: Make the Project domain TXT ownership check read the zone's authoritative nameservers, so it holds against real public DNS (negative caching, CNAME-pointed hosts, delegated subzones).
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 1 of 14. Read 00-overview.md first.
 
@@ -11,13 +11,13 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Prove the domain baseline at HEAD.
-- [ ] 2. Add the runtime-neutral DNS wire codec.
-- [ ] 3. Add the authoritative DNS test fixture.
-- [ ] 4. Add the Node authoritative TXT resolver.
-- [ ] 5. Use it for Project domain verification.
-- [ ] 6. Document the lookup and its limits.
-- [ ] 7. Self-audit.
+- [x] 1. Prove the domain baseline at HEAD. (2026-11-13: build and the three domain suites exit 0)
+- [x] 2. Add the runtime-neutral DNS wire codec. (2026-11-13: `src/edge/dns-wire.ts`, `test/dns-wire.test.mjs` 5/5 pass)
+- [x] 3. Add the authoritative DNS test fixture. (2026-11-13: `test/_dns-authority.mjs`, exercised by step 4's suite)
+- [x] 4. Add the Node authoritative TXT resolver. (2026-11-13: `src/adapters/_node-authoritative-dns.ts`, `test/authoritative-dns.test.mjs` 11/11 pass three runs in a row)
+- [x] 5. Use it for Project domain verification. (2026-11-13: Node adapter uses it; `ECNAME` maps to `dns_pending`; project-domains, authoritative-dns, domain-verifier and dns-wire suites 43/43 pass)
+- [x] 6. Document the lookup and its limits. (2026-11-13: `architecture/edge.md`; `pnpm run docs:check` exit 0)
+- [x] 7. Self-audit. (2026-11-13: diff reread against sections 1-5; `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git diff --check` exit 0)
 
 ## 0. Summary and finish line
 
@@ -304,3 +304,34 @@ From the root: `pnpm run verify`, `pnpm run docs:check`, `git diff --check`. If 
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
 
 ## Execution report
+
+### Session 1: 2026-11-13
+
+Final status: **done**. Steps 1-7 carried out.
+
+- Step 1: done. Build and the three domain suites exit 0 at `0e4548dbcc` (only plan files changed since `Verified-at`).
+- Step 2: done. `src/edge/dns-wire.ts` (pure, no imports) and `test/dns-wire.test.mjs` (round trip, RFC 5952 IPv6 text, query flags, pointers, pointer loop, 256-byte name, truncation, OTHER, section and RDATA bounds).
+- Step 3: done. `test/_dns-authority.mjs`; also records each query's transport, follows a CNAME once on the recursive side, and retries the shared UDP/TCP port if TCP cannot take it.
+- Step 4: done differently in the details below. `src/adapters/_node-authoritative-dns.ts` and `test/authoritative-dns.test.mjs` (11 cases: the 8 of section 5, plus a CNAME seen only by the authority, unparsable/unreachable recursive servers, and a name in no zone).
+- Step 5: done. Node adapter uses `createAuthoritativeDnsTxtResolver()`; `ECNAME` maps to `dns_pending`; controller test covers pending → record added → 30 s later active, CNAME at the challenge → `dns_pending`, silent authorities → `dns_unavailable`.
+- Step 6: done. `website/src/content/docs/architecture/edge.md` states where the TXT is read and the four limits.
+- Step 7: done.
+
+Verification (after the last code edit): `pnpm run verify` exit 0 (zelavis suite 2925 tests, 2895 pass, 0 fail, 30 skipped as before); `pnpm run ci:ui` exit 0; `pnpm run docs:check` exit 0; `git diff --check` exit 0; `pnpm run check:tigerstyle` and `check:effect-usage` pass (also inside verify). New suites run three times in a row without failure. Verify ran with `TMPDIR=/private/tmp/zelavis-verify`.
+
+Deviations:
+- `DnsLookupError` crosses the Promise boundary as itself (an `Error` carrying `code`), not as `new Error(message, { cause: { code } })`. The controller reads `error.cause.cause.code`, where `error.cause` is the wrapper `checkDomainBindingDnsProof` adds and `.cause` is the resolver's own error, so the code must sit on the thrown error, as it does on Node's DNS errors. Tests assert `error.code`.
+- Nameserver addresses: A records for every NS name first, then AAAA only while fewer than 4 addresses are known, instead of A then AAAA per name. Otherwise two of four authorities would be IPv6 on an IPv4-only host.
+- Query bounds are a per-lookup budget (12 recursive sends, 5 authoritative sends including one TCP retry); recursive steps start at the server that answered last and rotate on failure. The plan's "rotate each step" and "3 + 1 + 8" could not both hold.
+- The socket lifetime uses `Effect.callback` with its interruption cleanup (close on answer, failure, timeout or interruption) instead of `Effect.acquireRelease`; the effect is the same and the socket never outlives its query (the abort test checks no UDP handle is left).
+- UDP sockets are connected (`socket.connect`), so only the server's own address can answer; mismatched ids or questions are ignored as stray datagrams.
+- Abort is a race with the request signal (`Effect.raceFirst`), failing `ETIMEOUT`.
+- The 4096-byte UDP limit is checked on receipt; queries carry no EDNS option, so servers answer at most 512 bytes over UDP and larger answers arrive over TCP.
+
+Decisions taken for the user:
+- A zone delegated so recently that the recursive resolver still caches the parent's negative answer is reported as `dns_unavailable` (the parent's servers answer with a non-authoritative referral) rather than following the referral. Following one referral would fix it but adds a resolution loop the plan kept out; documented as a limit.
+- A response SOA whose owner does not contain the challenge name is `ESERVFAIL`; an SOA at the root (name under no existing TLD) is `ENOTFOUND`.
+- `createNodeDnsTxtResolver` stays for the embedding API (`verifyDomainBindingViaDns`), as the plan says.
+- The new adapter file is not added to `migratedFiles` in `scripts/check-effect-usage.mjs`: the baseline is empty, so the check already holds it to the strict rule.
+
+Added items: none.

@@ -2,8 +2,8 @@
 
 Job: Let operators define named roles (bundles of permissions and grants, optionally parameterized by Project) and assign them to human accounts within their own authority, on the Platform and in native Apps.
 Date: 2026-11-13
-Status: planned
-Verified-at: b04fa02d95
+Status: done
+Verified-at: 0e4548dbcc (refreshed 2026-11-16 against the Zelavis Auth working tree, before it was committed)
 Part: 6 of 14. Read 00-overview.md first.
 
 To start:    Execute part 6 in .agents/plans/2026-11-13-accounts-billing-domain-automation/06-custom-roles.md. Read 00-overview.md first, then start with the part's section 8.
@@ -11,25 +11,26 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Prove the access baseline at HEAD.
-- [ ] 2. Add the role catalogue schema and repository.
-- [ ] 3. Expand role assignments into principals.
-- [ ] 4. Add role assignments to account access and invitations.
-- [ ] 5. Add the role service and routes.
-- [ ] 6. Add the exact Project Gateway routes.
-- [ ] 7. Add SDK and CLI parity.
-- [ ] 8. Add the dashboard Roles pages and the editor's role picker.
-- [ ] 9. Document custom roles.
-- [ ] 10. Self-audit.
+- [x] 1. Prove the access baseline at HEAD. (2026-11-16: build, auth-admin, auth-invitations, platform-gateway-authority pass)
+- [x] 2. Add the role catalogue schema and repository. (2026-11-16: `auth/roles/{tables,catalogue,roles}.ts`; 16 concurrent creates commit once)
+- [x] 3. Expand role assignments into principals. (2026-11-16: `auth/roles/{expand,cache}.ts`; edits propagate without touching the account)
+- [x] 4. Add role assignments to account access and invitations. (2026-11-16: required `roleAssignments`; admin, invitations, gateway, parity suites pass)
+- [x] 5. Add the role service and routes. (2026-11-16: `auth/routes/roles.ts`; `auth-roles.test.mjs` 8/8)
+- [x] 6. Add the exact Project Gateway routes. (2026-11-16: four App role routes plus role-aware access and invitation proofs; Gateway cases pass)
+- [x] 7. Add SDK and CLI parity. (2026-11-16: `client.auth.admin.*Role*`, `client.projects.*Role*`, `zelavis auth|projects roles…`; capability-parity passes)
+- [x] 8. Add the dashboard Roles pages and the editor's role picker. (2026-11-16: `app/roles-page.ts`, editor picker; UI typecheck/test and ci:ui pass)
+- [x] 9. Document custom roles. (2026-11-16: access-control, packages/auth, api/platform-operations, package README, AGENTS module list; docs:check passes)
+- [x] 10. Self-audit. (2026-11-16: verify, ci:ui, docs:check, git diff --check exit 0 after the last edit)
 
 ## 0. Summary and finish line
 
-Roles today are fixed labels (`customer`, `operator`, `reseller` on the Platform, `user` in an App; `packages/zelavis/src/app/identity/domain/account-access.ts:21`) that carry no permissions; every permission and grant is set per account. Giving ten customers the same "Project developer" access to their own Projects means ten hand-built grant lists that drift. This part adds a per-runtime role catalogue: a role is a named bundle of runtime-wide permissions, concrete grants and Project permission templates; an account gets role assignments (each optionally naming Projects); authority is expanded at authentication, so editing a role changes every member's authority on their next request.
+Roles today are fixed labels (`customer`, `operator`, `reseller` on the Platform, `user` in an App; `RoleSchema` in `packages/zelavis/src/auth/access/access.ts`) that carry no permissions; every permission and grant is set per account. Giving ten customers the same "Project developer" access to their own Projects means ten hand-built grant lists that drift. This part adds a per-runtime role catalogue: a role is a named bundle of runtime-wide permissions, concrete grants and Project permission templates; an account gets role assignments (each optionally naming Projects); authority is expanded at authentication, so editing a role changes every member's authority on their next request.
 
 - **In scope**: catalogue (≤ 50 roles), assignments (≤ 10 per account, ≤ 20 Projects each), expansion in the session principal, delegation checks on definition and assignment, access-edit and invitation inputs, Platform and App runtimes, Gateway, SDK, CLI, dashboard, docs, tests.
 - **Out of scope**: role inheritance, deny rules, conditions or time limits, service-account role assignment (service accounts keep explicit permissions), changing the fixed role label set.
 - **Done means**: (a) an operator holding `system.roles.manage` defines `project-developer` with Project permissions `project.view`, `project.domains.manage`; (b) assigning it to a customer for Projects P and Q makes `GET /runtime/projects` show exactly P and Q and lets the customer manage their domains; (c) removing `project.domains.manage` from the role makes the customer's next domain request 403 without touching the account; (d) an actor cannot define or assign a role containing authority they do not hold; (e) deleting a role removes the authority it gave; (f) App roles work for App users through the Gateway; (g) parity, browser, `verify`, `ci:ui`, `docs:check` pass.
 - **Supplement**: updated in this run (overview section 0).
+- **Refreshed 2026-11-16** (Zelavis Auth plan part 16): rebuilt on Zelavis Auth. Roles are rows of a NEW `roles` Auth module in the runtime's Auth partition, checked and written inside `documents.transaction` like every Auth change; the HTTP contract in section 3 is unchanged.
 - **Sources read**: `AGENTS.md § Core Access-Control Rule`, `§ Database Architecture Rules` (scalability rule one); files below.
 
 ## 1. Context packet
@@ -38,7 +39,7 @@ Roles today are fixed labels (`customer`, `operator`, `reseller` on the Platform
 - **Role catalogue**: one record per runtime holding all role definitions and a revision.
 - **Role assignment**: `{ roleId, projectIds? }` on an account.
 - **Expansion**: turning an account's direct access plus its assignments into the principal's `permissions` and `grants`.
-- **Built-in role label**: the existing single `role` (`customer` etc.); unchanged, still decides `canDelegateRole` (`packages/zelavis/src/app/identity/services/account-service.ts:69-72`).
+- **Built-in role label**: the existing single `role` (`customer` etc.); unchanged, still decides `canDelegateRole` (`packages/zelavis/src/auth/access/delegation.ts` → `canDelegateRole`).
 
 **Governing rules.**
 > "Zelavis uses one core principal, permission, and scoped-grant model across the owner console, project dashboards, future customer/reseller/operator views, service accounts, CLI calls, scripts, plugins, and AI agents." `AGENTS.md § Core Access-Control Rule`
@@ -47,66 +48,70 @@ Roles today are fixed labels (`customer`, `operator`, `reseller` on the Platform
 >
 > "A change that adds a per-Tenant read, record or loop to a hot path or to the authority needs a different design." `AGENTS.md § Database Architecture Rules` (the same spirit: expansion costs one cached catalogue read, not a read per role or per account).
 
-**System today.**
-- Principal construction `accountSessionPrincipal(account, sessionId, transport, projectId?)` `packages/zelavis/src/app/identity/core/session-authenticator.ts:48-77`: Platform principals get `permissions` and `grants`; App principals get the account's permissions as grants scoped to the App's Project (`:62-69`).
-- Access schema `SetAccountAccessInputSchema` `account-access.ts:32-40` (limit `ACCOUNT_ACCESS_LIMIT = 100`, `:6`), normalization `normalizeAccountAccess` `:120-133`, Gateway digest `projectAccountAccessDigest` `:97-102`, Project permission set `projectAccountAccessPermissions` `:80-94`.
-- Delegation `assertCanDelegateAccountAccess` `account-service.ts:75-104`; write `AccountService.setAccess` `:171`.
-- Access route `identity-service.ts:427-455`; human roles `:413`; managePermission `:329-331`.
-- Gateway account access route `packages/zelavis/src/platform/project-gateway.ts:718-760`.
-- Account entity `packages/zelavis/src/app/identity/domain/entities.ts:3-26`.
-- Dashboard: access editor `packages/zelavis/services/zelavis-ui/app/account-access-editor.ts:1-80` (grant choices `:24-29`), Server Access pages `app/host-pages.ts:234-260` (permissions screen `:234`, users screen `:244`), routes `app/dashboard-routes.ts:22-25`.
-- Part 4 handover: invitation `access` shape (`Invitation.access`).
+**System today** (Zelavis Auth, `AGENTS.md § Zelavis Auth`).
+- Principal construction `accountSessionPrincipal(account, sessionId, transport, projectId?)` in `packages/zelavis/src/auth/accounts/principal.ts`: Platform principals get `permissions` and `grants`; App principals get the account's permissions as grants scoped to the App's Project. Called by the request authenticator (`auth/core/authenticator.ts` → `authenticate`, which reads the session row and then the account on every request), by `resolveActor` (`auth/access/delegation.ts`) and by invitation acceptance (`auth/invitations/accept.ts`).
+- Access schemas in `auth/access/access.ts`: `delegatedAccessFields`, `DelegatedAccessSchema`, `SetAccountAccessInputSchema` (`expectedRevision` + access, `ACCOUNT_ACCESS_LIMIT = 100`), `AccountAccessResultSchema`, `normalizeAccountAccess`, `projectAccountAccessPermissions`, `projectAccountAccessDigest` (the Gateway's proof), `accountGrantKey`.
+- Delegation and the write, both inside the administrator's transaction: `canDelegateAccess`, `resolveActor` and `setAccountAccess` in `auth/access/delegation.ts` (`setAccountAccess` checks `expectedRevision`, raises `accessRevision`, ends the account's sessions and records `account.access.changed`).
+- Access route `auth.accounts.access.set` (`PUT /accounts/:accountId/access`) and the error table in `auth/routes/admin.ts`.
+- Account row `accountsTables.accounts` in `auth/accounts/tables.ts` (`roles`, `permissions`, `grants`, `accessRevision`).
+- Module tables: `defineTables("<module>", { … })` in `auth/runtime` (example: `auth/registration/tables.ts`, one policy row with a revision); a module joins `createAuth` in `auth/create-auth.ts`.
+- Gateway account access route `runtime.projects.auth.accounts.access.set` in `packages/zelavis/src/platform/project-gateway.ts`.
+- Invitations carry `access` (`DelegatedAccess`) and apply it at acceptance (`auth/invitations/{invitations,accept}.ts`).
+- Dashboard: access editor `packages/zelavis/services/zelavis-ui/app/account-access-editor.ts`, Server Access pages in `app/host-pages.ts` (`VOCABULARY`, `permissionsScreen`, `accessUsersScreen`), routes in `app/dashboard-routes.ts`.
 
-**Pattern to mirror.** The registration control record (one record, revision CAS) in each backend for the catalogue; `assertCanDelegateAccountAccess` for every check.
+**Pattern to mirror.** The registration module (`auth/registration/{tables,policy}.ts`: a revision row read and written in the deciding transaction) for the catalogue revision; `canDelegateAccess` for every check; `setAccountAccess` for the conditional access write.
 
 **Traps.**
 - Copying role content into the account at assignment: edits would not propagate, and revocation would need a scan of all accounts.
-- Reading each role record separately per request: one catalogue record, cached in process, invalidated on write.
+- Reading role rows on every request: the authenticator expands from an in-process copy of the catalogue (at most 50 rows), reloaded only when the catalogue revision this runtime wrote has moved.
 - Expanding a Project template for every Project when no `projectIds` are given: a role without `projectIds` gets no Project grants from its templates (never "all Projects").
 - Letting a role edit escalate members beyond what the editor holds: the editor must hold every permission and grant in the new definition.
-- Forgetting the Gateway digest: `normalizeAccountAccess` and the digest must include `roleAssignments`, or the child accepts an unsigned change.
+- Forgetting the Gateway digest: `normalizeAccountAccess` and `projectAccountAccessDigest` must include `roleAssignments`, or the child accepts an unsigned change.
+- Checking delegation outside the transaction that writes: the actor and the roles it assigns are read in the same `documents.transaction` that writes the account or the role, as `setAccountAccess` already does.
 
 ## 2. Design
 
 **Authority and scope.** The runtime owns its catalogue. Platform: define/edit/delete need NEW `system.roles.manage` (system scope); assignment is part of account access (`system.users.manage`). App: define and assign need `project.users.manage` on its Project (Apps have one operator tier); the Gateway exposes exact routes with `project.users.manage`.
 
-**Persistence.** Catalogue record (System Store key `roles` in `zelavis.platform.auth`; Project database: same collection as the registration control, id `roles`):
+**Persistence.** NEW Auth module `roles` (`packages/zelavis/src/auth/roles/tables.ts`), in the runtime's Auth partition:
 
 ```ts
-interface RoleCatalogue { schemaVersion: 1; revision: number; roles: readonly RoleDefinition[] } // ≤ 50
+// roles_catalogue: one row, the revision every role change raises (no row reads as revision 0)
+{ revision: number }
+// roles_roles: one row per role (≤ 50), index by_roleId
 interface RoleDefinition {
-  id: string;                               // ^[a-z][a-z0-9-]{1,47}$, not a built-in label or owner/service/system
+  roleId: string;                           // ^[a-z][a-z0-9-]{1,47}$, not a built-in label or owner/service/system
   title: string;                            // 1-80, no control characters
   description?: string;                     // ≤ 500
-  permissions: readonly string[];           // Platform: runtime-wide. App: become grants scoped to the App's Project, as account permissions do (session-authenticator.ts:62-69)
+  permissions: readonly string[];           // Platform: runtime-wide. App: become grants scoped to the App's Project, as account permissions do (accountSessionPrincipal)
   grants: readonly ConcreteAccountGrant[];  // concrete scopes; App: must be empty
   projectPermissions: readonly string[];    // Platform only: templates applied to each assigned Project; App: must be empty
-  createdAt: string; updatedAt: string;
+  createdAt: number; updatedAt: number;
 }
 ```
 
-Account gains `roleAssignments?: readonly { roleId: string; projectIds?: readonly string[] }[]` (≤ 10, ≤ 20 Project IDs each, canonical Project IDs per `ProjectIdSchema` `account-access.ts:13-16`). Total entries of one role ≤ 100.
+`accountsTables.accounts` gains optional `roleAssignments: readonly { roleId: string; projectIds?: readonly string[] }[]` (absent reads as none, so accounts already stored by an installed release need no rewrite; ≤ 10, ≤ 20 Project IDs each, canonical Project IDs per `ProjectIdSchema` in `access.ts`). Total entries of one role ≤ 100.
 
-**Expansion.** `expandAccountAccess(account, catalogue): { permissions, grants }` (NEW, pure, `domain/account-access.ts`): start with the account's own; for each assignment whose role exists add `role.permissions`, `role.grants`, and for each `projectId` add `{ permission, scope: { type: "project", projectId } }` for every `role.projectPermissions`; deduplicate with `accountGrantKey` (`:112-118`). Bounded: ≤ 10 × (100 + 20 × 100) entries; refuse definitions or assignments whose worst-case expansion exceeds 2000 grants (`role_expansion_limit`). `accountSessionPrincipal` takes the expanded access. The session authenticator gets the catalogue through a `RoleCatalogueReader` with an in-process cache that the role service clears on every write in the same runtime (the runtime is its catalogue's only writer).
+**Expansion.** `expandAccountAccess(account, roles): { permissions, grants }` (NEW, pure, `auth/roles/expand.ts`): start with the account's own; for each assignment whose role exists add `role.permissions`, `role.grants`, and for each `projectId` add `{ permission, scope: { type: "project", projectId } }` for every `role.projectPermissions`; deduplicate with `accountGrantKey`. Bounded: ≤ 10 × (100 + 20 × 100) entries; refuse definitions or assignments whose worst-case expansion exceeds 2000 grants (`role_expansion_limit`). `accountSessionPrincipal` takes the expanded access. The authenticator gets the roles from a `RoleCatalogueCache` (NEW, `auth/roles/cache.ts`): it holds the rows and the revision it loaded; the roles module clears it after each committed write in this runtime, which is the catalogue's only writer (one Auth writer per runtime). Inside a transaction (`resolveActor`, `setAccountAccess`, invitation acceptance, role writes) the roles are read through `tx.db`, never the cache, so a decision and its write see the same catalogue.
 
 **Delegation.**
 - Define or edit: the actor must be able to delegate the role's full content (`permissions`, `grants`, and `projectPermissions` for every Project in which it holds them). For `projectPermissions` the actor must hold each permission either unscoped or as a Project-parameterized authority; on the Platform require the actor to hold it runtime-wide (`actor.permissions` includes it or `*`), because the role can be assigned to any Project later.
-- Assign: expand the proposed assignments for the target and run `assertCanDelegateAccountAccess` on the expanded access, plus the existing checks on direct access.
+- Assign: expand the proposed assignments for the target and run `canDelegateAccess` on the expanded access, plus the existing checks on direct access, inside `setAccountAccess`'s transaction.
 - Delete: needs `system.roles.manage`; no delegation check (removing authority).
 
 **Invariants.**
 1. A principal's authority = direct access ∪ expansion of existing roles at authentication time.
-2. No actor can create a role or assignment that gives authority the actor could not delegate directly.
-3. Catalogue changes are revision CAS; at most 50 roles.
+2. No actor can create a role or assignment that gives authority the actor could not delegate directly; the check and the write are one transaction.
+3. Every role change carries `expectedRevision` of the catalogue and raises it in the same transaction; at most 50 roles.
 4. A missing role in an assignment expands to nothing; the next access edit drops it.
 
 **Failure model.** NEW: `RoleInvalidError` 400 `invalid_role`; `RoleConflictError` 409 `role_revision_conflict`; `RoleLimitError` 429 `role_limit`; `RoleExpansionLimitError` 400 `role_expansion_limit`; `RoleNotFoundError` 404 `role_not_found`; delegation → 403 `account_access_forbidden`.
 
-**Concurrency, bounds, interruption.** Catalogue writes are single-record CAS; a crash leaves the old or new catalogue. Assignment writes use the existing conditional access write (`accessRevision`). Authentication reads the cached catalogue.
+**Concurrency, bounds, interruption.** Role writes are one `documents.transaction` each (catalogue revision checked and raised, role row written, delegation checked); a crash leaves the old or new catalogue. Assignment writes use the existing conditional access write (`accessRevision`), which also ends the account's sessions. Authentication reads the cached catalogue; a role edit or delete takes effect on the member's next request in this runtime.
 
 **Deleted.** Nothing. The fixed role label stays as is.
 
-**Decisions and rejected alternatives.** One catalogue record over one record per role: authentication needs all of them anyway, and 50 is small. Expansion at authentication over materialization: edits and deletes propagate without touching accounts. No inheritance: flat bundles are auditable.
+**Decisions and rejected alternatives.** One row per role plus a revision row over one catalogue document: an Auth transaction reads and writes rows, a role edit touches one row, and the revision row gives the same CAS. Changing a role does not end members' sessions: their authority is recomputed per request from the cache. Expansion at authentication over materialization: edits and deletes propagate without touching accounts. No inheritance: flat bundles are auditable.
 
 **Decisions taken for the user.** Limits (50 roles, 10 assignments, 20 Projects per assignment). Apps use `project.users.manage` for role management. `SetAccountAccessInput.roleAssignments` is required (callers send `[]`).
 
@@ -149,45 +154,45 @@ Add `system.roles.manage` to the permission vocabulary shown on `/server/access/
 
 - **Files**: none.
 - **Depends on**: part 5 landed.
-- **Check**: build; `pnpm --filter zelavis exec node --test --test-reporter=dot test/identity-account-access.test.mjs test/platform-gateway-authority.test.mjs test/identity-invitations.test.mjs; echo "exit $?"` prints `exit 0`.
+- **Check**: build; `pnpm --filter zelavis exec node --test --test-reporter=dot test/auth-admin.test.mjs test/auth-invitations.test.mjs test/platform-gateway-authority.test.mjs; echo "exit $?"` prints `exit 0`.
 
-### 2. Add the role catalogue schema and repository
+### 2. Add the roles module tables
 
-- **Files**: `packages/zelavis/src/app/identity/domain/account-access.ts`; NEW `packages/zelavis/src/app/identity/domain/roles.ts`; `contracts/repositories.ts` (NEW `RoleCatalogueRepository { read(); mutate(m) }` on `IdentityRepositories.roles`); `storage/in-memory.ts`, `storage/database.ts`, `packages/zelavis/src/platform/auth-repositories.ts`; `entities.ts` (`roleAssignments` on `Account`); `test/identity-atomicity.test.mjs`.
-- **Change**: schemas and repository per sections 2-3; strict decode of the stored catalogue. An invalid stored catalogue fails closed: authentication expands no roles (members keep only their direct access), the role routes answer 503 `roles_unavailable`, and the runtime log records one line naming the record (no content). Add that code to the failure table.
+- **Files**: NEW `packages/zelavis/src/auth/roles/{tables,roles}.ts`; `auth/accounts/tables.ts` (`roleAssignments`); `auth/create-auth.ts` (register the module's tables); `auth/README.md` (row for `roles/*`, Zelavis-own); NEW `packages/zelavis/test/auth-roles.test.mjs` over `test/_auth.mjs`.
+- **Change**: tables and schemas per sections 2-3; `roles.ts` exports `listRoles(tx)`, `createRole(tx, actor, input)`, `updateRole(tx, actor, roleId, input)`, `deleteRole(tx, roleId, expectedRevision)`, each checking and raising the catalogue revision. A stored row that does not decode fails closed: expansion skips that role, the role routes answer 503 `roles_unavailable`, and one log line names the collection and row id (no content). Add that code to the failure table.
 - **Depends on**: 1.
-- **Check**: rebuild; atomicity case: 16 concurrent role creates against one revision → exactly one success.
+- **Check**: rebuild; `auth-roles.test.mjs`: 16 concurrent creates against one revision through the harness → exactly one success, the others `role_revision_conflict`.
 
 ### 3. Expand role assignments into principals
 
-- **Files**: `account-access.ts` (`expandAccountAccess`); `core/session-authenticator.ts:48-77` and its options (catalogue reader); `core/create-identity.ts`; NEW `packages/zelavis/test/identity-roles.test.mjs`.
-- **Change**: section 2 expansion; the authenticator awaits one cached read per request (cache cleared by the role service).
+- **Files**: NEW `auth/roles/{expand,cache}.ts`; `auth/accounts/principal.ts` (takes expanded access); `auth/core/authenticator.ts` (cache); `auth/access/delegation.ts` (`resolveActor` expands through `tx.db`); `auth/invitations/accept.ts` (inviter expansion through `tx.db`); `test/auth-roles.test.mjs`.
+- **Change**: section 2 expansion; the authenticator expands from the cache, transactions read roles through `tx.db`.
 - **Depends on**: 2.
-- **Check**: rebuild; expansion unit cases pass.
+- **Check**: rebuild; expansion unit cases and "edit propagates on the next request without touching the account" pass.
 
 ### 4. Add role assignments to account access and invitations
 
-- **Files**: `account-access.ts:32-47`, `:120-133` (normalize includes sorted `roleAssignments`), `:97-102` (digest covers it); `services/account-service.ts:75-104`, `:171`; `services/invitation-service.ts` (part 4); `packages/zelavis/src/platform/project-gateway.ts:718-760`; dashboard `app/account-access-editor.ts` (send `roleAssignments`, preserve existing ones).
-- **Change**: required field; delegation on expanded access; Gateway checks every assigned Project equals the route's Project for App roles (App assignments carry no `projectIds`; the App's own Project is implicit).
+- **Files**: `auth/access/access.ts` (`delegatedAccessFields` gains required `roleAssignments`; `normalizeAccountAccess` sorts them; `projectAccountAccessDigest` and `projectAccountAccessPermissions` cover them); `auth/access/delegation.ts` (`setAccountAccess`, `canDelegateAccess` on expanded access); `auth/invitations/invitations.ts`; `auth/routes/admin.ts` (result carries `roleAssignments`); `packages/zelavis/src/platform/project-gateway.ts` (account access route); `packages/zelavis/src/sdk/auth-client.ts` (types); dashboard `app/account-access-editor.ts` (send `roleAssignments`, preserve existing ones).
+- **Change**: required field; delegation on expanded access; the Gateway refuses `projectIds` on App assignments (the App's own Project is implicit).
 - **Depends on**: 3.
-- **Check**: rebuild; `pnpm --filter zelavis exec node --test test/identity-account-access.test.mjs test/identity-invitations.test.mjs test/identity-roles.test.mjs; echo "exit $?"` prints `exit 0`; `pnpm run typecheck; echo "exit $?"` prints `exit 0`.
+- **Check**: rebuild; `pnpm --filter zelavis exec node --test test/auth-admin.test.mjs test/auth-invitations.test.mjs test/auth-roles.test.mjs; echo "exit $?"` prints `exit 0`; `pnpm run typecheck; echo "exit $?"` prints `exit 0`.
 
-### 5. Add the role service and routes
+### 5. Add the role routes
 
-- **Files**: NEW `services/role-service.ts`; `identity-service.ts` (routes beside `:427`); `core/errors.ts`.
+- **Files**: NEW `auth/routes/roles.ts` (mounted beside `defineAdminRoutes` in `auth/create-auth.ts`); `auth/routes/admin.ts` (error codes shared through its table, or the new file's own table in the same style).
 - **Depends on**: 4.
-- **Check**: rebuild; HTTP cases in `identity-roles.test.mjs` pass.
+- **Check**: rebuild; HTTP cases in `auth-roles.test.mjs` pass.
 
 ### 6. Add the exact Project Gateway routes
 
-- **Files**: `packages/zelavis/src/platform/project-gateway.ts`; `test/identity-roles.test.mjs`.
+- **Files**: `packages/zelavis/src/platform/project-gateway.ts` (beside `runtime.projects.auth.accounts.access.set` and the invitation routes); `test/auth-roles.test.mjs`; `test/platform-gateway-authority.test.mjs` (route inventory).
 - **Change**: forward the four App role routes with `project.users.manage`, checking delegation of the role content against the caller's Project authority and signing the permission digest as the access route does.
 - **Depends on**: 5.
 - **Check**: rebuild; Gateway cases pass.
 
 ### 7. Add SDK and CLI parity
 
-- **Files**: `packages/zelavis/src/sdk/fetch.ts`; `packages/zelavis/src/cli/auth-operations.ts`; `packages/zelavis/src/cli/projects.ts`.
+- **Files**: `packages/zelavis/src/sdk/auth-client.ts` (`client.auth.admin.*`), the Project methods beside `client.projects.invitations` (`packages/zelavis/src/sdk/fetch.ts`); `packages/zelavis/src/cli/auth-operations.ts`; `packages/zelavis/src/cli/projects.ts`.
 - **Depends on**: 6.
 - **Check**: rebuild; `pnpm --filter zelavis exec node --test test/capability-parity.test.mjs; echo "exit $?"` prints `exit 0`.
 
@@ -210,7 +215,7 @@ Add `system.roles.manage` to the permission vocabulary shown on `/server/access/
 
 ## 5. Tests
 
-`test/identity-roles.test.mjs` (Platform with two Projects P, Q, R created through the test Platform helper in `./_runtime.mjs`; an App runtime):
+`test/auth-roles.test.mjs` (Auth harness `test/_auth.mjs` for concurrency and expansion; Platform with Projects P, Q, R created through the test Platform helper in `./_runtime.mjs`; an App runtime):
 - Owner defines `project-developer` (`projectPermissions: ["project.view", "project.domains.manage"]`); assigns to customer C for P and Q; C's `GET /runtime/projects` lists P and Q only; C adds a domain to P (with a DNS fixture from part 1 or the injected resolver) → allowed; R → 403.
 - Owner edits the role to drop `project.domains.manage`; C's next domain call → 403; C's account record unchanged (`accessRevision` same).
 - Delete role → C sees no Projects; next access edit of C drops the dangling assignment.
@@ -274,5 +279,38 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+### Session 1: 2026-11-16
+
+Final status: done. Steps 1-10 carried out in the main checkout on `dev`; nothing committed.
+
+- 1 done: build plus `auth-admin`, `auth-invitations`, `platform-gateway-authority` passed at the starting tree.
+- 2 done: NEW `auth/roles/tables.ts` (`roles_catalogue` revision row, `roles_roles` rows with `by_roleId`), `auth/roles/catalogue.ts` (schemas, `readCatalogue`, decode that skips and logs an undecodable row), `auth/roles/roles.ts` (`createRole`, `updateRole`, `deleteRole`, `listRoles`, delegation of role content); `accounts_accounts.roleAssignments` optional; module registered in `create-auth.ts`; README row. Security event kinds `role.created|changed|deleted`.
+- 3 done: NEW `auth/roles/expand.ts` (`expandAccountAccess`, `expansionSize`, `ROLE_EXPANSION_LIMIT`), `auth/roles/cache.ts` (`RoleCatalogueCache` with a generation counter so a load racing a change is not kept); `accountSessionPrincipal` takes the catalogue; the authenticator loads the copy only for accounts holding assignments; `resolveActor`, `managedAccount`, invitation creation and acceptance read roles through `tx.db`.
+- 4 done: `roleAssignments` required in `DelegatedAccess`/`SetAccountAccessInput`, in the result and the account listing; `normalizeAccountAccess` sorts it; `projectAccountAccessPermissions` and the digest cover role permissions; `setAccountAccess` checks expanded current and proposed access, refuses a new unknown role (`role_not_found`), drops a dangling kept one, and enforces 2000 entries; App assignments carry no `projectIds` (`accessInputFits`); Platform assignments' Projects go through `validateGrantScopes`; invitations merge assignments at acceptance. All existing callers and tests now send `roleAssignments: []`.
+- 5 done: NEW `auth/routes/roles.ts` (four routes, its own refusal table, cache cleared after every change, Gateway digest check).
+- 6 done differently: besides the four exact App role routes, the Gateway now reads the App's catalogue (`readProjectRoles`) for an access edit or invitation that involves roles and for a role update (old content), so its signed permission names include role permissions; the child recomputes them from its own catalogue.
+- 7 done: `client.auth.admin.roles|createRole|updateRole|deleteRole`, `client.projects.roles|createRole|updateRole|deleteRole`, `zelavis auth roles|create-role|update-role|delete-role`, `zelavis projects roles|create-role|update-role|delete-role`; capability-parity gained a role case; the Gateway route inventory in `zelavis-server.test.mjs` lists the new routes.
+- 8 done: NEW `app/roles-page.ts` (list, create, edit with the revision-conflict message, delete after typing the id) at `/server/access/roles` (server navigation item) and `/projects/:projectId/roles` (project menu, managed apps too); role picker with Project choice in `account-access-editor.ts`; vocabulary entries; browser scenario `qualifyCustomRoles` in `scripts/test-embedded-server-views.mjs` (both sizes, create, assign for one Project, customer sees exactly that Project, typed deletion). The plan named `scripts/test-route-parity.mjs`; it visits the new routes automatically from `dashboard-routes.ts`, and the action scenario went beside the existing access-editor scenarios instead.
+- 9 done: `architecture/access-control.md` (Custom roles), `packages/auth.md` (Custom roles, invitation body), `api/platform-operations.md`, `packages/zelavis/README.md` (also corrected the SDK/CLI names it gave for access edits), `AGENTS.md § Zelavis Auth` module list gains `roles`.
+- 10 done: self-audit below.
+
+Verification (after the last edit, `TMPDIR=/private/tmp/zelavis-verify`): `pnpm run verify` exit 0 (3569 tests pass, 0 fail; TigerStyle, Effect usage and repo rules pass); `pnpm run ci:ui` exit 0, including the new "Custom roles" scenario (a first run failed on the delete confirmation's accessible name; fixed by letting the visible label name the input, then rerun green); `pnpm run docs:check` exit 0; `git diff --check` exit 0. Focused runs during the work: `auth-roles.test.mjs` 10/10; all `auth-*`, Gateway, parity, server and host-footprint suites 492/492.
+
+Deviations:
+- `RoleDefinition` views use `id` (matching the input's `id`) rather than the plan's storage field name `roleId`; rows store `roleId` and the content as one decoded value (`definition`), so an undecodable row is skipped instead of failing every read of the table, authentication included.
+- A role edit is refused unless the actor could also delegate the content it replaces (the plan required only the new content), mirroring `setAccountAccess`'s current-and-proposed check, so an operator cannot strip a role the owner built.
+- Creating a role whose id exists answers 409 `role_exists` (code not in the plan's table).
+- Invitation acceptance that would push an existing account past 10 assignments or 20 Projects answers 409 `invitation_access_limit` and leaves the invitation pending.
+- The 2000-entry expansion bound is checked at assignment (access edit, invitation). A later role edit that grows members' expansion is not re-checked per member (that would be a per-account scan); expansion stays bounded by 10 × (100 + 20 × 100).
+
+Decisions taken for the user:
+- A new assignment naming a role that does not exist is refused (`role_not_found`) rather than silently dropped; only an assignment the account already held is dropped when its role is gone (invariant 4).
+- Deleting a role leaves the assignment on accounts until their next access edit, as the plan specifies, so recreating a role with the same id gives its authority back to those accounts; the docs and the delete confirmation say so. Tombstoning deleted ids was not added (unbounded state).
+- Platform user administrators with `system.users.manage` can read the catalogue (needed to assign), never change it.
+
+Added items: none.

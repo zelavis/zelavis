@@ -2,7 +2,7 @@
 
 Job: Plan the follow-ups to the finished self-registration plan: qualify the Project domain DNS TXT ownership check against a real TXT record in public DNS (the VPS run used test resolver injection), and build what that plan left out of scope: billing and paid hosting entitlements, email verification with email delivery, invitations, password recovery, MFA, custom role definitions, and domain purchase and DNS automation (registrar purchases, transfers, DNS automation, wildcard certificates).
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 
 To start:    Execute part 1 in .agents/plans/2026-11-13-accounts-billing-domain-automation/01-authoritative-dns-challenge-lookup.md. Read 00-overview.md first, then start with the part's section 8.
@@ -10,21 +10,20 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Land authoritative DNS challenge lookup.
-- [ ] 2. Land per-runtime email delivery.
-- [ ] 3. Land email verification and password recovery.
-- [ ] 4. Land account invitations.
-- [ ] 5. Land TOTP multi-factor authentication.
-- [ ] 6. Land custom role definitions.
-- [ ] 7. Land DNS providers, automatic records and wildcard certificates.
-- [ ] 8. Land public DNS and CA qualification.
-- [ ] 9. Land registrar purchase, transfer and renewal.
-- [ ] 10. Land cloud capacity in core.
-- [ ] 11. Land the Platform services database.
-- [ ] 12. Land Ecommerce billing on the Platform.
-- [ ] 13. Land service principals approved at install.
-- [ ] 14. Land the Hosting Provider service.
-- [ ] 15. Self-audit across all parts.
+- [x] 1. Land authoritative DNS challenge lookup. (2026-11-13)
+- [x] 2. Land per-runtime email delivery. (2026-11-13)
+- [x] 3. Land email verification and password recovery. (2026-11-13)
+- [x] A. (2026-11-16) Land the Zelavis Auth plan (all 16 parts, completed and removed after cutover). It replaces parts 4 (invitations, now Auth invitations) and 5 (TOTP, now Auth TOTP), whose files were removed on 2026-11-14.
+- [x] 6. Land custom role definitions. (2026-11-16)
+- [x] 7. Land DNS providers, automatic records and wildcard certificates. (2026-11-16)
+- [x] 8. Land public DNS and CA qualification. (2026-11-17. Run `1bluwknkn4m` passed all five live legs on zelavis.com with Let's Encrypt staging, off-host chain verification and complete cleanup; all local gates passed.)
+- [x] 9. Land registrar purchase, transfer and renewal. (2026-11-17: all four live Namecheap sandbox checks passed using test credit; lowercase pricing fix and all final gates passed.)
+- [x] 10. Land cloud capacity in core. (2026-11-17: lazy bundled adapter, stored machine policy, signed HTTPS webhook provider and dashboard/SDK/CLI parity; all final gates passed.)
+- [x] 11. Land the Platform services database. (2026-11-17: private service-only storage, shared three-component backups, host-local restore/recovery and Ecommerce persistence; all required gates passed.)
+- [x] 12. (2026-11-17) Land Ecommerce billing on the Platform: sealed credentials, authorized checkout/portal, atomic signed events, durable fulfillment and dashboard/docs; all required gates passed.
+- [x] 13. (2026-11-18) Land approved service principals, sealed in-process access, lifecycle revocation and Marketplace/SDK/CLI parity; all required gates passed.
+- [x] 14. (2026-11-18) Hosting Provider implementation, Stripe test-mode qualification (`PASS subscribe`, `PASS project`, `PASS limit`, `PASS suspend`), and all workspace/browser/docs checks passed.
+- [x] 15. (2026-11-18) Self-audit across all parts passed.
 
 ## 0. Summary and finish line
 
@@ -34,7 +33,7 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 
 - Project domain TXT proof read from the zone's authoritative nameservers, and a committed qualification script that proves it with a real public zone, a real TXT record and Let's Encrypt staging.
 - Per-runtime email delivery (Platform and each native App), SMTP built in, durable outbox, operator settings and test send.
-- Email ownership verification, password recovery delivery with single-use tokens, invitations, TOTP MFA with recovery codes, and custom role definitions, on both the Platform and native App runtimes.
+- Email ownership verification and password recovery delivery (done in part 3, superseded by Zelavis Auth), invitations and TOTP MFA (moved to the Zelavis Auth plan), and custom role definitions, on both the Platform and native App runtimes.
 - DNS providers with a built-in Cloudflare driver and plugin discovery for others, automatic record management for operator-hosted subdomains, ACME DNS-01 and wildcard certificates.
 - Operator registrar purchase, transfer-in and renewal with the operator's own account, through a built-in Namecheap driver (plugins can add registrars).
 - Cloud capacity in core: `@zelavis/cloud` dissolved into a capacity adapter inside `zelavis`, loaded only when a provider is used; stored machine policy instead of `ZELAVIS_CLOUD_POLICY`; a webhook provider for datacenters without an API.
@@ -46,7 +45,7 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 
 ### Out of scope
 
-- Passkeys/WebAuthn and SMS factors (TOTP plus recovery codes is the MFA this plan ships). Reason: WebAuthn needs CBOR/COSE attestation verification, a separate design; SMS is weak and costs money per message.
+- SMS factors (weak, and cost money per message). Passkeys moved into the Zelavis Auth plan (WebAuthn implementation).
 - HTTP-API email provider plugins (Postmark, SES and Resend all accept SMTP submission, so SMTP covers them).
 - Customer-owned DNS provider connections, and domain resale to customers. Reason: resale needs automatic refunds when a paid registration fails and a DNS zone created for the bought domain, each its own design; customers keep the TXT-proof flow and operator-hosted subdomains.
 - Taxes, VAT invoices, refunds through Zelavis, coupons on checkout, metered usage billing, resellers and delegated Project Platforms, selling whole managed Platforms. Stripe's own dashboard handles refunds; tax is a commercial decision.
@@ -58,9 +57,9 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 
 1. Project domain verification reads `_zelavis-challenge.<host>` from the zone's authoritative servers: a record added after a failed check verifies on the next check without waiting for any resolver's negative cache. `pnpm release:qualify:domains` passed once against a real public zone, recorded in part 8's report.
 2. An operator can configure SMTP for the Platform and, separately, for one App; a test message arrives at a local SMTP fixture in tests; deliveries survive restart and retry with bounded backoff.
-3. Password signups receive a verification email; when the runtime requires verified email, unverified accounts cannot sign in; password recovery emails a single-use link whose token is consumed exactly once under concurrency.
-4. An authorized user invites an email address with preset access that the inviter could delegate; acceptance creates or extends exactly one account even while registration is closed, and a revoked or expired invitation is refused.
-5. A user enrolls TOTP and gets ten recovery codes; password and OAuth sign-in then require a code; a used code or step cannot be replayed; the owner can require MFA for privileged accounts.
+3. Password signups receive a verification email; when the runtime requires verified email, unverified accounts cannot sign in; password recovery emails a single-use link whose token is consumed exactly once under concurrency. (Done in part 3; the Zelavis Auth plan replaces the mechanism: email + password accounts always verify before their first session.)
+4. Invitations: see the Zelavis Auth plan's Done means 10 (its part 15).
+5. TOTP MFA: see the Zelavis Auth plan's part 10 Done means.
 6. An operator defines custom roles (permission bundles, optionally parameterized by Project) and assigns them within their own authority; editing a role changes members' authority on their next request.
 7. With a Cloudflare connection (built-in driver), an operator-hosted subdomain gets its TXT and address records and a wildcard certificate issued by DNS-01, all removed when the domain or Project goes.
 8. The owner can check, register, transfer in and renew a domain through the built-in Namecheap driver, qualified against Namecheap's sandbox; nothing is purchased twice after a crash.
@@ -84,6 +83,9 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 
 ### Supplement and cleanup
 
+- Revised 2026-11-14 (owner request: rebuild Auth before continuing): Zelavis Auth replaces the former `app/identity` subsystem (row A in section 4). Parts 4 and 5 moved there and their files were removed; part 4's step 2 (gaps found reviewing part 3) became its invariants I6-I8, because its cutover deletes the code those fixes targeted. Parts 6, 11 and 13 were `needs replanning`; parts 7 and 14 carried a note.
+- Refreshed 2026-11-16 (Zelavis Auth plan part 16 step 9): parts 6, 11 and 13 rebuilt on Zelavis Auth and back to `planned`: part 6 keeps roles as rows of a new `roles` Auth module, checked in the writing transaction, with an in-process catalogue cache for authentication; part 11 adds the services database as the `database` component of the identity database's backups host, opened with no host of its own (`backups: false`); part 13 makes the service principal an Auth service account found through a new owner row, deleted on disable. Parts 7 and 14 had their Auth citations moved to `packages/zelavis/src/auth`.
+
 - `.agents/references/plan-writer.md` was 17 commits behind (`f30953612f`). Updated and set to `b04fa02d95`: the compatibility rule now names the explicit Project upgrade for published layouts (`AGENTS.md § Code Change Expectations`), the dashboard reads caller authority from `runtime/access`, `test:browser` reruns the embedded suite with `--nested-auth`, browser steps wait for the page's own server-answered sign, and a new trap covers the Project host import footprint. Review and commit it.
 - Conflict flagged, not changed: the supplement (citing `AGENTS.md § Repo Structure`) says to keep `pnotes/TODO.md` current; the owner retired that file in a later instruction (no additions; open items live in `.agents/plans`). Every part follows the owner: it removes finished entries it finds there and adds none.
 - Conflict flagged and settled by the owner: `AGENTS.md § Core Access-Control Rule` says "What is vendor-specific stays a plugin." in its identity-provider passage. Parts 7, 9 and 10 follow the owner's newer decision for Edge and capacity drivers (built into core behind the adapter boundary) and write it into `AGENTS.md` (part 7 step 10 for Edge drivers, part 10 step 9 for capacity); identity providers stay plugins.
@@ -99,10 +101,10 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 **Glossary.**
 - **Runtime**: one `zelavis()` composition. The Platform is `role: "platform"`; each native App Project runs its own with `role: "project"` (`AGENTS.md § Platform And App Service Boundary`).
 - **Runtime System Store**: the `ZelavisSystemStore` a runtime owns. The Platform's is `<data>/system/zelavis.sqlite`; a Project's is `<project>/.zelavis/runtime/zelavis.sqlite` (`packages/zelavis/src/adapters/node.ts:293-304`). Interface at `packages/zelavis/src/system-store.ts:26`: `get`, `set`, `setIfAbsent`, `compareAndSet(ns, key, expectedUpdatedAt, value, expectedValue?)`, `compareAndDelete`, `delete`, `page(ns, { limit, after })`, `list`.
-- **Native Identity**: `zelavis/app/identity`. Platform composition `packages/zelavis/src/index.ts:1619-1700` (System Store repositories); App composition `packages/zelavis/src/app/app-service.ts:118-160` (Project database repositories). Repository contracts `packages/zelavis/src/app/identity/contracts/repositories.ts:20-101`.
+- **Zelavis Auth** (replaced native Identity, 2026-11-15): `zelavis/auth`, `packages/zelavis/src/auth` (`AGENTS.md § Zelavis Auth`). Composed per runtime by `createAuthSubsystem` (`packages/zelavis/src/auth/subsystem.ts`): the Platform on its identity database (`<data>/identity-database/`), each App on its Project database, both in the Tenant `service:zelavis-auth`; every change is one `documents.transaction`. Parts 1-3 below were written against Identity and are done; their code was replaced by that plan.
 - **Master secret**: `loadPlatformMasterSecret(store)` (`packages/zelavis/src/platform/master-secret.ts:19`) creates one 32-byte hex secret per store, if absent. It works on any runtime System Store, so a Project runtime gets its own. Secrets at rest use `encryptSecret`/`decryptSecret` (`packages/zelavis/src/edge/acme-crypto.ts:79`, `:104`) with a key `${masterSecret}\u0000<purpose>`, as `packages/zelavis/src/assistant-provider.ts:133-135` does.
 - **Project Gateway**: the Platform's authenticated proxy into one Project runtime. Exact child routes are declared one by one in `packages/zelavis/src/platform/project-gateway.ts:670-760` (registration settings, account access).
-- **App public auth**: the exact allowlist of App routes served on a verified App hostname or preview, `packages/zelavis/src/platform/project-public-auth.ts:11-17`, with pages rendered by `packages/zelavis/services/zelavis-ui/src/identity-frontend.ts` and browser code `packages/zelavis/services/zelavis-ui/app/identity-site.ts`.
+- **App public auth**: the exact allowlist of App routes served on a verified App hostname or preview, `packages/zelavis/src/platform/project-public-auth.ts` (`pages`, `publicAuthRoutes`), with pages rendered by `packages/zelavis/services/zelavis-ui/src/identity-frontend.ts` and browser code `packages/zelavis/services/zelavis-ui/app/auth-site.ts` and `app/auth-public.ts`.
 
 **Governing rules.**
 > "Every official public Zelavis capability must be available through the official JavaScript SDK, versioned HTTP API, and CLI." `AGENTS.md § Endpoint-Backed Capability Rule`
@@ -124,9 +126,9 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 | Decision | Reason |
 | --- | --- |
 | Each runtime owns its email settings, outbox, tokens, MFA factors and role catalogue. Nothing App-scoped lives in the Platform. | Same as the registration policy: the earlier plan rejected a Platform-held record keyed by Project for App-user policy (backup, transfer, cleanup). |
-| SMTP is built in; no email provider plugin. | Recovery and verification are core account functions, like the built-in password provider (`packages/zelavis/src/app/identity/providers/password.ts:14-25`). Every mainstream provider accepts SMTP. |
+| SMTP is built in; no email provider plugin. | Recovery and verification are core account functions, like built-in password sign-in (now `packages/zelavis/src/auth/methods/email-password.ts`). Every mainstream provider accepts SMTP. |
 | Emailed links come from the email settings' `linkBaseUrl`, and carry tokens in the fragment (`#token=`). | No Host-header poisoning; fragments are not sent to servers, proxies or `Referer`. |
-| One single-use token repository (`accountTokens`) serves verification, recovery, invitation and MFA challenges. | One atomic consume primitive, implemented and atomicity-tested once per backend. |
+| Single-use links and challenges are consumed once inside an Auth transaction (verification, recovery, invitations, MFA). | Superseded: parts 1-3 used one `accountTokens` repository; Zelavis Auth replaced it with upstream's email challenges and its own invitation and MFA tables, each consumed in the transaction that acts on it. |
 | Core owns provider contracts (`zelavis/edge:dns`, `zelavis/edge:registrar`, `CapacityProvider`) and ships first-party drivers in `packages/zelavis/src/adapters`, injected by the Node adapter; plugins may add drivers under the owner-qualified capabilities. Payment providers stay `@zelavis/ecommerce:payments` plugins. | Owner decision (this revision); `AGENTS.md § Runtime Independence Rule` keeps vendor code in adapters; the capability model is `packages/zelavis/src/core/service/capability.ts:1-23`. |
 | Billing lives in Ecommerce; Hosting turns paid subscriptions into role assignments (part 6) through public operations, as its own service principal approved at install (part 13). | No second permission system and no second billing system (`AGENTS.md § Core Access-Control Rule`; owner decision). |
 | Money-moving and purchase operations are durable state machines with idempotency keys and never retried blindly after an ambiguous submit. | A crash must not buy a domain twice or charge twice. |
@@ -144,9 +146,9 @@ The earlier plan (`2026-11-10-platform-app-self-registration`, finished and remo
 
 These are things the implementer cannot supply. Each blocks only the named steps, which start as `[!]` in their parts. Everything else proceeds.
 
-- A Cloudflare API token with `Zone.DNS:Edit` on one zone you control, the zone name, SSH (root) to a disposable environment on the existing VPS, and one free IPv6 address in the VPS's routed prefix with its interface name (as in the earlier run). Blocks part 8 steps 3-5.
-- A Namecheap sandbox account's API user, API key and a whitelisted client IP. Blocks part 9 step 9.
-- A Stripe test-mode secret key and the Stripe CLI logged in (`stripe login`) on the machine that runs the qualification. Blocks part 14 step 10.
+- Supplied and qualified on 2026-11-17: a zone-scoped Cloudflare token, `zelavis.com`, root SSH to the existing VPS and a spare routed IPv6 address on `eth0`. Part 8's live run and cleanup passed; its credentials are not stored in this plan.
+- Supplied and qualified on 2026-11-17: a separate Namecheap sandbox account, its API key and this Mac's whitelisted client IP. All four part 9 sandbox checks passed; no credential is stored in this plan.
+- Supplied and qualified on 2026-11-18: a Stripe test-mode secret key (`sk_test_...`) and Stripe CLI session in the same test sandbox (`acct_1DstxnIOdKYPsoH4`). Part 14's live run and cleanup passed; no credential is stored in this plan.
 
 ## 3. Shared contracts and handover
 
@@ -155,15 +157,14 @@ These are things the implementer cannot supply. Each blocks only the named steps
 | 1 | none (behavior change in `POST /runtime/projects/:projectId/domains/:hostname/verify`) | none |
 | 2 | `GET/PUT /email/settings`, `POST /email/test`, `GET /email/deliveries`; Project: `/runtime/projects/:projectId/email/{settings,test,deliveries}` | `zelavis.email` settings, `zelavis.email.outbox` |
 | 3 | `POST /auth/email/verify`, `POST /auth/email/verification`; registration settings gain `emailVerification`; recovery moves onto tokens | `accountTokens` repository |
-| 4 | `GET/POST /auth/invitations`, `DELETE /auth/invitations/:id`, `POST /auth/invitations/accept`; Project Gateway copies | `invitations` repository |
-| 5 | `/auth/mfa/{settings,totp,totp/confirm,verify,recovery-codes}`, `DELETE /auth/accounts/:accountId/mfa` | credentials `mfa.totp`, `mfa.recovery`; `CredentialRepository.mutate` |
+| 4, 5 | moved to the Zelavis Auth plan (parts 15 and 10) | |
 | 6 | `GET/POST /auth/roles`, `PUT/DELETE /auth/roles/:roleId`; account access gains `roleAssignments` | `roles` catalogue record |
 | 7 | `/runtime/edge/dns/{providers,connections,zones}*`; Project domains gain `dns: "automatic"` | `edge.dns-connections`, `edge.dns-zones` |
 | 8 | none (script `pnpm release:qualify:domains`) | none |
-| 9 | `/runtime/registrar/{providers,connection,contact,availability,domains,orders}*`; script `pnpm release:qualify:registrar` | `registrar.connection`, `registrar.contacts`, `registrar.orders` |
+| 9 | `/runtime/registrar/{providers,connection,contact,availability,quote,domains,orders}*`; script `pnpm release:qualify:registrar` | `registrar.connection`, `registrar.contacts`, `registrar.orders`, `registrar.order-keys`, `registrar.active-orders` |
 | 10 | `GET\|PUT /runtime/cloud/policy`; cloud connection gains `provider: "webhook"` and `endpoint` | `fabric.cloud-policy.v1`, `fabric.cloud-webhook-nodes.v1` |
 | 11 | none (host-local `zelavis services-database restore`) | `<data>/services-database/` |
-| 12 | `/plugins/ecommerce/commerce/{checkouts,customers/:id/portal,webhooks/:provider,fulfillment/failures}`; `/plugins/stripe/settings` | `commerce_checkouts`, ledger receipts, `commerce_fulfillment_deliveries`; `core.secrets` |
+| 12 | `/plugins/ecommerce/{checkouts,customers/:id/portal,webhooks/:provider,fulfillment/failures}`; `/plugins/stripe/settings` | `commerce_checkouts`, ledger receipts, `commerce_fulfillment_deliveries`; `core.secrets` |
 | 13 | `approvePermissions` on the service install, update and update-to-listed routes; services list gains `principal` | `zelavis.service-principals`; one service account per principal |
 | 14 | `/plugins/hosting/hosting/{settings,plans,subscriptions,subscription,checkout,portal,projects}` | `hosting_settings`, `hosting_plans`, `hosting_subscriptions`, `hosting_provisions` (Hosting's Tenant) |
 
@@ -173,22 +174,21 @@ Each part writes its own contracts in full in its section 3.
 
 | Part | File | Depends on | Status |
 | --- | --- | --- | --- |
-| 1 | `01-authoritative-dns-challenge-lookup.md` | none | planned |
-| 2 | `02-email-delivery.md` | none | planned |
-| 3 | `03-email-verification-and-password-recovery.md` | 2 | planned |
-| 4 | `04-account-invitations.md` | 2, 3 (`accountTokens`) | planned |
-| 5 | `05-totp-mfa.md` | 3 (`accountTokens`) | planned |
-| 6 | `06-custom-roles.md` | none (lands after 5 to avoid conflicting edits in the same identity files) | planned |
-| 7 | `07-dns-providers-and-wildcard-certificates.md` | 1 | planned |
-| 8 | `08-public-dns-and-ca-qualification.md` | 1, 7; Needs from the user | planned |
-| 9 | `09-registrar-purchase-and-transfer.md` | 7 (provider pattern, boundary test) | planned |
-| 10 | `10-cloud-capacity-in-core.md` | 7 and 9 (boundary test exists to extend; works without them) | planned |
-| 11 | `11-platform-services-database.md` | none | planned |
-| 12 | `12-ecommerce-billing-on-the-platform.md` | 11 | planned |
-| 13 | `13-service-principals.md` | none | planned |
-| 14 | `14-hosting-provider.md` | 6 (roles), 11, 12, 13; Needs from the user for step 10 | planned |
+| 1 | `01-authoritative-dns-challenge-lookup.md` | none | done |
+| 2 | `02-email-delivery.md` | none | done |
+| 3 | `03-email-verification-and-password-recovery.md` | 2 | done |
+| A | Zelavis Auth plan (16 parts, completed and archived after cutover; replaces 4 and 5) | 1-3 | done |
+| 6 | `06-custom-roles.md` | A | done |
+| 7 | `07-dns-providers-and-wildcard-certificates.md` | 1 | done |
+| 8 | `08-public-dns-and-ca-qualification.md` | 1, 7; live inputs supplied and qualified | done |
+| 9 | `09-registrar-purchase-and-transfer.md` | 7 (provider pattern, boundary test) | done |
+| 10 | `10-cloud-capacity-in-core.md` | 7 and 9 (boundary test exists to extend; works without them) | done |
+| 11 | `11-platform-services-database.md` | A (part 3, identity database backups host) | done |
+| 12 | `12-ecommerce-billing-on-the-platform.md` | 11 | done |
+| 13 | `13-service-principals.md` | A | done |
+| 14 | `14-hosting-provider.md` | 6 (roles), 11, 12, 13 | done |
 
-Parts edit shared files (`identity-service.ts`, `sdk/fetch.ts`, CLI tables, `project-gateway.ts`, `dashboard-routes.ts`), so they run one at a time, in this order, in the main checkout on `dev`.
+Parts edit shared files (`sdk/fetch.ts`, CLI tables, `project-gateway.ts`, `dashboard-routes.ts`), so they run one at a time, in this order, in the main checkout on `dev`. Row A (the Zelavis Auth plan) ran first; parts 6, 11 and 13 were refreshed against it on 2026-11-16 (its part 16 step 9). Parts 6 and 7 landed on 2026-11-16. Parts 8 and 9's live qualifications and final gates passed on 2026-11-17. Parts 10–13 landed on 2026-11-17/18, and Part 14's live Stripe qualification and the final cross-part self-audit passed on 2026-11-18.
 
 ## 5. End-to-end proof
 
@@ -206,4 +206,134 @@ From the repository root after each part and again at the end: `pnpm run verify`
 
 Read this overview, then the first part in section 4 that is neither `done` nor `partly done`, and start with that part's section 8. Execute each part in a fresh session, in the main checkout on `dev`: no worktrees and no new branches (owner instruction). A part starts only after the previous part's checks pass. As each part lands, update its row in section 4, this file's `## Progress` line for it, and `Status`. A part left with only `[!]` lines counts as `partly done` and does not hold back the next part unless the next part's Depends on names the blocked work. After the last part, run line 15 (Self-audit across all parts): reread the combined diff against section 0's Done means, rerun the section 7 commands, and record the result below. Committing, pushing, publishing and deploying are separate work and stay off.
 
+**Next-session prompt.** Apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution) after any execution handoff. Use the updated status and dependencies in section 4 to name the next ready step or part, including any prerequisite plan, or this overview's final self-audit.
+
 ## Execution report
+
+### Part 3 (2026-11-13)
+
+Email verification and password recovery are complete on the Platform and
+native Apps. The browser checks exercised both flows against local SMTP at
+desktop and mobile sizes. Workspace verification, browser qualification, docs
+and whitespace checks passed sequentially. Part 4 is the next planned part.
+
+### Part 6 (2026-11-16)
+
+Custom roles are rows of a new `roles` Auth module, checked and written in one transaction against the catalogue
+revision; assignments (`roleAssignments` on account access and invitations) are expanded into principals from an
+in-process copy the role routes clear. Platform and App, exact Gateway routes, SDK, CLI, dashboard pages and docs
+landed. `verify`, `ci:ui`, `docs:check` and `git diff --check` passed. Part 7 is next.
+
+### Part 7 (2026-11-16)
+
+DNS providers (`zelavis/edge:dns`, built-in Cloudflare driver in `adapters/_dns-cloudflare.ts`), encrypted DNS
+connections and adopted zones, ACME DNS-01 and wildcard certificate orders with authoritative propagation checks,
+automatic hosted subdomains with persisted record IDs and exact cleanup, HTTP/SDK/CLI parity, Server → Domains and
+Project → Domains dashboard pages (`qualifyDnsAutomation`), and documentation landed. `verify`, `ci:ui`, `docs:check`
+and `git diff --check` passed. Part 8 is next.
+
+### Part 8 (2026-11-16)
+
+Partly done. The domain qualification harness passed all five loopback legs and the workspace, docs and whitespace checks. Live steps 3–5 await the Cloudflare zone and token, disposable VPS SSH access, and free IPv6 address and interface. Part 9 is ready.
+
+### Part 8, Session 2 (2026-11-17)
+
+Done. Run `1bluwknkn4m` qualified the packed working-tree candidate at `0e4548dbcc` against
+`zelavis.com`: authoritative TXT proof while `8.8.8.8` retained a negative answer, Let's Encrypt
+staging HTTP-01 and DNS-01 wildcard issuance, off-host HTTPS verification, automatic subdomain
+routing and complete DNS/VPS cleanup. Existing production PIDs stayed unchanged. Fixed bundled
+Marketplace host-package resolution with a reproducing regression and added a configurable
+public recursive resolver after `1.1.1.1` failed the cache-retention precondition. Full workspace
+verification (3,311 Zelavis passes, 30 skips), `ci:ui`, local self-test, focused tests, docs and
+whitespace checks passed. Part 9 still needs its separate Namecheap sandbox inputs; part 10 is ready.
+
+### Part 9, Session 2 (2026-11-17)
+
+Done. The separate free Namecheap sandbox account, API access and one Mac-IP
+whitelist entry were set up through Chrome with the owner's approval. The live
+sandbox qualification passed availability/pricing, registration, renewal and inventory
+using only test credit. Its first read-only check exposed lowercase pricing categories;
+the driver now handles both that real response and the uppercase documented form,
+with a reproducing regression. Full workspace verification (3,312 Zelavis passes,
+30 skips), `ci:ui`, all 24 focused registrar/driver/boundary tests, docs and whitespace
+checks passed. No production registrar API or real spending occurred. Part 10 is ready.
+
+
+### Part 10 (2026-11-17)
+
+Done. Dissolved the private cloud service into a lazily loaded capacity adapter in
+`zelavis`, with stored revisioned machine policy, a signed HTTPS webhook provider,
+shared provider-independent first-boot helpers, and dashboard/HTTP/SDK/CLI parity.
+The embedded browser suite proves policy save/reload and a real local HTTPS webhook
+connection at desktop/mobile sizes. Final workspace verification (3,391 Zelavis
+passes, 30 skips), full `ci:ui`, docs, reference-source regressions and whitespace
+checks passed. Existing changes were preserved; nothing was staged or committed.
+Real Hetzner qualification remains out of scope. Part 11 is next.
+
+
+### Part 11 (2026-11-17)
+
+Done. The Node Platform opens one private services database, handed only to
+services' `core.database`; runtime database capabilities/routes and environment
+session persistence remain unchanged. Its `database` component joins `identity`
+and `system-store` on the Platform's one backup host. Added host-local confirmed
+restore with validation, live-owner refusal, failed-move rollback and interrupted
+restore recovery, sharing the identity restore helper while preserving identity's
+copy semantics. Ecommerce installed through the real service activation route
+retains a product after a Platform restart. Full verification (Zelavis 3,398
+passes, 30 skips, zero failures; Ecommerce 22 passes), `ci:ui`, docs and whitespace
+checks passed. Existing changes were preserved; no branch/worktree or commit was
+created. No blocker remains for part 11. Part 12 is next.
+
+
+### Part 12 (2026-11-17)
+
+Done. Added per-runtime sealed service credentials and runtime-owned worker
+contributions; Ecommerce now authorizes its routes, creates hosted checkout and
+portal sessions, applies signed events atomically with receipt/outbox protection,
+and delivers durable per-handler fulfillment with bounded retries. Stripe reads
+sealed settings, verifies exact-body signatures and supports hosted/recurring
+billing, including renewal invoices and delayed checkout success. Native App
+public callbacks follow a narrow product-neutral ingress convention. Payments
+and Stripe pages work through opaque service frames at desktop/mobile sizes, and
+package-content tests prove their generated modules ship. Final root verification
+(Zelavis 3403 passes, 30 skips; Ecommerce 45 passes), `ci:ui`, docs and whitespace
+checks passed. Existing changes were preserved; nothing was staged or committed.
+Live Stripe test-mode qualification remains Part 14. No blocker remains for
+Part 12. Part 13 is next.
+
+
+### Part 13 (2026-11-18)
+
+Done. Services declare concrete Platform permissions in their manifests; every
+install path approves the actual acquired manifest within the installer's authority.
+Auth owns one transactional service account per package, with sealed credentials,
+revocation on disable/failure and native in-process fetch that hides credentials
+from endpoint code. Added reverse dependency refusal, SDK/CLI approval and reload-safe
+Marketplace consent. Regression tests cover concurrency, ownership corruption,
+failed writes/activation, catalogue installs and retained-tab Project scope. Final
+workspace verification (Zelavis 3,427 passes, 30 skips; Ecommerce 45 passes), full
+`ci:ui`, docs and whitespace checks passed. Existing changes were preserved; no
+branch/worktree or commit was created. No blocker remains for Part 13. Part 14 is
+next; its live Stripe test qualification still needs the inputs named there.
+
+### Part 14 (2026-11-18)
+
+Partly done. The optional Hosting Provider package, service-principal
+approval, plans and Auth roles, Ecommerce fulfillment, quota reservations,
+grace and suspension, customer and operator pages, and docs are in the
+`dev` checkout. Auth limits one plan role to 20 Projects. Local coverage
+includes signed fake-provider billing, two Projects from eight concurrent
+requests, recovery after grant and stop failures, and the built dashboard at
+desktop and mobile sizes. Workspace verification, `ci:ui`, docs and whitespace
+checks passed after the last code edit. The qualification runner is ready for
+a Stripe test-mode secret key and CLI login in the same sandbox. Its live
+result is required before marking Part 14 and the overview self-audit done.
+
+### Part 14, Session 3 (2026-11-18)
+
+Done. With the user-supplied Stripe test-mode secret key and CLI session (`acct_1DstxnIOdKYPsoH4`), updated `distribution/scripts/qualify-hosting.mjs` to handle Stripe Checkout's `elements-inner` iframe and short macOS `/tmp` socket paths, and ran `pnpm run release:qualify:hosting` (`PASS subscribe`, `PASS project`, `PASS limit`, `PASS suspend`, exit 0).
+
+### Self-audit across all parts (2026-11-18)
+
+Done. Re-checked all 13 Done means items across parts 1–14 (including Zelavis Auth row A and the three live qualifications: `release:qualify:domains`, `release:qualify:registrar`, and `release:qualify:hosting`), confirmed no forbidden patterns, debug leftovers, temporary files, or edits to `.claude/`, `website/public/allowlist.json`, `repos/effect/`, or `pnotes/TODO.md`, and verified `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` (Zelavis 3,427 passes / 30 skips, Ecommerce 45 passes, Hosting 8 passes, zero failures), `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui`, `pnpm run docs:check`, and `git diff --check` all pass after the last code edit.

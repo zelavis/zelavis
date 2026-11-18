@@ -2,7 +2,7 @@
 
 Job: Qualify Project domain ownership (TXT proof), routing and certificates against a real public DNS zone and Let's Encrypt staging, with a committed, repeatable script.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 8 of 14. Read 00-overview.md first.
 
@@ -11,12 +11,12 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Confirm parts 1 and 7 and the remote-qualification pattern.
-- [ ] 2. Write the qualification script and its local self-test.
-- [!] 3. Run the manual TXT and HTTP-01 leg against the real zone. (blocked by: Cloudflare token with Zone.DNS:Edit, zone name, SSH to a disposable VPS environment, a free public IPv6 address on it; check: the script's leg 1 prints `PASS manual-txt` and `PASS http-01`)
-- [!] 4. Run the automatic subdomain and wildcard DNS-01 leg. (blocked by: same as step 3; check: leg 2 prints `PASS automatic` and `PASS dns-01-wildcard`)
-- [!] 5. Record the evidence and update the docs' qualification statements. (blocked by: steps 3-4; check: `pnpm run docs:check` exits 0 and this file's report names the run)
-- [ ] 6. Self-audit.
+- [x] 1. Confirm parts 1 and 7 and the remote-qualification pattern. (2026-11-16, Zelavis package build passed.)
+- [x] 2. Write the qualification script and its local self-test. (2026-11-16, workspace build and all five self-test legs passed.)
+- [x] 3. Run the manual TXT and HTTP-01 leg against the real zone. (2026-11-17: run `1bluwknkn4m` printed both PASS lines on zelavis.com; recursive 8.8.8.8 remained negative across authoritative verification, and the Mac verified staging HTTPS.)
+- [x] 4. Run the automatic subdomain and wildcard DNS-01 leg. (2026-11-17: run `1bluwknkn4m` printed PASS dns-01-wildcard, automatic and cleanup, then QUALIFIED; exit 0.)
+- [x] 5. Record the evidence and update the docs' qualification statements. (2026-11-17: Edge docs describe the staging proof and retain the production-CA limit; docs:check passed.)
+- [x] 6. Self-audit. (2026-11-17: full verify, ci:ui, self-test, focused regression, docs and whitespace checks passed; independent VPS cleanup/PID check passed.)
 
 ## 0. Summary and finish line
 
@@ -62,6 +62,8 @@ The earlier VPS run proved HTTP-01 issuance and renewal through Let's Encrypt st
 **Inputs** (environment, all required for live runs): `ZELAVIS_QUALIFY_DOMAINS_SSH` (`user@host`, root needed for `ip`, `nft`, `systemd-run`), `ZELAVIS_QUALIFY_DOMAINS_SSH_KEY` (optional), `ZELAVIS_QUALIFY_DOMAINS_ZONE` (apex the token can edit), `ZELAVIS_QUALIFY_DOMAINS_CLOUDFLARE_TOKEN`, `ZELAVIS_QUALIFY_DOMAINS_IPV6` (a free address in the VPS's routed prefix), `ZELAVIS_QUALIFY_DOMAINS_IFACE` (interface for it), `ZELAVIS_QUALIFY_KEEP=1` (keep remote files after failure). `--self-test` needs none.
 
 **Live sequence.**
+
+Live-run adjustment (2026-11-17): `ZELAVIS_QUALIFY_DOMAINS_RECURSIVE_IPV4` optionally chooses the public recursive resolver (default `1.1.1.1`). The first DNS run found that `1.1.1.1` already returned the new TXT after 31 seconds, so the next run uses `8.8.8.8`. The strict negative-answer assertions before and after authoritative verification remain required. References to `1.1.1.1` in this sequence mean the configured resolver.
 1. Preflight: SSH reachable; record PIDs of existing `zelavis*` and `traefik` units; confirm the address is unused (`ip -6 addr show`); confirm the token lists the zone.
 2. Remote setup: pack, upload, unpack under `/var/tmp/zv-domains-<run>`; install pinned Traefik there via `installTraefikRuntime` logic (download locally, `scp`); add the IPv6 address; add an nftables table `zv_domains_<run>` that redirects `[addr]:80` and `[addr]:443` to the test Traefik ports; start the Platform (`systemd-run --uid=nobody`, Edge adapter Traefik on those ports, ACME directory Let's Encrypt staging, management on `127.0.0.1:<port>`) and tunnel the API.
 3. Bootstrap the owner through `/auth/bootstrap`, create a native App Project.
@@ -78,7 +80,7 @@ The earlier VPS run proved HTTP-01 issuance and renewal through Let's Encrypt st
 
 **Decisions taken for the user.** Hostname prefixes `m-` and `a-` with the run id; records TTL 60.
 
-**Needs from the user.** The Cloudflare token, zone, SSH target, free IPv6 address and interface (overview § Needs from the user). Steps 3-5 wait for them.
+**Needs from the user.** The Cloudflare token, zone, SSH target, free IPv6 address and interface (overview § Needs from the user). Steps 3–5 wait for them. The token must be able to list the target zone and edit its records. [Cloudflare List Zones](https://developers.cloudflare.com/api/resources/zones/methods/list/)
 
 ## 3. Contracts
 
@@ -175,5 +177,52 @@ From the root: `pnpm run verify`, `pnpm run docs:check`, `git diff --check`, `no
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+### Session 1: 2026-11-16
+
+Final status is **partly done** in the main `dev` checkout at `0e4548dbcc`.
+
+- Step 1 complete. Confirmed parts 1 and 7 in the working tree and reviewed the packed-candidate SSH, transient unit, tunnel and teardown pattern in `qualify-shards.mjs`. The Zelavis package build passed.
+- Step 2 complete. Added `release:qualify:domains`, the shared proof workflow, the loopback Cloudflare and authoritative DNS fixtures, and the packed-candidate runner. Extended the existing ACME fixture to sign the client CSR for the self-test. The self-test passed `manual-txt`, `http-01`, `dns-01-wildcard`, `automatic` and `cleanup`.
+- Steps 3–5 remain `[!]`. The five `ZELAVIS_QUALIFY_DOMAINS_*` inputs were absent. Public DNS, Let's Encrypt staging, deployed Traefik and VPS cleanup still need the live run before updating the Edge qualification statements.
+- Step 6 complete. `pnpm run build`, `node distribution/scripts/qualify-domains.mjs --self-test`, `TMPDIR=/private/tmp/zelavis-verify pnpm run verify`, `pnpm run docs:check` and `git diff --check` passed. The Zelavis suite reported 3,289 passes and 30 skips. Checked syntax and whitespace in the untracked JavaScript files separately. Live mode with the inputs missing exited 1 at preflight.
+
+Decisions and adjustments:
+
+- The local runner uses a loopback TLS proxy and the existing ACME fixture with a temporary CA. It checks the served leaf and hostname through a client with scoped CA trust. `QUALIFIED` is reserved for the live run.
+- The site check expects the native App's 503 HTML placeholder because the Project has no frontend installed. Signup and the Auth admin denial independently exercise public routing. The disposable proxy uses the HTTP fallback for initial ACME and checks withdrawal over HTTPS.
+- The remote runner uses destination-scoped IPv6 port translation and a private management tunnel. A write journal records each provider create intent and returned ID so the final sweep can identify the run's value on the shared wildcard challenge name.
+- The live Cloudflare token needs Zone Read as well as DNS Edit. The built-in driver lists zones before adopting the selected one.
+
+Added items: none.
+
+### Session 2: 2026-11-17
+
+Final status is **done** in the main `dev` checkout. The live run qualified the
+packed working-tree candidate based on `0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`.
+
+- Steps 1–2 rechecked: the package build and all five loopback self-test legs passed.
+- Step 3 done differently: run `1bluwknkn4m` used real records on `zelavis.com` and recursive resolver `8.8.8.8`. Verification before the TXT existed failed; authoritative verification then succeeded while the recursive answer remained negative before and after it. Let's Encrypt staging HTTP-01 issuance passed. The Mac verified the served staging chain and exact hostname, native App placeholder, signup with a Secure HttpOnly cookie and refusal of the administrative Auth route.
+- Step 4 done: the same run passed real Cloudflare DNS-01 wildcard issuance and automatic AAAA/subdomain routing. The Mac verified the wildcard certificate chain and `*.zelavis.com` SAN. The complete run printed `PASS manual-txt`, `PASS http-01`, `PASS dns-01-wildcard`, `PASS automatic`, `PASS cleanup`, then `QUALIFIED 0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`, and exited 0.
+- Step 5 done: Edge architecture docs now record the public TXT and staging HTTP-01/DNS-01 proof, retaining the unqualified public-production-CA limit. `pnpm run docs:check` passed.
+- Step 6 done: `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` passed (Zelavis: 3,311 passes, 30 skips, zero failures); `pnpm run ci:ui`, the two focused resolution/host-footprint test files (7 passes), `node distribution/scripts/qualify-domains.mjs --self-test`, syntax checks and `git diff --check` passed. Browser qualification included DNS automation and registrar flows at desktop/mobile sizes. No code was committed, pushed or published.
+
+Failures investigated and deviations:
+
+- Run `17chwkn4ibh` failed during native Project creation because the bundled Marketplace allow-list import had not registered host-provided package resolution. Fixed the import boundary in `_marketplace-allowlist.ts` using the existing `provideHostPackagesTo` mechanism. Added an isolated unpacked-distribution regression in `service-resolution.test.mjs`; it reproduced `ERR_MODULE_NOT_FOUND` before the fix and passed afterwards. The persistent Project host footprint still passes. This extends the plan's Files scope to resolve a defect blocking its live check.
+- Run `18yqwkng3hp` reached the real TXT leg, but `1.1.1.1` returned the new record after 31 seconds, so the required stale-cache proof failed. Added the optional validated `ZELAVIS_QUALIFY_DOMAINS_RECURSIVE_IPV4` input (default `1.1.1.1`) and recorded the configured resolver in the run header. The successful retry used `8.8.8.8`; the strict negative-answer assertions remain unchanged. Both failed runs cleaned up; the second printed `PASS cleanup`.
+- The final cleanup checked removal of all run-owned DNS records, including wildcard challenge records, stopped both disposable units and removed the address, nftables redirects and remote tree. An independent SSH check confirmed no `zv-domains-1bluwknkn4m*` units, no temporary nftables table, only the original global IPv6 on `eth0`, and no run directory. Production PIDs remained `1365165` (Platform), `97642` (Traefik), `1365164` (Agent), and `1365129` (host Agent).
+
+Decisions taken for the user: used the confirmed VPS `138.199.147.126` with the unused
+`2a01:4f8:c17:5785::d09a/128` on `eth0` and generated `m-`/`a-` run hostnames, keeping
+the qualification destination separate from existing listeners. Used Google Public
+DNS only for the stale recursive-cache proof after the default resolver failed that
+precondition. The encrypted SSH key was unlocked in an isolated temporary agent;
+the agent and its directory were removed after cleanup. Credentials were delivered
+through one-use secure inputs, consumed and deleted, and were not recorded here.
+
+Added items: none.

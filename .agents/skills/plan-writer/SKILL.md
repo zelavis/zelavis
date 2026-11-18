@@ -530,6 +530,10 @@ Also give the line for picking up a plan another agent left unfinished:
 tells an agent asked only to *execute* a plan already `in progress` to check first whether
 another agent is still working on it, so two agents never work one plan at once.
 
+The lines above hand over a plan when you write it. The **Next-session prompt** in section 8
+requires the executor to produce a fresh, copy-ready prompt from the updated plan when it
+hands the work back.
+
 ### Sections of a plan
 
 Use these sections in every single plan and every part, in order. Leave out a subsection only
@@ -661,8 +665,8 @@ End with this block, adapted to the project and the plan:
 >   on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]`
 >   lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
 > - `Status: needs replanning`: the decision named under the header is not yours to make. Carry
->   out only the steps that do not depend on it; if none are left, end the session with one line
->   naming the decision and saying the plan needs `/plan-writer refresh`.
+>   out only the steps that do not depend on it. If none are left, report the decision and give
+>   the replanning handoff below.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another
 >   agent may still be working on it. Check, do not ask: if this plan file, or any file a step's
 >   Files line names, changed in the last 15 minutes, end the session with one line saying the
@@ -759,6 +763,23 @@ End with this block, adapted to the project and the plan:
 > failures, limits, risks, and the effect of any blocker); **Deviations** (from the plan, and
 > decisions taken for the user); **Status** (the plan's `Status` line: `done` only when every
 > line of Progress is `[x]` and the full verification passed after your last edit).
+>
+> **Next-session prompt.** Whenever you hand execution back with work remaining, add a
+> **Next-session prompt** heading and end the final reply with one fenced `text` block the
+> user can paste into a fresh session. Do this automatically after an individual step or a
+> whole part when the session ends. Continue all work already assigned to this session.
+> - Use the updated checklist, status, and dependencies to pick the next action. Continue the
+>   same file at its next runnable unfinished step, execute the next ready part in a split plan,
+>   or run the overview's final self-audit when that is next.
+> - Include the absolute repository root, exact absolute plan and overview paths as applicable,
+>   the completed milestone, the next step or part number and title, and the instruction to read
+>   the governing repository rules and the target's section 8. Point to the relevant execution
+>   report entries, carry forward decisions or changed contracts needed next, and name the
+>   verification and stopping point for the next session. The prompt must work without this chat.
+> - If no step can run yet, name the concrete prerequisite and tell the next session how to
+>   confirm it before resuming. For a plan that needs replanning, name the decision and use
+>   `/plan-writer refresh` as the next action. If the entire plan and its final checks are
+>   complete, report completion and omit the prompt.
 
 ## Self-check before you hand over the plan
 
@@ -793,6 +814,8 @@ End with this block, adapted to the project and the plan:
 - [ ] The file names say what each plan or part is about.
 - [ ] Section 8 directs the implementer to finish routine work as it comes up and reserve added
       items for required work with a concrete blocker.
+- [ ] Section 8 requires a copy-ready next-session prompt whenever execution ends with work
+      remaining. It covers resuming the same part, moving to the next ready part, and blockers.
 - [ ] Every repository the plan changes was named by the job, has a current supplement, and is
       in the `Repositories:` line with its own `Verified-at`; a change any other repository needs
       is a `[!]` line.

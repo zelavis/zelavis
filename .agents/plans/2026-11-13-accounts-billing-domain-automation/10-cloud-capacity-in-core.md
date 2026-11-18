@@ -1,7 +1,7 @@
 # Fold the cloud capacity service into core
 Job: Dissolve `@zelavis/cloud` into the `zelavis` package: its Alchemy/Hetzner driver becomes a capacity adapter behind the `CapacityProvider` contract, loaded only when a provider is connected and never imported by core, Fabric, backends, Edge or the SDK; the operator configures capacity from the dashboard instead of `ZELAVIS_CLOUD_POLICY`; a webhook provider covers datacenters without an API.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 10 of 14. Read 00-overview.md first.
 
@@ -10,16 +10,16 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Record the cloud and package baseline.
-- [ ] 2. Move the driver into `src/adapters/capacity` and build its bundle inside `zelavis`.
-- [ ] 3. Move the driver's tests and delete the service package.
-- [ ] 4. Load the bundle only when a provider is used, and add the boundary test.
-- [ ] 5. Store the capacity policy and drop `ZELAVIS_CLOUD_POLICY`.
-- [ ] 6. Add the webhook capacity provider.
-- [ ] 7. Add SDK and CLI parity.
-- [ ] 8. Update the dashboard capacity pages.
-- [ ] 9. Update `AGENTS.md`, references and docs.
-- [ ] 10. Self-audit.
+- [x] 1. (2026-11-17) Baseline: 61 cloud tests and 11 engine/package tests passed after the Platform build; initial concurrent clean-build race corrected by sequential rerun.
+- [x] 2. (2026-11-17) Driver moved; build and typecheck passed; bundle and PATCHED_MODULES (6) only.
+- [x] 3. (2026-11-17) Moved all 61 driver tests; removed service package; install/build and all 72 driver/engine/package tests passed.
+- [x] 4. (2026-11-17) Cached lazy bundle; 7 engine/import-boundary tests passed, including enrollment with no connection.
+- [x] 5. (2026-11-17) Stored policy with validated monotonic CAS revisions and HTTP authority; all 26 focused tests passed; retired option/env absent from source.
+- [x] 6. (2026-11-17) Signed bounded webhook provider, enrollment/ownership/fencing/cap tests, HTTP endpoint validation; 83 combined and 19 final focused tests plus Effect gate passed.
+- [x] 7. (2026-11-17) Typed policy and endpoint SDK, cloud CLI policy/set-policy/endpoint; build, derived parity and 11 API/parity tests passed.
+- [x] 8. (2026-11-17) Native policy/classes and webhook form; UI typecheck, 95 UI tests, standalone embedded proof and full ci:ui passed at desktop/mobile and nested mounts.
+- [x] 9. (2026-11-17) Updated canonical guidance, core skill, references, enrollment/capacity docs and package README; retired-name search empty, docs check passed.
+- [x] 10. (2026-11-17) Audited tracked/untracked changes; focused tests, final verify (3,391 Zelavis passes, 30 skips), ci:ui, docs and whitespace all passed.
 
 ## 0. Summary and finish line
 
@@ -230,7 +230,7 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - First compare `Verified-at` with `HEAD`. If any path the plan cites changed since (`git diff --name-only <Verified-at>..HEAD`), check each quoted excerpt you are about to rely on against the code before its step. Adapt a stale step to the current code and record the deviation. Use `[!]` only if a concrete prerequisite prevents execution. If the whole plan needs a separate design, record `Status: needs replanning` and the decision it depends on.
 > - `Status: planned`: you are the first. Set `Status: in progress`.
 > - Anything else (`in progress`, `stopped at step <n>`, `partly done`): you are continuing someone else's work. First read every entry under `## Execution report`. Then confirm the last `[x]` step's check still passes. Reopen it if its check fails and resolve it using the rules below. Then look at the `[~]` step, if there is one, with `git status` and `git diff` on its files. Finish a partial change or redo an incorrect one. Leave verified completed work alone. Review `[!]` lines and work them as soon as their prerequisites are met. Then set `Status: in progress`.
-> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, end the session with one line naming the decision and saying the plan needs `/plan-writer refresh`.
+> - `Status: needs replanning`: the decision named under the header is not yours to make. Carry out only the steps that do not depend on it; if none are left, name the decision and give a `/plan-writer refresh` handoff.
 > - `Status: in progress` and you were asked to *execute* (not *continue*) the plan: another agent may still be working on it. Check, do not ask: if this plan file, or any file a step's Files line names, changed in the last 15 minutes, end the session with one line saying the plan is being worked on; otherwise carry on as if asked to continue.
 >
 > In a split plan, also read the execution reports of the earlier parts. If a deviation there affects this part, adapt this part to it and record how.
@@ -265,5 +265,52 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > - the added items this session created, by number only (`A1–A3; A3 is [!]`), since their text lives in `## Progress`.
 >
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
+>
+> **Next-session prompt.** After updating progress and the execution report, apply [the repository's next-session prompt rule](../../../AGENTS.md#next-session-prompt-for-plan-execution). Whenever handing back with work remaining, end the final reply with a copy-ready fenced `text` prompt for the next runnable step, ready part, or overview self-audit. If blocked, give the prerequisite and how to verify it before resuming.
 
 ## Execution report
+
+
+### Session 1: 2026-11-17
+
+Final status: **done**, in the main `dev` checkout at
+`0e4548dbcc9d2a6c4bb29f6af2d222cfdb55d7e5`, with the existing working-tree changes preserved.
+Steps 1–10 are complete. Nothing was staged, committed, pushed, published or deployed;
+no real cloud was contacted. Real Hetzner qualification remains outside this part.
+
+Steps carried out:
+
+- 1 done: read section 8, the overview, governing guidance and earlier execution reports; compared Verified-at with HEAD and checked the current sources. Sequential baseline: 61 cloud tests and 11 engine/package tests passed. The initial baseline ran alongside a clean Platform build and hit transient `ERR_MODULE_NOT_FOUND` for `dist/bundle-store.js` and `dist/domain-binding.js`; rerunning after the build passed. This was a check-ordering error, not evidence of a pre-existing failure.
+- 2 done: moved the driver to `src/adapters/capacity`, added the isolated compiler/bundle step and four exact development pins, excluded intermediate output from the package and kept the owned bundler patch/externals. Build/typecheck passed; the output directory holds only `bundle.js` and `PATCHED_MODULES` (6).
+- 3 done: moved all seven suites and two helpers, removed the service package, refreshed the lockfile and updated tarball expectations. All 72 moved-driver/engine/package tests passed; the 61 original driver scenarios remain represented.
+- 4 done: cached the bundle load on first provider use. Source/import-recording tests prove no driver enters the runtime-neutral entrypoints and an enrolled-endpoint Platform without a connection loads no capacity bundle. Missing-bundle composition succeeds and first Hetzner use fails explicitly. All seven focused tests passed at this step.
+- 5 done differently: policy type/validation now live with the controller in `cloud-capacity.ts`, avoiding a controller-to-composition import cycle. Added one validated, monotonic, revisioned System Store policy with audit and CAS/observed-value checks; missing policy is 409, stale policy writes are 409 `invalid-request`. Node composes automatically with enrollment and a System Store unless `cloud: false`; the environment variable and policy-file option are gone. All 26 focused tests passed at this step.
+- 6 done differently: added the runtime-neutral signed webhook provider with bounded response streaming, a 30-second deadline, shared call/mutation permits, current-authority checks, deterministic names, durable pre-request ownership records, crash-gap cleanup and enrollment-gated readiness. Shared first-boot/error/name-formatting helpers moved to `core/provider` so webhook provisioning never loads Alchemy. Converted the first-boot callback to Effect. The composed missing-bundle webhook test passes. Tests cover HMAC, replayed provision identity, foreign-node refusal, limits, concurrent providers, redirects, malformed/oversize/failing receipts, actual HTTP status, and a stalled body followed by a successful call. The moved state encoder now uses validated Effect Schema JSON decoding with a 64-Mi-code-unit bound, replacing the unchecked cast exposed by the adapter TigerStyle gate.
+- 7 done differently: added typed SDK policy read/write and endpoint fields, plus CLI `policy`, `set-policy` and `--endpoint`. Preserved the existing distinction: CLI `--token` authenticates to Zelavis; the provider token/signing secret comes from `ZELAVIS_CLOUD_TOKEN`. Derived capability parity and behavioral API/SDK/CLI checks pass without exemptions.
+- 8 done: added the native Machine policy card with bounded add/remove class rows and revisioned saves, webhook endpoint/signing-secret controls, the specified help text and endpoint-host connection summary. The embedded suite starts a real local HTTPS endpoint, verifies signatures and proves save/reload/connect/disconnect at desktop/mobile sizes. UI typecheck, all 95 UI unit tests and the full browser gate passed.
+- 9 done: updated AGENTS.md, the core-platform skill, Alchemy/enrollment/plan-writer references, the enrollment/capacity guide and package README. The exact retired-name search returns no matches; docs check passes.
+- 10 done: reviewed the task diff and new/moved files, checked the finish line, preserved earlier parts' edits and reran the touched tests through full workspace verification. Added the two route IDs to the exact inventory. Tightened persisted endpoint validation and cloud-authority corruption/exhaustion handling, and moved connection/inventory/disconnect/autoscaler auditing before provider calls. The working-tree package move exposed Git-index-only reference discovery; it now checks new manifests and excludes removed ones, with a regression test. Corrected the final stale Node adapter comment and reran the full gates afterward.
+
+Verification observed:
+
+- Package build/typecheck and step-specific suites passed as recorded above; the audit's combined capacity/cloud/boundary/package/parity/route run passed 138 tests before the final two webhook fault cases were added.
+- `node --test scripts/test/reference-sources.test.mjs` passed all 12 tests after the final edit.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run verify` passed after the last source edit: all workspace builds, typechecks and tests; Zelavis 3,391 passed, 30 skipped, zero failures (3,421 total). Effect usage, TigerStyle and repo-rule gates passed without suppressions or baseline growth. All added/touched capacity suites, including both final webhook fault cases, ran here.
+- `TMPDIR=/private/tmp/zelavis-verify pnpm run ci:ui` passed after the last source edit: production bundle, desktop/mobile routes and mutations, machine-policy/signed-HTTPS connection scenario, and existing nested-auth qualification.
+- `pnpm run docs:check` and `git diff --check` passed after the final source edit. The required retired-name search exited 1 with no matches. The removed service directory is absent; the final bundle patch count is 6.
+
+Deviations and decisions taken for the user:
+
+- Kept provider-independent first-boot and name formatting outside the adapter bundle, with SHA-256 supplied by the host or Web Crypto. This preserves one implementation while making the webhook path independent of Alchemy. The engine's Node imports were replaced with standard Web Crypto and the host-supplied import path.
+- Kept policy validation in the controller rather than the engine to avoid a module cycle. Policy names/locations/images are bounded to 128 characters, allowed locations to 16, class names are unique, byte counts are positive safe integers and CPU values retain fractional support. These bounds prevent ambiguous class selection and unbounded persisted inputs. UI storage sizes are expressed in GiB.
+- Webhook endpoints exclude URL credentials, query and fragment so the clear-text connection endpoint does not encourage embedding credentials. Signing secrets retain the CLI's existing environment-only input; repurposing its API-authentication `--token` flag would change an unrelated authority contract.
+- Shared permits span short-lived provider instances so parallel requests cannot evade the webhook machine ceiling or call limit. Auditing before every provider use and refusing corrupt/exhausted authority protect the existing trust guarantees.
+- Files moved without staging to preserve the checkout/index. The load recorder prints only the relevant adapter URLs, avoiding truncated exit-time stderr. Browser proof uses a real local HTTPS endpoint rather than rewriting HTTPS to HTTP.
+- The reference-discovery fix and state-decoder migration extend the named files only as needed to pass the required gates; neither weakens a check. The initial full verification failures on those two omissions were resolved and the complete gates rerun.
+
+Owner decision applied and recorded in AGENTS.md:
+> “`@zelavis/cloud` should completely dissolve into zelavis core and not be a service at all.”
+
+The revised guidance states that “a Platform composes cloud capacity whenever it serves an enrollment endpoint, and the operator sets the machine policy through `/runtime/cloud/policy`.”
+
+Added items: none. No blocker remains for this part. Part 11 is next.

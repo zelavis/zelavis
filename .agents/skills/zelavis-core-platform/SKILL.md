@@ -95,7 +95,7 @@ before editing.
   default, under `.zelavis/integration`, with no separate Project card or opt-in
   feature flags. Expose the normal setup `core` APIs and scoped HTTP/SDK/CLI
   APIs. Persist service API usage independently of capability availability;
-  internal identity database access is not service usage. Persist workloads in
+  internal Auth database access is not service usage. Persist workloads in
   the same private runtime store. Bound engine convergence uses the shared
   persistent host journal and preserves recipe locks and third-party processes;
   native App engine pins remain unchanged on parent updates.
@@ -112,6 +112,22 @@ before editing.
   `zelavis.frontend.configure` for static-frontend runtime shell/dev behavior.
   Do not restore a dashboard service factory or cache loaded product services
   globally to compensate for ESM module caching.
+
+- Services request Platform permissions through manifest `zelavis.principal.permissions`.
+  Every install path requires exact operator approval within their authority; the
+  Platform owns the sealed service-account token and supplies `core.fetch` as that
+  account (or anonymously without a principal). Project runtimes refuse principals
+  and supply no fetch. Disable revokes the account and refuses installed extenders.
+
+- Service credentials belong in per-service `core.secrets`, present beside
+  `core.store`, sealed and bound to service/name with the runtime's master secret.
+  Settings return configured flags/hints only. Service workers contribute through
+  `context.addRuntimePlugin` using the existing runtime start/cleanup lifecycle;
+  start after mounting and stop before databases close, including failed startup.
+  Native App public service callbacks use only `POST <api-base>/plugins/<namespace>/webhooks/<provider>`;
+  preserve raw bytes and signature headers, cap bodies at 256 KiB, strip Platform
+  authority, and let the owning service verify the signature. This is separate
+  from the exact public Auth allow-list and never exposes service administration.
 
 - Treat `new Zelavis(...)` as the public Platform entrypoint and the `zelavis`
   package as the one official framework/App Platform distribution.
@@ -130,6 +146,17 @@ before editing.
   extension points rather than a private path into the Platform. If a
   first-party service needs a private path, the extension point is incomplete —
   extend the public contract instead of special-casing the service.
+- Edge owns DNS and registrar contracts; built-in Cloudflare and Namecheap
+  drivers live in `src/adapters` and are injected by the host. Plugins extend
+  `zelavis/edge:dns` and `zelavis/edge:registrar`; they cannot shadow built-ins.
+  Registrar operations are Platform-only, with system-scoped
+  `server.domains.view` and `server.domains.purchase` and SDK/HTTP/CLI parity.
+  Keep immutable purchase keys and durable submission checkpoints. Never retry
+  an ambiguous purchase: reconcile with its original account. Keep credentials
+  and contacts encrypted and transfer auth codes out of storage and logs.
+  Unconfirmed orders stay unknown after 24 hours; no manual resolution endpoint
+  exists yet. Local tests use fake APIs; live qualification uses only Namecheap's
+  sandbox, never production.
 - Keep `packages/zelavis/src/core` product-neutral and runtime-neutral. It owns
   the contracts and implementations exported through `zelavis/core`,
   `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,
@@ -137,8 +164,8 @@ before editing.
 - Do not create parent/child service graphs. Provider plugins are ordinary
   installed services discovered by capability and validated against an explicit
   public registration contract; never use `childServices` or service `extends`.
-- A capability names the service that owns it — `zelavis/identity:credentials`,
-  `zelavis/identity:oauth`, `@acme/shop:payments` — not a bare domain. A domain
+- A capability names the service that owns it — `zelavis/auth:authenticator`,
+  `zelavis/auth:oauth`, `@acme/shop:payments` — not a bare domain. A domain
   such as `provider:payments` says what a plugin implements and never whose
   contract it satisfies, so two plugins scanning for it collect each other's
   providers. An owner is recognised by containing a `/`; a bare word stays a
@@ -169,7 +196,7 @@ before editing.
   platform resources mounts an endpoint group from a `zelavis.setup` callback
   with `context.addEndpointGroup` instead. A package never creates other
   services: one package, one identity.
-- Native Platform subsystems (Server Control Plane, Identity, Database, Fabric)
+- Native Platform subsystems (Server Control Plane, Auth, Database, Fabric)
   mount as endpoint groups and are advertised as runtime `capabilities`; the
   service inventory lists loadable packages only. Bundled packages come from the
   distribution `services/*` folder through the same loader as installed ones.
@@ -181,9 +208,31 @@ before editing.
   there installed as a package with a menu and no endpoints while the same
   object composed in code worked — the supported path was the broken one.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
-  through `zelavis/app`, `zelavis/app/identity`, and `zelavis/app/workloads`
-  (the database is `zelavis/db`). It reuses the core implementation; never create an
+  through `zelavis/app`, `zelavis/app/email`, and `zelavis/app/workloads`
+  (the database is `zelavis/db`; authentication is `zelavis/auth`, see the
+  Zelavis Auth bullet below). It reuses the core implementation; never create an
   App-private dispatcher or server contracts.
+- Zelavis Auth (`zelavis/auth`, `packages/zelavis/src/auth`) is the one auth
+  engine, composed per runtime (`subsystems.auth`, `AGENTS.md § Zelavis Auth`).
+  Every module keeps its `<module>_<table>`
+  collections in the runtime's one Auth partition, Tenant `service:zelavis-auth`
+  (the Project database for an App, the Platform identity database
+  `<data>/identity-database/` for the Platform), and each mutation is
+  one `documents.transaction`, which is where uniqueness and single redemption
+  come from. Platform and App Auth never share a store, key or cookie. Auth
+  modules use Effect generators (never `async`/`await`), record derived
+  Apache-2.0 files in `src/auth/upstream.json` with provenance headers, run
+  tests in `test/auth-*.test.mjs` over `test/_auth.mjs`, and keep derived
+  files Apache-2.0 (`NOTICE`, `LICENSE-APACHE`).
+  Limits: no SAML/SCIM, one Auth writer per App, no live revocation push,
+  one passkey relying-party id per runtime.
+- Platform services share the private `<data>/services-database` through setup's
+  `core.database`, using `service:<name>` Tenants by convention. Never hand it to
+  Platform features, runtime database routes or a dashboard. The Node adapter
+  opens it without a backups host; the identity database's one Platform host
+  captures `identity`, `system-store` and `database`. Restore only host-locally
+  with `zelavis services-database restore`, under stopped-Platform ownership.
+  Refuse startup after an interrupted restore until the operator finishes it.
 - Use **Project recipe** as the canonical name for a versioned create-project
   definition. A service with `kind: "app"` is a Project recipe; its optional
   Project metadata declares runtime compatibility. The official kinds are
@@ -568,9 +617,13 @@ before editing.
   maintenance map and drive it from `db.shardLeaderFor(shard)` through the shared follower. Its first level
   turn establishes readiness. Tenant reads and primary write acknowledgments do not use replicas.
 - Cloud capacity is a core capability over the `CapacityProvider` contract;
-  Alchemy (exact pin, bundled in a first-party cloud service, never in the core
-  runtime) is the default provisioning engine, and Fabric keeps all placement,
+  Alchemy (exact pin, bundled inside `zelavis` from `src/adapters/capacity`, loaded
+  only on first provider use) is the default provisioning engine, and Fabric keeps all placement,
   fencing and draining authority. Existing servers must work with no provider.
+  Compose capacity on Platforms with enrollment; the machine policy is stored through
+  `/runtime/cloud/policy`. The signed HTTPS `webhook` provider runs operator automation
+  on their endpoint and releases only locally recorded machine ids. Keep the adapter
+  import-boundary and no-connection lazy-load tests green.
   Do not write a general infrastructure-as-code engine. Follow
   `../../references/alchemy-architecture-brief.md` and the "Cloud Capacity And
   Alchemy" section of `AGENTS.md`.

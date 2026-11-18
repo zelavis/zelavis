@@ -2,7 +2,7 @@
 
 Job: Prove email ownership for password accounts and deliver password recovery by email, with single-use tokens, on the Platform and in each native App.
 Date: 2026-11-13
-Status: planned
+Status: done
 Verified-at: b04fa02d95
 Part: 3 of 14. Read 00-overview.md first.
 
@@ -11,17 +11,17 @@ To continue: Continue the plan in .agents/plans/2026-11-13-accounts-billing-doma
 
 ## Progress
 
-- [ ] 1. Confirm part 2's handover and the identity baseline.
-- [ ] 2. Add the single-use account token repository.
-- [ ] 3. Add account messages and the provider API additions.
-- [ ] 4. Move password recovery onto tokens and email.
-- [ ] 5. Add email verification and the registration policy field.
-- [ ] 6. Expose the operations and the App public routes.
-- [ ] 7. Add SDK and CLI parity.
-- [ ] 8. Add Platform dashboard pages.
-- [ ] 9. Add App site pages.
-- [ ] 10. Document verification and recovery.
-- [ ] 11. Self-audit.
+- [x] 1. Confirm part 2's handover and the identity baseline. (2026-11-13) Build and all five suites passed at 0e4548dbcc with Parts 1 and 2 present.
+- [x] 2. Add the single-use account token repository. (2026-11-13) Build and all 28 atomicity tests passed.
+- [x] 3. Add account messages and the provider API additions. (2026-11-13) Build and six core password tests passed.
+- [x] 4. Move password recovery onto tokens and email. (2026-11-13) Build and 12 recovery and core password tests passed.
+- [x] 5. Add email verification and the registration policy field. (2026-11-13) Build and 46 verification and registration tests passed.
+- [x] 6. Expose the operations and the App public routes. (2026-11-13) Build and all 28 forwarding and verification tests passed.
+- [x] 7. Add SDK and CLI parity. (2026-11-13) Build, seven parity tests and workspace typecheck passed.
+- [x] 8. Add Platform dashboard pages. (2026-11-13) UI typecheck, 93 unit tests and ci:ui passed, including SMTP at both sizes on a nested mount.
+- [x] 9. Add App site pages. (2026-11-13) UI typecheck, 93 unit tests and ci:ui passed, including both sizes on a verified App origin.
+- [x] 10. Document verification and recovery. (2026-11-13) Docs check passed and completed private-note entries were removed.
+- [x] 11. Self-audit. (2026-11-13) All 143 targeted tests and the final sequential workspace, browser, docs and whitespace checks passed.
 
 ## 0. Summary and finish line
 
@@ -315,3 +315,33 @@ From the root: `pnpm run verify`, `pnpm run ci:ui`, `pnpm run docs:check`, `git 
 > Give the user a short result with the verification that ran, material decisions, and the effect of any remaining blocker.
 
 ## Execution report
+
+### Session 1 (2026-11-13)
+
+Final status is **done**. Steps 1–11 ran in the existing `dev` checkout at
+`0e4548dbcc`, with Parts 1 and 2 present in the working tree. The commits
+since `Verified-at` changed plans and agent guidance. The runtime differences
+used here came from the Part 2 working tree.
+
+- Step 1 passed the build and all five baseline suites.
+- Step 2 added and tested the repository across memory, the Platform System Store and the App database. Thirty-two concurrent consumes produced one winner per backend.
+- Step 3 moved email composition before Identity and wired the runtime outbox and configured sender name.
+- Step 4 replaced credential metadata recovery with bound tokens and delivery. The recovery tests covered expiry, concurrent completion, credential change, address verification and session revocation.
+- Step 5 added revision-checked verification policy and gated signup, password sign-in and OAuth session creation.
+- Step 6 added both public operations and exact App API and page forwarding. Administrative App routes remained private.
+- Step 7 added SDK methods and CLI commands. The SDK session field was already optional. Route inventory, behavioral parity and workspace typecheck passed.
+- Step 8 added Platform pages and policy controls. The browser proof followed SMTP links from a nested dashboard mount at both viewport sizes.
+- Step 9 added server-rendered App pages. The browser proof ran over HTTPS on a verified local fixture hostname at both sizes and checked SMTP and policy isolation.
+- Step 10 updated the Auth and email guides, access-control documentation, operation inventory and package README. Removed the two completed entries from the ignored private notes repository.
+- Step 11 rechecked 143 targeted tests and ran the final gates sequentially with `TMPDIR=/private/tmp/zelavis-verify`. `pnpm run verify` passed with 2,938 Zelavis tests passing and 30 skipped. `pnpm run ci:ui`, `pnpm run docs:check` and `git diff --check` passed. UI typecheck and 93 UI unit tests passed. The private notes diff also passed its whitespace check.
+
+Implementation differences and decisions:
+
+- Platform tokens use `zelavis.platform.auth.tokens` so pagination is independent of scans for other Identity records. The App stores tokens in `auth_account_tokens` and conditionally deletes the observed version and payload. The runtime owns the hourly sweep and stops it before storage closes. Its timer lets embedded processes exit naturally.
+- The recovery address must match the account's current email both when a link is issued and when it is redeemed. A per-credential permit orders built-in password sign-in and legacy rehash against reset in the serving runtime. Recovery validates password length before consuming the link so a rejected password can be corrected.
+- Resend and recovery requests silently suppress delivery above the documented limits and retain the generic 202. Token submissions use separate runtime-wide limits with 429 responses. Recovery remains available for custom providers that supply their own delivery.
+- The Project registration control keeps the existing signup setting usable on older pinned App engines and shows the verification control when the engine returns the field.
+- Browser checks use Chromium's local host mapping for the verified App hostname, including session probes. The Platform qualification waits for the Forgot password screen after Fuzor navigation before filling its form.
+- Recovery saves the new password before revoking sessions. The docs describe the window in which a process failure between those writes can leave earlier sessions usable.
+
+Added items: none.

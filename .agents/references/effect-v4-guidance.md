@@ -100,4 +100,4 @@ completed participant IDs; retry resumes only unfinished work.
   `effect/<Module>` (`import * as Effect from "effect/Effect"`), never the `effect` barrel, which
   evaluates every Effect module in every host. The TigerStyle gate recognizes both forms;
   `test/project-host-footprint.test.mjs` fails if the host graph reaches the barrel, Schema, Stream,
-  the database, identity or the Project driver.
+  the database, Auth or the Project driver.
