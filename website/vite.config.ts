@@ -9,22 +9,7 @@ export default defineConfig({
           theme: "github-dark",
         },
       },
-      searchIndex: {
-        scopes: [
-          "/docs/",
-          "/getting-started/",
-          "/api/",
-          "/architecture/",
-          "/packages/",
-          "/adapters/",
-          "/guides/",
-          "/reference/",
-          "/cli/",
-        ],
-      },
-      links: {
-        ignorePaths: ["/zelavis"],
-      },
+      searchIndex: true,
     }),
   ],
   build: {

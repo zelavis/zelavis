@@ -5,7 +5,9 @@ interface SearchDoc {
 	readonly text?: string;
 }
 
-const EXCLUDED_ROUTES = new Set(['/', '/install/', '/pricing/', '/not-found/']);
+const DOCS_SECTIONS = new Set([
+	'docs', 'getting-started', 'api', 'architecture', 'packages', 'adapters', 'guides', 'reference', 'cli',
+]);
 const THEME_KEY = 'zelavis-docs-theme';
 
 function copyText(text: string): Promise<void> {
@@ -194,7 +196,7 @@ export function initDocs(): void {
 			indexPromise = fetch('/search-index.json')
 				.then((res) => (res.ok ? res.json() : { documents: [] }))
 				.then((payload: { documents?: SearchDoc[] }) =>
-					(payload.documents ?? []).filter((doc) => !EXCLUDED_ROUTES.has(doc.path)),
+					(payload.documents ?? []).filter((doc) => DOCS_SECTIONS.has(doc.path.split('/')[1] ?? '')),
 				)
 				.catch(() => []);
 		}
