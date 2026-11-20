@@ -35,6 +35,10 @@ export const APP_TENANT_ID = "zelavis-app";
 /** A plugin keeps its private data in a Tenant named `service:<name>`; the characters `:` and `/` are not in what an operator may name one. */
 export const SERVICE_TENANT_PREFIX = "service:";
 
+/** Auth's internal storage, including the provider settings read by the Identity importer. */
+export const AUTH_TENANT_ID = `${SERVICE_TENANT_PREFIX}zelavis-auth`;
+export const LEGACY_AUTH_SETTINGS_TENANT_ID = `${SERVICE_TENANT_PREFIX}zelavis-auth-settings`;
+
 export const isReservedTenantId = (tenant: string): boolean =>
   tenant === RESERVED_COLLECTION_PREFIX || tenant.startsWith(`${RESERVED_COLLECTION_PREFIX}.`);
 

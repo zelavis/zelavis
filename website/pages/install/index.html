@@ -1,0 +1,317 @@
+---
+layout: marketing
+title: Install Zelavis
+description: Install Zelavis with one command. Shell installer and npm create today; APT, the Debian package and PowerShell are planned.
+---
+<div class="page-install page-marketing-light hero-dark-nav">
+	<section class="hero">
+		<div class="hero-grid-bg" aria-hidden="true"></div>
+		<svg class="hero-facets" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+			<defs>
+				<linearGradient id="install-facet-a" x1="0%" y1="0%" x2="100%" y2="100%">
+					<stop offset="0%" stop-color="#1e293b" stop-opacity="0.45" />
+					<stop offset="100%" stop-color="#0f172a" stop-opacity="0" />
+				</linearGradient>
+				<linearGradient id="install-facet-b" x1="100%" y1="0%" x2="0%" y2="100%">
+					<stop offset="0%" stop-color="#f97316" stop-opacity="0.16" />
+					<stop offset="100%" stop-color="#f97316" stop-opacity="0" />
+				</linearGradient>
+			</defs>
+			<polygon points="0,0 740,0 410,760 0,760" fill="url(#install-facet-a)" />
+			<polygon points="940,0 1440,0 1440,620 620,620" fill="url(#install-facet-b)" />
+			<line x1="740" y1="0" x2="410" y2="760" stroke="rgba(148, 163, 184, 0.14)" stroke-width="1" />
+			<line x1="940" y1="0" x2="620" y2="620" stroke="rgba(251, 146, 60, 0.16)" stroke-width="1" />
+		</svg>
+		<div class="glow" aria-hidden="true"></div>
+		<div class="wrap hero-inner">
+			<p class="eyebrow" data-reveal>Install</p>
+			<h1 data-reveal style="--delay: 60">Install Zelavis.</h1>
+			<p class="lede" data-reveal style="--delay: 120">
+				One command, one installation. Whichever way you start it, you get the same paths, the same service and the
+				same uninstall.
+			</p>
+
+			<div class="switch" data-reveal style="--delay: 180">
+				<zelavis-segmented
+					id="install-method"
+					class="segmented segmented--glass"
+					style="--segment-count:5;--segmented-width:680px"
+					role="tablist"
+					aria-label="Installation method"
+					data-value="curl"
+				>
+					<span class="segmented-indicator" aria-hidden="true"></span>
+					<button type="button" role="tab" aria-selected="true" tabindex="0" data-segment-value="curl"><span>curl</span></button>
+					<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="npm"><span>npm</span></button>
+					<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="apt"><span>APT</span></button>
+					<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="deb"><span>.deb</span></button>
+					<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="powershell"><span>PowerShell</span></button>
+				</zelavis-segmented>
+			</div>
+
+			<div class="stage" data-reveal style="--delay: 240">
+				<!-- curl -->
+				<article class="panel" data-panel="curl">
+					<header class="panel-head">
+						<div>
+							<h2>Shell installer</h2>
+							<p>One command on a fresh Linux server or a Mac. It installs everything Zelavis needs and nothing else.</p>
+						</div>
+						<span class="badge badge--available">Available</span>
+					</header>
+					<div class="term" role="group" aria-label="Shell installer commands">
+						<div class="term-bar" aria-hidden="true">
+							<i></i><i></i><i></i><span>bash</span>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Linux server (root, systemd)</p>
+							<div class="cmd-row">
+								<pre><code>curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha</code></pre>
+								<button type="button" class="copy" data-copy="curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># macOS, or Linux without root</p>
+							<div class="cmd-row">
+								<pre><code>curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user</code></pre>
+								<button type="button" class="copy" data-copy="curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+					</div>
+					<ul class="notes">
+						<li>Needs curl and tar. It downloads about 50 MB of Node plus the Zelavis package.</li>
+						<li>Read it first: zelavis.com/install.sh is one short, commented script.</li>
+						<li>Run it again later to upgrade the same installation.</li>
+					</ul>
+				</article>
+
+				<!-- npm -->
+				<article class="panel" data-panel="npm" hidden>
+					<header class="panel-head">
+						<div>
+							<h2>npm, pnpm or Bun create</h2>
+							<p>The same installer for people who already have a JavaScript toolchain. It installs on this machine; it does not scaffold a folder.</p>
+						</div>
+						<span class="badge badge--available">Available</span>
+					</header>
+					<div class="term" role="group" aria-label="npm, pnpm or Bun create commands">
+						<div class="term-bar" aria-hidden="true">
+							<i></i><i></i><i></i><span>bash</span>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Shows the plan and the exact command, changes nothing</p>
+							<div class="cmd-row">
+								<pre><code>npm create zelavis@alpha -- --dry-run</code></pre>
+								<button type="button" class="copy" data-copy="npm create zelavis@alpha -- --dry-run" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Install (asks for sudo on Linux when it needs it)</p>
+							<div class="cmd-row">
+								<pre><code>npm create zelavis@alpha -- --yes</code></pre>
+								<button type="button" class="copy" data-copy="npm create zelavis@alpha -- --yes" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Or with pnpm</p>
+							<div class="cmd-row">
+								<pre><code>pnpm create zelavis@alpha --yes</code></pre>
+								<button type="button" class="copy" data-copy="pnpm create zelavis@alpha --yes" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Or with Bun</p>
+							<div class="cmd-row">
+								<pre><code>bun create zelavis@alpha --yes</code></pre>
+								<button type="button" class="copy" data-copy="bun create zelavis@alpha --yes" aria-label="Copy command">
+									<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+								</button>
+							</div>
+						</div>
+					</div>
+					<ul class="notes">
+						<li>Your Node only runs the small create program. Zelavis always runs on its own private Node.</li>
+						<li>Linux with sudo installs the full system service; macOS installs for your user.</li>
+						<li>Same paths, same units, same receipt as the shell installer.</li>
+					</ul>
+				</article>
+
+				<!-- apt -->
+				<article class="panel" data-panel="apt" hidden>
+					<header class="panel-head">
+						<div>
+							<h2>APT repository</h2>
+							<p>A signed apt.zelavis.com repository for Debian and Ubuntu is on the roadmap. It does not exist yet.</p>
+						</div>
+						<span class="badge badge--planned">Planned</span>
+					</header>
+					<div class="term" role="group" aria-label="APT repository commands">
+						<div class="term-bar" aria-hidden="true">
+							<i></i><i></i><i></i><span>bash</span>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Not available yet. Use the shell installer:</p>
+							<div class="cmd-row">
+								<pre><code>curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha</code></pre>
+							</div>
+						</div>
+					</div>
+					<ul class="notes">
+						<li>When it ships it will install the same Platform through the same installer, then update with apt.</li>
+						<li>Until then the shell installer is the supported Linux path.</li>
+					</ul>
+				</article>
+
+				<!-- deb -->
+				<article class="panel" data-panel="deb" hidden>
+					<header class="panel-head">
+						<div>
+							<h2>Debian package</h2>
+							<p>A downloadable .deb is built from the same release tree but is not published yet.</p>
+						</div>
+						<span class="badge badge--planned">Planned</span>
+					</header>
+					<div class="term" role="group" aria-label="Debian package commands">
+						<div class="term-bar" aria-hidden="true">
+							<i></i><i></i><i></i><span>bash</span>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Not available yet. Use the shell installer:</p>
+							<div class="cmd-row">
+								<pre><code>curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha</code></pre>
+							</div>
+						</div>
+					</div>
+					<ul class="notes">
+						<li>There is no download link on purpose: nothing is published to install from.</li>
+						<li>A package will run the same installer in its post-install step.</li>
+					</ul>
+				</article>
+
+				<!-- powershell -->
+				<article class="panel" data-panel="powershell" hidden>
+					<header class="panel-head">
+						<div>
+							<h2>Windows</h2>
+							<p>Native Windows is not supported. A PowerShell installer is planned; for now run Zelavis inside WSL 2.</p>
+						</div>
+						<span class="badge badge--planned">Planned</span>
+					</header>
+					<div class="term" role="group" aria-label="Windows commands">
+						<div class="term-bar" aria-hidden="true">
+							<i></i><i></i><i></i><span>powershell</span>
+						</div>
+						<div class="cmd">
+							<p class="cmd-comment"># Today: inside a WSL 2 distribution with systemd enabled</p>
+							<div class="cmd-row">
+								<pre><code>curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha</code></pre>
+							</div>
+						</div>
+					</div>
+					<ul class="notes">
+						<li>Enable systemd in your WSL distribution first (set systemd=true in /etc/wsl.conf).</li>
+						<li>Docker Desktop and native Windows services are not part of this yet.</li>
+					</ul>
+				</article>
+			</div>
+
+			<p class="alpha" data-reveal style="--delay: 300">
+				<strong>Alpha.</strong> The commands pick the newest alpha build. A stable channel arrives with the first stable release.
+			</p>
+		</div>
+	</section>
+
+	<section class="section" id="what-it-does">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2>What the installer does.</h2>
+				<p>
+					It trusts exactly two places: nodejs.org for the runtime and npm for the package. There are no release keys,
+					no bundles to unpack and no second download host.
+				</p>
+			</div>
+			<div class="steps">
+				<article class="step" data-reveal style="--delay: 0">
+					<span class="step-n">1</span>
+					<h3>Fetches a private Node</h3>
+					<p>The Node version Zelavis is built for comes from nodejs.org and is checked against its published SHA-256. It never replaces the Node already on your machine.</p>
+				</article>
+				<article class="step" data-reveal style="--delay: 70">
+					<span class="step-n">2</span>
+					<h3>Installs the exact package from npm</h3>
+					<p>The version you ask for, verified by npm against the registry digest. Dependency install scripts stay off, and nothing needs a compiler: it is all plain JavaScript.</p>
+				</article>
+				<article class="step" data-reveal style="--delay: 140">
+					<span class="step-n">3</span>
+					<h3>Lays out one installation</h3>
+					<p>Releases under /opt/zelavis, data in /var/lib/zelavis, configuration in /etc/zelavis, a systemd service, a receipt, and a single zelavis command.</p>
+				</article>
+				<article class="step" data-reveal style="--delay: 210">
+					<span class="step-n">4</span>
+					<h3>Starts safely</h3>
+					<p>It prints the address to open, plus a one-time first-owner token that decides who may claim the account. The Edge proxy and the Agent stay off until you turn them on.</p>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<section class="section band" id="after">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2>After it finishes.</h2>
+				<p>Three things, in this order. None of them needs a configuration file.</p>
+			</div>
+			<div class="after">
+				<article class="after-card" data-reveal style="--delay: 0">
+					<h3>Open the dashboard</h3>
+					<p>Open the address the installer printed and finish setup with the token. It is plain HTTP until you add a hostname with HTTPS in the wizard, so claim the account straight away.</p>
+					<pre><code>http://YOUR-SERVER-IP:3000/zelavis</code></pre>
+				</article>
+				<article class="after-card" data-reveal style="--delay: 70">
+					<h3>Check the installation</h3>
+					<p>Read-only, changes nothing, and tells you what is wrong in plain words.</p>
+					<pre><code>sudo zelavis doctor</code></pre>
+				</article>
+				<article class="after-card" data-reveal style="--delay: 140">
+					<h3>Add a hostname and HTTPS</h3>
+					<p>The setup wizard has an optional Platform hostname step that verifies DNS before enabling HTTPS through the Edge.</p>
+					<pre><code>zelavis setup</code></pre>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<section class="section" id="manage">
+		<div class="wrap manage">
+			<div data-reveal>
+				<h2>Requirements</h2>
+				<ul class="plain">
+					<li><strong>Linux</strong> x64 or arm64 with systemd for a full server install.</li>
+					<li><strong>macOS</strong> on Apple silicon or Intel, installed for your user without system services.</li>
+					<li><code>curl</code>, <code>tar</code> and a normal internet connection during install.</li>
+					<li>Windows through WSL 2 for now; native Windows is planned.</li>
+				</ul>
+			</div>
+			<div data-reveal style="--delay: 80">
+				<h2>Upgrade and remove</h2>
+				<ul class="plain">
+					<li>On a server, press <strong>Update now</strong> in the dashboard when a new version appears, or run <code>zelavis update apply --wait</code>. Anywhere else, run the same command again. A downgrade needs <code>--allow-downgrade</code>.</li>
+					<li>Preview a full removal first, then confirm it. It removes only what the installer can prove it owns.</li>
+				</ul>
+				<pre class="remove"><code>zelavis uninstall --all --dry-run
+zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA</code></pre>
+				<p class="more">Every option and the full layout are in the <a href="/getting-started/installation/">installation guide</a>.</p>
+			</div>
+		</div>
+	</section>
+</div>

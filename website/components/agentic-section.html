@@ -1,0 +1,199 @@
+<section class="amp-section amp-agentic" id="agentic" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered agentic-heading" data-reveal>
+			<div class="agentic-pill-badge">
+				<span class="pulse-dot"></span>
+				<span>The Agentic App Platform</span>
+			</div>
+			<h2>Talk to your stack.<br />Watch it build in real time.</h2>
+			<p>
+				From app scaffolding to multi-model database design, auth rules, and background workloads—command Zelavis through native AI chat. Backed by deterministic contracts and generation leases so your AI never breaks production.
+			</p>
+		</div>
+
+		<div class="amp-tabs-wrap" data-reveal>
+			<zelavis-segmented
+				id="agentic-tabs"
+				class="segmented segmented--light"
+				style="--segment-count:5;--segmented-width:760px"
+				role="tablist"
+				aria-label="Agentic capabilities"
+				data-value="app"
+			>
+				<span class="segmented-indicator" aria-hidden="true"></span>
+				<button type="button" role="tab" aria-selected="true" tabindex="0" data-segment-value="app"><span>App Creation</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="database"><span>Database &amp; Schema</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="auth"><span>Users &amp; Auth</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="content"><span>Content &amp; Media</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="workloads"><span>Workloads &amp; Crons</span></button>
+			</zelavis-segmented>
+		</div>
+
+		<div class="agentic-stage" data-reveal>
+			<div class="agentic-window">
+				<div class="agentic-topbar">
+					<div class="window-controls" aria-hidden="true">
+						<span class="dot dot-red"></span>
+						<span class="dot dot-amber"></span>
+						<span class="dot dot-green"></span>
+					</div>
+					<div class="agentic-address">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+							<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+						</svg>
+						<span>assistant://zelavis/runtime</span>
+						<span class="agentic-env-badge" data-agent-badge>Recipe Lock</span>
+					</div>
+					<div class="agentic-status">
+						<span class="agent-live-dot"></span>
+						<span>Resident Agent Active</span>
+					</div>
+				</div>
+
+				<div class="agentic-body">
+					<div class="agentic-chat-pane">
+						<div class="chat-header">
+							<div class="chat-avatar" aria-hidden="true">
+								<svg width="16" height="16" viewBox="0 0 128 128">
+									<path fill="currentColor" d="M37 25h62c5 0 7 6 4 9L49 91h45c5 0 7 6 4 9l-7 7c-2 2-4 3-7 3H22c-5 0-7-6-4-9l54-57H27c-5 0-7-6-4-9l7-7c2-2 4-3 7-3Z" />
+									<path fill="currentColor" fill-opacity=".42" d="M72 44h27c5 0 7-6 4-9l-7-7c-2-2-4-3-7-3H63L49 44h23ZM56 91H29c-5 0-7 6-4 9l7 7c2 2 4 3 7 3h26l14-19H56Z" />
+								</svg>
+							</div>
+							<div class="chat-meta">
+								<b>Zelavis Assistant</b>
+								<small data-agent-status-text>Fabric Verified · Generation Lease Acquired</small>
+							</div>
+						</div>
+
+						<div class="chat-conversation">
+							<div class="chat-msg chat-msg-user">
+								<div class="msg-author">You</div>
+								<div class="msg-bubble" data-user-prompt>
+									"Zelavis, spin up a multi-tenant B2B workspace called "Northstar". Lock it to the latest Zelavis App recipe with 4 physical shards, an isolated Node process envelope, and a Fuzor marketing storefront."
+								</div>
+							</div>
+
+							<div class="chat-msg chat-msg-agent">
+								<div class="msg-author">
+									<span class="agent-icon-sparkle">✦</span> Zelavis Agent
+								</div>
+								<div class="msg-bubble">
+									<div class="agent-checklist" data-agent-steps>
+										<div class="step-item">
+											<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+											<span>Provisioned project recipe @zelavis/app@1.0.4 (locked)</span>
+										</div>
+										<div class="step-item">
+											<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+											<span>Configured 64 virtual shard ranges across 4 SQLite files</span>
+										</div>
+										<div class="step-item">
+											<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+											<span>Mounted Project Gateway proxy at /projects/northstar/*</span>
+										</div>
+										<div class="step-item">
+											<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+											<span>Initialized isolated Node child process (pid: 14920)</span>
+										</div>
+									</div>
+
+									<p class="agent-reply-text" data-agent-reply>
+										Northstar is ready in production-isolated mode. The runtime version is locked in your project’s System Store so future platform updates will never cause silent breakages.
+									</p>
+
+									<div class="agent-actions" data-agent-actions>
+										<a href="/zelavis" class="agent-action-btn"><span>Open Northstar Dashboard</span><span class="arrow">→</span></a>
+										<a href="/architecture/project-model/" class="agent-action-btn"><span>Inspect Gateway Proxy</span><span class="arrow">→</span></a>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="agentic-output-pane">
+						<div class="output-topbar">
+							<div class="output-file-info">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+									<polyline points="14 2 14 8 20 8" />
+								</svg>
+								<span data-code-title>project.manifest.json · .zelavis/projects/northstar/</span>
+							</div>
+							<span class="output-tag">Live State Verified</span>
+						</div>
+
+						<div class="output-code-container">
+							<pre class="output-code"><code data-code-snippet>{
+  "project": "northstar",
+  "recipe": {
+    "name": "@zelavis/app",
+    "version": "1.0.4",
+    "locked": true
+  },
+  "runtime": {
+    "driver": "node-process",
+    "pid": 14920,
+    "envelope": "isolated"
+  },
+  "topology": {
+    "physical_shards": 4,
+    "virtual_ranges": 64,
+    "router": "hash(tenant_id)"
+  },
+  "gateway": {
+    "route": "/projects/northstar/*",
+    "auth": "crypto-token"
+  }
+}</code></pre>
+						</div>
+
+						<div class="output-metrics-strip" data-metrics-strip>
+							<div class="metric-block">
+								<span class="m-label">Virtual Shards</span>
+								<b class="m-val">64 ranges</b>
+								<small class="m-hint">4 physical SQLite files</small>
+							</div>
+							<div class="metric-block">
+								<span class="m-label">Runtime Isolation</span>
+								<b class="m-val">PID 14920</b>
+								<small class="m-hint">Zero parent leaks</small>
+							</div>
+							<div class="metric-block">
+								<span class="m-label">Gateway Routing</span>
+								<b class="m-val">Active</b>
+								<small class="m-hint">Sub-millisecond proxy</small>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="agentic-foundations-grid" data-reveal>
+			<div class="foundation-card">
+				<div class="foundation-badge">Compile-Time Safe</div>
+				<h4>Deterministic Contracts</h4>
+				<div class="foundation-subtitle">No Hallucinated Schemas</div>
+				<p>The Assistant builds against typed Platform manifests. If an AI suggests an invalid field type or broken syntax, the platform contract compiler rejects it before it ever hits disk.</p>
+			</div>
+			<div class="foundation-card">
+				<div class="foundation-badge">Zero Privilege Escalation</div>
+				<h4>Isolated Process Envelopes</h4>
+				<div class="foundation-subtitle">Fenced Runtime Authority</div>
+				<p>A project knows its parent, but never becomes it. Agent operations execute strictly inside the project’s sandboxed boundary, protecting the parent control plane and neighboring tenants.</p>
+			</div>
+			<div class="foundation-card">
+				<div class="foundation-badge">Append-Only Truth</div>
+				<h4>Zero-Downtime Event Log</h4>
+				<div class="foundation-subtitle">Audit, Replay &amp; Rollback</div>
+				<p>Every change commanded conversationally appends to the deterministic event stream. View complete audit logs, replay state transitions, or roll back changes with one click.</p>
+			</div>
+			<div class="foundation-card">
+				<div class="foundation-badge">Zero Vendor Lock-In</div>
+				<h4>Model-Agnostic Engine</h4>
+				<div class="foundation-subtitle">Claude, GPT-4o, or Local LLMs</div>
+				<p>Powered by an open responder contract. Use Anthropic Claude, OpenAI, or run completely offline with local Ollama models. Your data and credentials never leave your infrastructure.</p>
+			</div>
+		</div>
+	</div>
+</section>

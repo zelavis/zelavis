@@ -339,6 +339,8 @@ export type BoundAuthHelpers<Profile, E = never> = {
    * admission of `completeSignUp`.
    */
   assertSignUpOpen(tx: AuthTx): Effect.Effect<void, RegistrationClosed | TransactionTooLarge | MethodDisabled>;
+  /** Charge an interactive password signup attempt in a mutation before deriving its hash. */
+  admitPasswordAttempt(tx: AuthTx): Effect.Effect<void, RegistrationRefused | TransactionTooLarge | MethodDisabled>;
   /**
    * Revokes every session of the signed-in user other than the current one
    * (the caller's session). Returns the number of active (non-expired)

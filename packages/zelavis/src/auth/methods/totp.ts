@@ -58,7 +58,7 @@ const invalidChallenge = Schema.Struct({ error: Schema.Literal("INVALID_CHALLENG
 const reauthenticationRequired = { success: false, userError: { error: "REAUTHENTICATION_REQUIRED" } } as const;
 const invalidCredentials = { success: false, userError: { error: "INVALID_CREDENTIALS" } } as const;
 const missingSession = { success: false, userError: { error: "NOT_LOGGED_IN" } } as const;
-const invalidEnrollmentChallenge = { success: false, userError: { error: "INVALID_CHALLENGE" } } as const;
+const invalidPendingChallenge = { success: false, userError: { error: "INVALID_CHALLENGE" } } as const;
 
 export const startEnrollmentUserError = Schema.Union([
   notLoggedIn,
@@ -92,6 +92,8 @@ export interface MfaOptions {
   readonly key: string;
   /** Names the runtime in authenticator apps; a colon is replaced, since the Key Uri Format splits at it. */
   readonly issuer: string;
+  /** Bind a lazily composed OAuth method named by a persisted first-factor proof. */
+  readonly bindPendingOAuthMethod?: (method: string) => void;
 }
 
 export function setupMfa(core: AuthCore, options: MfaOptions) {
@@ -112,9 +114,16 @@ export function setupMfa(core: AuthCore, options: MfaOptions) {
     return { userId: session.userId, startedAt: session._creationTime, authority: { kind: "session", id: session._id, proofRevision } } as const;
   });
 
+  const findCurrentChallenge = Effect.fn("auth.mfa.findCurrentChallenge")(function* (tx: AuthTx, challenge: string, kind: PendingSignIn["kind"]) {
+    const row = yield* findPendingSignIn(tx, { challenge, kind });
+    if (row === null) return null;
+    if (row.providerRevision !== undefined) options.bindPendingOAuthMethod?.(row.method);
+    return (yield* core.pendingProviderIsCurrent(tx, row)) ? row : null;
+  });
+
   const findEnrollmentChallenge = Effect.fn("auth.mfa.findEnrollmentChallenge")(function* (tx: AuthTx, challenge: string) {
-    const row = yield* findPendingSignIn(tx, { challenge, kind: "enroll" });
-    if (row === null || !(yield* core.pendingProviderIsCurrent(tx, row)) || (yield* hasActiveSecret(tx, row.userId))) return null;
+    const row = yield* findCurrentChallenge(tx, challenge, "enroll");
+    if (row === null || (yield* hasActiveSecret(tx, row.userId))) return null;
     return row;
   });
 
@@ -169,7 +178,7 @@ export function setupMfa(core: AuthCore, options: MfaOptions) {
     if (challenge !== undefined) {
       return yield* runtime.mutation(call, (tx) => Effect.gen(function* () {
         const row = yield* findEnrollmentChallenge(tx, challenge);
-        if (row === null) return invalidEnrollmentChallenge;
+        if (row === null) return invalidPendingChallenge;
         return yield* enroll(tx, row.userId, { kind: "challenge", id: row._id, proofRevision: row.proofRevision });
       }));
     }
@@ -227,7 +236,7 @@ export function setupMfa(core: AuthCore, options: MfaOptions) {
     }
     return yield* refuseGone(runtime.mutation(call, (tx) => Effect.gen(function* () {
       const row = yield* findEnrollmentChallenge(tx, challenge);
-      if (row === null) return invalidEnrollmentChallenge;
+      if (row === null) return invalidPendingChallenge;
       const confirmed = yield* confirm(tx, row.userId, { kind: "challenge", id: row._id, proofRevision: row.proofRevision }, totpId, code);
       if (!confirmed.success) {
         if (confirmed.userError.error === "INCORRECT_CODE") yield* countWrongCode(tx, row);
@@ -242,7 +251,9 @@ export function setupMfa(core: AuthCore, options: MfaOptions) {
   /** The second step of a gated sign-in: a TOTP or backup code for a `verify` challenge. */
   const verify = Effect.fn("auth.mfa.verify")(function* (call: AuthCall, { challenge, code }: { challenge: string; code: string }) {
     return yield* refuseGone(runtime.mutation(call, (tx) => Effect.gen(function* () {
-      const verified = yield* verifyPendingSignIn(tx, { challenge, code, key });
+      const row = yield* findCurrentChallenge(tx, challenge, "verify");
+      if (row === null) return invalidPendingChallenge;
+      const verified = yield* verifyPendingSignIn(tx, { row, code, key });
       if (!verified.success) return verified;
       const tokens = yield* core.finishPendingSignIn(tx, verified.signIn);
       if (tokens === null) return yield* Effect.fail(new PendingMethodGone());

@@ -22,9 +22,6 @@ import type { OAuthProviderDefinition } from "./oauth/plugins.js";
 import { NO_REQUEST } from "./runtime/index.js";
 import type { MethodEntry } from "./methods/catalogue.js";
 
-/** The Auth partition's Tenant, in the Platform identity database and in every Project database. */
-export const AUTH_TENANT = "service:zelavis-auth";
-
 /** `subsystems.auth`: `false` composes no Auth; an object tunes it. */
 export type ZelavisAuthOptions = boolean | {
   /** Session, refresh-token and access-token lifetimes. */

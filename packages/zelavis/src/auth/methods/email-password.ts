@@ -325,7 +325,7 @@ export function setupEmailPassword(core: AuthCore, options: EmailPasswordOptions
     }
     const emailSender = yield* senderNow();
     if (emailSender === undefined) return unavailable satisfies SignUpResult;
-    yield* bound.query(call, (tx, helpers) => helpers.assertSignUpOpen(tx));
+    yield* bound.mutation(call, (tx, helpers) => helpers.admitPasswordAttempt(tx));
     // Hashed before the transaction: a retry after a conflict never hashes again.
     const passwordHashPHC = yield* hashPassword(password);
 

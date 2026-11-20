@@ -290,8 +290,15 @@ test("an OpenID Connect connection reads its metadata again when it is a day old
   assert.equal(discoveries(), 2);
   a.provider.state.discoveryIssuer = "https://changed.example.test";
   a.clock.now += 25 * 60 * 60 * 1000;
+  for (let read = 0; read < 2; read += 1) {
+    const methods = await a.run(a.auth.methodsCatalogue.list(new Request(ORIGIN)));
+    assert.ok(methods.methods.some(({ name, signIn }) => name === "oauth:acme" && signIn));
+    assert.ok(methods.methods.some(({ name, signIn }) => name === "usernamePassword" && signIn));
+  }
+  assert.equal(discoveries(), 2, "catalogue reads use saved provider availability");
   const started = await a.run(a.oauth.startSignIn({ ip: null }, { provider: "acme", redirectTo: `${APP}/x` }));
   assert.equal(started.status, "started", "an issuer that now answers wrongly leaves the stored endpoints in use");
+  assert.equal(discoveries(), 3);
 });
 
 // --- redemption rolls back (upstream components/oauth/redemption.test.ts) ---------------------------------------------

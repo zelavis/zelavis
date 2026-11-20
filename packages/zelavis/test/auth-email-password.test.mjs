@@ -11,6 +11,7 @@ import { accountsTables } from "../dist/auth/accounts/tables.js";
 import { coreTables } from "../dist/auth/core/tables.js";
 import { emailTables } from "../dist/auth/email/tables.js";
 import { passwordTables } from "../dist/auth/password/tables.js";
+import { REGISTRATION_CLIENT_LIMIT } from "../dist/auth/registration/policy.js";
 import { assertUserErrorsCovered } from "../dist/auth/routes/user-errors.js";
 import { NO_REQUEST } from "../dist/auth/runtime/index.js";
 import { emailLinkOf, openAuth, recordingOutbox, waitFor } from "./_auth.mjs";
@@ -75,6 +76,30 @@ test("every user error the email Schemas declare has an HTTP mapping", async () 
   assert.doesNotThrow(() => assertUserErrorsCovered(
     email.startFreeAddressUserError, email.completeFreeAddressUserError, email.wrongUserUserError, email.emailNotFoundUserError, emailUnavailableUserError,
   ));
+});
+
+test("both password signup routes share an attempt budget before hashing", async (t) => {
+  const a = await compose(t);
+  a.client.address = "198.51.100.8";
+  const username = { username: "alice", password: PASSWORD };
+  await json(await a.post("username-password/sign-up", username), 200);
+  a.client.address = "198.51.100.7";
+  const derive = t.mock.method(crypto.subtle, "deriveBits");
+  for (let attempt = 0; attempt < REGISTRATION_CLIENT_LIMIT; attempt += 1) {
+    assert.equal((await json(await a.post("username-password/sign-up", username), 409)).code, "username_taken");
+  }
+  assert.equal(derive.mock.callCount(), REGISTRATION_CLIENT_LIMIT);
+
+  const email = { email: "alice@example.test", password: PASSWORD };
+  const limited = await a.post("email-password/sign-up", email);
+  assert.equal((await json(limited, 429)).code, "registration_rate_limited");
+  assert.equal(limited.headers.get("retry-after"), "360");
+  await json(await a.post("username-password/sign-up", { ...username, username: "bob" }), 429);
+  assert.equal(derive.mock.callCount(), REGISTRATION_CLIENT_LIMIT);
+
+  a.client.address = "198.51.100.9";
+  await json(await a.post("email-password/sign-up", email), 200);
+  assert.equal(derive.mock.callCount(), REGISTRATION_CLIENT_LIMIT + 1);
 });
 
 test("sign-up: a link by email, no session yet; the link and the browser secret together verify and sign in, once", async (t) => {
@@ -146,9 +171,10 @@ test("limits: 5 starts an hour per address, 10 sign-ups per client, 60 lookups p
   assert.ok(Number(limited.headers.get("retry-after")) >= 1);
   assert.equal((await json(await a.post("email-password/recovery/start", { email: "one@example.test" }), 404)).code, "email_not_found", "an unverified address has no recovery");
 
-  // Per client: sign-ups are admitted by the registration policy first, 10 an hour per client (part 11), so 5 more
-  // addresses fill them and the 11th sign-up is refused before the email module's 20 starts per client are reached.
-  for (let i = 0; i < 5; i += 1) await json(await a.post("email-password/sign-up", { email: `user${i}@example.test`, password: PASSWORD }), 200);
+  // Test the separate client budget with a fresh client. Its 11th attempt is refused before the email module's
+  // 20 starts per client are reached.
+  a.client.address = "198.51.100.11";
+  for (let i = 0; i < REGISTRATION_CLIENT_LIMIT; i += 1) await json(await a.post("email-password/sign-up", { email: `user${i}@example.test`, password: PASSWORD }), 200);
   assert.equal((await json(await a.post("email-password/sign-up", { email: "fresh@example.test", password: PASSWORD }), 429)).code, "registration_rate_limited");
   a.client.address = "198.51.100.8";
   await json(await a.post("email-password/sign-up", { email: "fresh@example.test", password: PASSWORD }), 200);

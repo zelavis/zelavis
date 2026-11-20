@@ -66,6 +66,15 @@ export interface OAuthConnection {
   readonly updatedAt: string;
 }
 
+/** A saved connection has the local data needed to attempt sign-in. */
+export function canSignIn<Connection extends OAuthConnection>(
+  connection: Connection | undefined,
+): connection is Connection & { readonly clientSecret: string } {
+  if (connection === undefined || !connection.enabled || !connection.clientId || connection.clientSecret === undefined) return false;
+  if (connection.provider === "apple") return connection.teamId !== undefined && connection.keyId !== undefined;
+  return isBuiltInProvider(connection.provider) || (connection.issuer !== undefined && connection.discovered !== undefined);
+}
+
 /** A connection as the API returns it. Never carries the secret. */
 export interface PublicOAuthConnection {
   readonly provider: string;
@@ -157,6 +166,8 @@ export interface OAuthConnections {
   readonly read: (provider: string) => Effect.Effect<VersionedOAuthConnection | undefined, AuthFailure>;
   /** Every built-in provider and every stored connection, secrets never included, with its title. */
   readonly list: () => Effect.Effect<ReadonlyArray<PublicOAuthConnection & { readonly title?: string; readonly configured: boolean }>, AuthFailure>;
+  /** Sign-in options derived from saved configuration without contacting providers. */
+  readonly offered: () => Effect.Effect<ReadonlyArray<{ readonly name: string; readonly title: string }>, AuthFailure>;
   /** Saves a connection. `unknown` when the name is no built-in provider and no issuer was given. */
   readonly configure: (provider: string, input: unknown) => Effect.Effect<ConfigureResult, OAuthConnectionInvalid | AuthFailure>;
   readonly remove: (provider: string) => Effect.Effect<void, AuthFailure>;
@@ -239,7 +250,7 @@ export function createConnections(options: {
     return fallback?.revision === revision;
   });
 
-  const list = Effect.fn("auth.oauth.connections.list")(function* () {
+  const catalogue = Effect.fn("auth.oauth.connections.catalogue")(function* () {
     const rows = yield* options.runtime.query(NO_REQUEST, (tx) => tx.db.query(table).collect());
     const byName = new Map<string, OAuthConnection>();
     for (const row of rows) {
@@ -258,15 +269,19 @@ export function createConnections(options: {
         const connection = byName.get(name);
         const definition = options.providers?.get(name);
         const title = BUILT_IN_PROVIDERS.find((provider) => provider.name === name)?.title ?? definition?.title ?? name;
-        return {
-          ...(connection === undefined
-            ? { provider: name, ...(definition ? { issuer: definition.issuer } : {}), clientId: "", redirectUri: "", enabled: false, updatedAt: new Date(0).toISOString(), hasClientSecret: false }
-            : publicConnection(connection)),
-          title,
-          configured: connection !== undefined,
-        };
+        return { name, title, connection, issuer: definition?.issuer };
       });
   });
+
+  const list = () => Effect.map(catalogue(), (entries) => entries.map(({ name, title, connection, issuer }) => ({
+    ...(connection === undefined
+      ? { provider: name, ...(issuer ? { issuer } : {}), clientId: "", redirectUri: "", enabled: false, updatedAt: new Date(0).toISOString(), hasClientSecret: false }
+      : publicConnection(connection)),
+    title,
+    configured: connection !== undefined,
+  })));
+  const offered = () => Effect.map(catalogue(), (entries) =>
+    entries.flatMap(({ name, title, connection }) => canSignIn(connection) ? [{ name, title }] : []));
 
   const configure = Effect.fn("auth.oauth.connections.configure")(function* (provider: string, input: unknown) {
     if (!validProviderName(provider)) return { status: "unknown" } as const;
@@ -371,5 +386,5 @@ export function createConnections(options: {
     return saved ? { ...connection, discovered: metadata, revision } : connection;
   });
 
-  return { read, list, configure, remove, refreshed, isCurrent };
+  return { read, list, offered, configure, remove, refreshed, isCurrent };
 }

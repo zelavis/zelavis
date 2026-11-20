@@ -1,0 +1,490 @@
+/* ---------- Install Page (.page-install) ---------- */
+
+.page-install .hero {
+	position: relative;
+	overflow: clip;
+	border-radius: 0 0 20px 20px;
+	padding: clamp(116px, 16vh, 150px) 0 56px;
+	color: #f8fafc;
+	background:
+		radial-gradient(ellipse 68% 55% at 78% 12%, rgba(249, 115, 22, 0.2), transparent 58%),
+		radial-gradient(ellipse 60% 50% at 18% 92%, rgba(56, 189, 248, 0.1), transparent 55%),
+		linear-gradient(155deg, #070b14 0%, #0d1424 52%, #111827 100%);
+}
+
+.page-install .hero-grid-bg {
+	position: absolute;
+	inset: 0;
+	background-image:
+		linear-gradient(to right, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+		linear-gradient(to bottom, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+	background-size: 64px 64px;
+	mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 100%);
+	-webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 100%);
+	pointer-events: none;
+}
+
+.page-install .hero-facets {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+.page-install .glow {
+	position: absolute;
+	top: -240px;
+	left: 50%;
+	width: 860px;
+	height: 600px;
+	transform: translateX(-50%);
+	background: radial-gradient(ellipse at center, rgba(249, 115, 22, 0.12), transparent 68%);
+	filter: blur(45px);
+	pointer-events: none;
+}
+
+.page-install .hero-inner {
+	position: relative;
+	z-index: 2;
+	text-align: center;
+}
+
+.page-install .eyebrow {
+	display: block;
+	margin: 0 0 10px;
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: #fdba74;
+}
+
+.page-install h1 {
+	margin: 0;
+	font-size: clamp(2.4rem, 6vw, 4rem);
+	line-height: 1.04;
+	letter-spacing: -0.035em;
+	font-weight: 700;
+	color: #ffffff;
+}
+
+.page-install .lede {
+	max-width: 640px;
+	margin: 18px auto 30px;
+	font-size: clamp(1rem, 1.6vw, 1.15rem);
+	color: #cbd5e1;
+}
+
+.page-install .switch {
+	margin: 0 auto 26px;
+	max-width: 100%;
+	overflow-x: auto;
+	scrollbar-width: none;
+	display: flex;
+}
+
+.page-install .switch::-webkit-scrollbar {
+	display: none;
+}
+
+.page-install .switch .segmented button {
+	padding-inline: 16px;
+}
+
+.page-install .stage {
+	max-width: 760px;
+	margin: 0 auto;
+	text-align: left;
+}
+
+.page-install .panel {
+	padding: clamp(18px, 3vw, 28px);
+	border-radius: 14px;
+	background: rgba(11, 17, 32, 0.78);
+	border: 1px solid rgba(148, 163, 184, 0.24);
+	-webkit-backdrop-filter: blur(18px);
+	backdrop-filter: blur(18px);
+	box-shadow: 0 24px 60px rgba(2, 6, 23, 0.48);
+}
+
+.page-install .panel[hidden] {
+	display: none;
+}
+
+.page-install .panel-head {
+	display: flex;
+	gap: 16px;
+	align-items: flex-start;
+	justify-content: space-between;
+	margin-bottom: 18px;
+}
+
+.page-install .panel-head h2 {
+	margin: 0 0 4px;
+	font-size: 1.25rem;
+	font-weight: 650;
+	letter-spacing: -0.015em;
+	color: #ffffff;
+}
+
+.page-install .panel-head p {
+	margin: 0;
+	color: #cbd5e1;
+	font-size: 0.95rem;
+}
+
+.page-install .badge {
+	flex: none;
+	padding: 4px 11px;
+	border-radius: 7px;
+	font-size: 12px;
+	font-weight: 650;
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+}
+
+.page-install .badge--available {
+	background: rgba(34, 197, 94, 0.16);
+	color: #86efac;
+	border: 1px solid rgba(74, 222, 128, 0.36);
+}
+
+.page-install .badge--planned {
+	background: rgba(255, 255, 255, 0.1);
+	color: #e2e8f0;
+	border: 1px solid rgba(148, 163, 184, 0.34);
+}
+
+.page-install .term {
+	border-radius: 14px;
+	background: #070b14;
+	border: 1px solid rgba(148, 163, 184, 0.2);
+	overflow: hidden;
+}
+
+.page-install .term-bar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 10px 14px;
+	border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.page-install .term-bar i {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: rgba(148, 163, 184, 0.3);
+}
+
+.page-install .term-bar span {
+	margin-left: auto;
+	font-family: var(--mono);
+	font-size: 12px;
+	color: rgba(248, 250, 252, 0.68);
+}
+
+.page-install .cmd {
+	padding: 14px 14px 12px;
+}
+
+.page-install .cmd + .cmd {
+	border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.page-install .cmd-comment {
+	margin: 0 0 6px;
+	font-family: var(--mono);
+	font-size: 12.5px;
+	color: rgba(248, 250, 252, 0.68);
+}
+
+.page-install .cmd-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.page-install .cmd-row pre {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	font-family: var(--mono);
+	font-size: 13.5px;
+	line-height: 1.6;
+	color: #f1f5f9;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.page-install .cmd-row code::before {
+	content: '$ ';
+	color: #fb923c;
+	user-select: none;
+}
+
+.page-install .copy {
+	flex: none;
+	position: relative;
+	min-width: 66px;
+	padding: 6px 12px;
+	border-radius: 8px;
+	border: 1px solid rgba(148, 163, 184, 0.3);
+	background: rgba(255, 255, 255, 0.08);
+	color: #ffffff;
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.page-install .copy:hover {
+	background: rgba(255, 255, 255, 0.16);
+	border-color: rgba(251, 146, 60, 0.45);
+}
+
+.page-install .copy:focus-visible {
+	outline: 2px solid #fb923c;
+	outline-offset: 2px;
+}
+
+.page-install .copy .copy-done {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	opacity: 0;
+	color: #86efac;
+}
+
+.page-install .copy .copy-idle {
+	opacity: 1;
+}
+
+.page-install .copy.is-copied .copy-idle {
+	opacity: 0;
+}
+
+.page-install .copy.is-copied .copy-done {
+	opacity: 1;
+}
+
+.page-install .copy.is-copied::after {
+	content: none;
+}
+
+.page-install .notes {
+	margin: 18px 2px 0;
+	padding: 0;
+	list-style: none;
+	display: grid;
+	gap: 8px;
+	font-size: 0.92rem;
+	color: #cbd5e1;
+}
+
+.page-install .notes li {
+	position: relative;
+	padding-left: 20px;
+}
+
+.page-install .notes li::before {
+	content: '';
+	position: absolute;
+	left: 4px;
+	top: 0.62em;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: #fb923c;
+}
+
+.page-install .alpha {
+	max-width: 640px;
+	margin: 22px auto 0;
+	font-size: 0.9rem;
+	color: #cbd5e1;
+}
+
+.page-install .section {
+	padding: clamp(56px, 9vw, 96px) 0;
+}
+
+.page-install .section.band {
+	background: #f8fafc;
+	border-top: 1px solid #e2e8f0;
+	border-bottom: 1px solid #e2e8f0;
+}
+
+.page-install .section-head {
+	max-width: 680px;
+	margin-bottom: 36px;
+}
+
+.page-install .section-head h2,
+.page-install .manage h2 {
+	margin: 0 0 10px;
+	font-size: clamp(1.7rem, 3.4vw, 2.4rem);
+	line-height: 1.12;
+	letter-spacing: -0.03em;
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.page-install .section-head p {
+	margin: 0;
+	font-size: 1.05rem;
+	color: #475569;
+}
+
+.page-install .steps {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+	gap: 18px;
+}
+
+.page-install .step,
+.page-install .after-card {
+	padding: 22px;
+	border-radius: 14px;
+	background: #fff;
+	border: 1px solid #e2e8f0;
+	box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.page-install .step-n {
+	display: inline-grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	margin-bottom: 14px;
+	border-radius: 50%;
+	background: #fff3eb;
+	border: 1px solid #fed7aa;
+	color: #9a3412;
+	font-size: 14px;
+	font-weight: 700;
+}
+
+.page-install .step h3,
+.page-install .after-card h3 {
+	margin: 0 0 6px;
+	font-size: 1.05rem;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	color: #0f172a;
+}
+
+.page-install .step p,
+.page-install .after-card p {
+	margin: 0;
+	font-size: 0.94rem;
+	color: #475569;
+}
+
+.page-install .after {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+	gap: 18px;
+}
+
+.page-install .after-card pre,
+.page-install .remove {
+	margin: 16px 0 0;
+	padding: 12px 14px;
+	overflow-x: auto;
+	border-radius: 12px;
+	background: #0b1120;
+	border: 1px solid rgba(148, 163, 184, 0.2);
+	color: #f1f5f9;
+	font-family: var(--mono);
+	font-size: 12.5px;
+	line-height: 1.65;
+}
+
+.page-install .manage {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: 40px;
+}
+
+.page-install .plain {
+	margin: 14px 0 0;
+	padding: 0;
+	list-style: none;
+	display: grid;
+	gap: 10px;
+	color: #334155;
+}
+
+.page-install .plain li {
+	position: relative;
+	padding-left: 22px;
+}
+
+.page-install .plain li::before {
+	content: '';
+	position: absolute;
+	left: 4px;
+	top: 0.7em;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: #ea580c;
+}
+
+.page-install .plain code,
+.page-install .more code {
+	padding: 1px 6px;
+	border-radius: 6px;
+	background: #f1f5f9;
+	border: 1px solid #e2e8f0;
+	color: #0f172a;
+	font-family: var(--mono);
+	font-size: 0.88em;
+}
+
+.page-install .more {
+	margin: 16px 0 0;
+	color: #475569;
+}
+
+.page-install .more a {
+	color: #c2410c;
+	font-weight: 600;
+	border-radius: 4px;
+}
+
+.page-install .more a:focus-visible {
+	outline: 2px solid #ea580c;
+	outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+	.page-install .panel-head {
+		flex-direction: column;
+	}
+
+	.page-install .switch {
+		justify-content: flex-start;
+	}
+
+	.page-install .switch .segmented {
+		min-width: max-content;
+	}
+
+	.page-install .switch .segmented button {
+		padding-inline: 14px;
+		font-size: 12.5px;
+	}
+
+	.page-install .cmd-row {
+		flex-direction: column;
+	}
+
+	.page-install .copy {
+		align-self: flex-end;
+	}
+}

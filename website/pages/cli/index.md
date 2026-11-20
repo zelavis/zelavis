@@ -1,0 +1,517 @@
+---
+layout: docs
+title: "CLI"
+---
+
+# CLI
+
+The public `zelavis` command starts and operates the long-running Platform OS.
+Its endpoint-backed command implementation is `zelavis/cli`, importable on its
+own for tooling that wants the commands without the binary.
+
+Install the Platform on this machine to get the complete command, including `serve`:
+
+```bash
+npm create zelavis@latest -- --yes
+zelavis --help
+```
+
+All installed release formats use a private Node. In user mode, start the
+Platform yourself:
+
+```bash
+zelavis serve
+```
+
+`zelavis serve --enrollment-port 8444 [--enrollment-address <ip-or-host>]...` also serves a
+narrow HTTPS listener (self-signed, pinned) through which worker machines enroll; see
+[Node Enrollment](/architecture/node-enrollment/). `zelavis nodes platform` prints its URL
+and the fingerprint to pin.
+
+## Commands
+
+Plugin-owned operations use the plural namespace consistently:
+
+```bash
+zelavis plugins --help
+zelavis plugins example health get --url http://localhost:3000/zelavis --json
+zelavis plugins example --help --url http://localhost:3000/zelavis
+```
+
+Commands are discovered from the running installation's operation declarations.
+The example above calls the same handler as
+`GET /zelavis/api/v1/plugins/example/health` and
+`client.plugins.example.health.get()`. For writes, use `--file input.json`;
+path/query arguments use `--param name=value` and `--query name=value`. Supply
+`--token` when the endpoint requires bearer authentication. Output and errors
+are JSON, and failures exit nonzero.
+
+See [Plugin API](/guides/plugin-api/) for declaring an operation and the current
+migration limits. Only endpoints with operation declarations appear in this
+command tree.
+
+- `serve` starts the Platform runtime and dashboard.
+- `setup` runs the animated, interactive first-install wizard and creates the
+  first Platform owner through the bootstrap API.
+- `bootstrap` creates the first Platform owner account non-interactively.
+- `bootstrap status` reports whether an owner still has to be created.
+- `agent` runs the separately supervised Agent that executes Project processes.
+  With `--operations-root <dir> --platform-authority <file>`
+  it also runs installed host operations the Platform requests
+  over its local socket with Ed25519-signed, request-bound authority. `--operation-cgroup delegated` (Linux, cgroup v2,
+  systemd `Delegate=yes`) contains each operation in its own cgroup, optionally
+  limited by `--operation-pids-max` and `--operation-memory-max`; it refuses to
+  start rather than fall back when the host cannot provide that.
+  `--require-root-owned-operations` is for packaged installs. `zelavis serve`
+  runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
+  directory.
+- `terminal status|list|install|open|attach|close [session-id]` is the owner's shell on the server
+  (`client.terminal`, `GET|POST|DELETE /zelavis/api/v1/runtime/terminal*`, permission
+  `server.terminal.use` in system scope; Server → Terminal in the dashboard). `open` starts a
+  session and attaches to it, `attach` picks one up again, and Ctrl-] detaches while the session
+  keeps running. Sessions run inside tmux as the account the Platform runs as (never root) with a
+  small fixed environment, belong to the principal that opened them, and are bounded in number,
+  input size and idle time. `install` adds tmux through the audited `zelavis.packages-install`
+  operation (it also needs `server.packages.install`). Opening and closing are written to the
+  Platform log; typed input and printed output are never recorded. `nodeAdapter({ terminal: false })`
+  removes it.
+- `logs [--ref REFERENCE] [--level LEVEL] [--source NAME] [--limit N] [--after SEQUENCE] [--follow]`
+  reads the Platform's recent log (`client.logs.read`, `GET /zelavis/api/v1/runtime/logs`,
+  permission `server.logs.read` in system scope). An unexpected request failure answers with a
+  generic message and a reference; `--ref` prints the cause recorded under that reference.
+  The log is bounded and kept in memory (it is emptied by a restart, and the same error lines
+  are written to the service journal), and secrets are redacted when an entry is written.
+- `debug processes|updates|project <id> [--json]` is read-only diagnostics for whoever debugs a server (`client.debug.processes|updates|project`, `GET /zelavis/api/v1/runtime/debug/processes|updates|projects/:id`, permission `server.debug.read` in system scope, which the terminal and log permissions do not imply; each read is written to the Platform log with the principal). `updates` shows the running version and the last ten finished updates with the installer's output tail, which the updater keeps in `<data>/update/history.json` so a failed or rolled-back update can be read after the next attempt. `project` gathers one Project's record (runtime state, placement, locked recipe, unfinished update or deletion), its newest 100 runtime log lines, the Platform log entries that name it and its processes. `processes` lists the Zelavis processes of the account the Platform runs as, with
+  secrets removed from their command lines, and flags a command running more than once side by side
+  (a leftover copy). It is read-only (`client.debug.processes`,
+  `GET /zelavis/api/v1/runtime/debug/processes`, permission `server.debug.read` in system scope, which
+  the terminal and log permissions do not imply). Each read is written to the Platform log with the
+  principal. Give a script or an agent a key made with the **Debug (read-only)** preset (Server → Access
+  → API keys) and it can answer these questions without a shell.
+- `update status|check|apply [--wait]` shows the running version and the newest one on
+  its channel, looks again, or asks the installation to update itself and, with
+  `--wait`, follows it to the end. It calls the same routes as the dashboard
+  (`client.updates`). `sudo zelavis update --run [--instance NAME]` is the other half, run by the
+  `zelavis-update` systemd unit and never by hand; `zelavis update --run --user` is the
+  same for a user-mode install, started by the Platform as the same user. It replaces
+  the installed release, so it has no HTTP route and a system update refuses to run
+  unless it is root. See
+  [Updating without downtime](/architecture/updates/).
+- `worker join --platform-url URL --node-id ID --enrollment-token T` makes this machine a Node
+  of a Platform: it generates the Agent's key and certificate locally, authenticates the
+  Platform (https only; `--platform-ca-file` or `--platform-fingerprint` for a private or
+  self-signed one), enrolls, and writes the Agent configuration. Host-local; the enrollment
+  it makes is `client.nodes.enroll`. `worker refresh-trust` re-reads the Platform's public keys over
+  the same pinned connection (a running Agent does this daily by itself). See
+  [Node Enrollment](/architecture/node-enrollment/).
+- `cloud status|connect|disconnect|nodes|request|release|scaling` manages cloud capacity
+  (`client.cloud`): one provider connection and the machines created through it. The
+  provider token is read from `ZELAVIS_CLOUD_TOKEN`, never from an option, so it stays
+  out of shell history. See [Node Enrollment](/architecture/node-enrollment/).
+- `nodes list|platform|audit|enroll-token|enroll|remove` manages the machines that join this Platform
+  (`client.nodes`). `enroll-token <node-id>` issues a single-use credential and shows it
+  once; `enroll <node-id> --enrollment-token T --cert-file F --agent-url URL` is what the
+  joining machine runs, and `--trust-out FILE` saves the Platform's trust keys for its
+  Agent. See [Node Enrollment](/architecture/node-enrollment/).
+- `host-operations catalog|submit|get|audit` requests host operations
+  through the Platform (`client.hostOperations.*`,
+  `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>
+  --arg name=value` needs the permission the operation's installed manifest names
+  for that Project (or system scope). An operation that declares a JSON result
+  returns it in `get`. `audit [--project <id>] [--limit N]` lists issuance
+  records (never argument values) with the audit permission. Submissions are
+  rate limited per caller (HTTP 429 with `Retry-After`). Available when the
+  Platform runs with an Agent.
+- `projects list|get|create|rename|start|stop|restart|upgrade|logs|remove` manages Projects,
+  and `projects recipes` lists Project recipes. Each command calls the same
+  route as the JavaScript client (`client.projects.*`) and
+  `/zelavis/api/v1/runtime/projects`. With `--json` the output is the SDK
+  result and failures are JSON with the HTTP status; a recipe whose required
+  isolation the server cannot provide fails with
+  `code: "project.isolation.unsatisfied"`. The backend is chosen by server
+  policy; there is no backend option. `projects versions [id]` lists qualified
+  installed native App engines. `projects switch-version <id> --engine-version
+  <exact-version>` selects one with its matching App recipe. `create <name>` and
+  `upgrade <id>` also accept `--engine-version`; their default is the latest
+  qualified installed engine. `create` also takes `--method ID` and `--software-version V` for a
+  recipe that offers install choices (`projects recipes` shows them). Running qualified Apps switch through the shared
+  handover at their existing address. Source installations and unsupported
+  drivers report why independent selection is unavailable.
+  `projects setup <id> [--reveal]` shows the values an installed application's own
+  setup asks for (a database address and name, a generated password), from
+  `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
+  `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
+  which needs `project.setup.reveal` and is recorded in the audit trail.
+  `projects system-views <id> [--view NAME] [--tenant T] [--limit N] [--after CURSOR]` reads the
+  database's maintenance views (needs `database.inspect`); the rest of the database's
+  operations are `data` actions, listed in [App data](/api/app-data/).
+  `projects tenants <id>` lists every Tenant of an App Project's database with its
+  shard, tables, stored records and bytes (a divided Tenant is one line of totals followed by one
+  indented line per part, and `--json` gives each Tenant's `parts`); `projects create-tenant <id> --tenant T --table N`
+  adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`
+  removes one with its history for good (needs `database.drop`);
+  `projects branch-tenant <id> --tenant T --to NEW [--outbox leave|copy]` makes `NEW` a copy of `T` as of one
+  position of its log, which then goes its own way; `T`'s undelivered outbox messages stay with it unless
+  `--outbox copy` (needs `database.restore`). They call
+  `client.projects.tenants|createTenant|deleteTenant|branchTenant` and the database's `tenants/overview` and
+  `documents/collections` routes through the Project proxy (`project.view` and
+  `database.write`); the dashboard's Database → Tenants page uses the same routes.
+  `projects export-stream <id> --tenant T [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`
+  reads a Tenant out as a stream, a page at a time: its records, then every change since, with `consistent` set once the
+  entries received (applied by version) are the Tenant as of one log position; a divided Tenant is one export whose entries
+  name their `part` (needs `database.backup`); `projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb]`
+  copies every shard, byte for byte through the ordered key-value interface, into a physical backup `name` on the host in
+  any local engine, and `projects images <id>` lists them (needs `database.backup`); there is no restore command, because
+  replacing the live database is done with the Project stopped.
+  `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of
+  an App Project's database (the caller's own unless `--tenant` names another) and
+  prints the backup, or writes it owner-only to `FILE`.
+  `projects restore-tenant <id> --file FILE [--into empty|purge|merge] [--tenant T]`
+  restores one; `empty`, the default, refuses a Tenant that holds data. Both call
+  `client.projects.exportTenant|restoreTenant` and the database's
+  `maintenance/backups/export|restore` route through the Project proxy, and need
+  `project.runtime.manage`. See [Database](/api/database/#backups-and-restore).
+- `fabric`, `assistant`, `backends` and `agent status|operations|operation` read and change the
+  Fabric, the Assistant, the deployment backends and the Agent's report through the SDK; see
+  [Platform operations](/api/platform-operations/).
+- `storage <list|metadata|get|put|delete> --project ID [PATH]` and
+  `workloads <health|menu|list|create|get|update|run|logs> --project ID [ID]` manage an App
+  Project's files and workloads through `client.storage|workloads(projectId)`, over the Project
+  proxy; see [Project files and workloads](/api/project-files-and-workloads/).
+- `data <action> --project ID` reads and writes an App Project's data as the
+  token's own Tenant (`client.data(projectId)`, the Project's `data/*` route):
+  collections and documents, the KV commands, and the outbox — `data outbox
+  [topic] [--after C] [--limit N]` reads messages in commit order,
+  `outbox-emit <topic> [id] --data JSON` emits one, `outbox-remove --ids a,b`
+  removes handled ones, and `data write --operations JSON --emit JSON` commits
+  messages with a batch. See [App Data](/api/app-data/) and
+  [Database](/api/database/#outbox).
+- `auth service-accounts list|create|rotate|revoke` manages revocable Platform
+  machine identities through `client.auth.admin.*`. Creation and rotation
+  print a token once. Repeated `--permission` options add Platform permissions;
+  `--project <id>` adds the standard scoped Project operator grants.
+- `system-store namespaces|records <namespace>` inspects the Platform's own
+  backend tables through `client.runtime.systemStore` and
+  `/zelavis/api/v1/runtime/system-store/namespaces`. Use `--limit` (1–200),
+  `--after` with the returned next key, and `--json` for paginated records.
+  Inspection is read-only, redacts secrets, and requires the system-scoped
+  `server.database.inspect` permission. Supply `--token` for authentication.
+- `identity-database restore DIR --confirm restore [--data-dir DIR] [--json]`
+  replaces the Platform's identity database (Platform users' Auth data) with a
+  restored backup run's `identity` directory. It is host-local and refused while
+  the Platform runs; the database it replaces is kept beside it as
+  `identity-database/shards.replaced-<timestamp>`.
+- `services-database restore DIR --confirm restore [--data-dir DIR] [--json]`
+  moves a restored Platform backup run's `database` directory into the private services
+  database. It validates the image and refuses while the Platform runs. Previous shards
+  remain at `services-database/shards.replaced-<UTC timestamp>`; the source image is
+  consumed. A failed move rolls back. If a crash leaves no `shards`, startup refuses
+  until this command is rerun to finish the restore. This is host-local, with no HTTP
+  or SDK form. Services reach the database only through setup's `core.database`;
+  it has no Database page or database routes.
+- `services list` lists service registry entries.
+- `services register` registers an ESM service specifier.
+- `services install` activates a registered service.
+- `services disable` returns a service to the available state.
+- `uninstall --all --dry-run` shows every native packaged-install artifact that
+  complete removal owns. `uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA`
+  then removes the Platform, Agent, releases, package records, Zelavis data and
+  local configuration. It is a host-local adapter operation, not an HTTP
+  endpoint. A current installer receipt covers create/package installs; plain
+  npm/source copies without one use their originating lifecycle. The inventory
+  includes installer/data locks and the Platform ownership record.
+
+## Host-local install and doctor
+
+`zelavis install --from-release /absolute/release` uses a staged release, while
+`zelavis install --from-npm /absolute/prepared-tree` completes the private Node
+and npm package tree acquired by the canonical bootstrap. Both use the same
+plan; `--dry-run` inspects it,
+`--user` selects user mode and `--json` selects structured output. Existing
+receipts identify the source, entry, mode, selected instance, port and Edge ownership. Foreign layouts,
+live data owners and occupied or reserved instance ports are refused. `--force` only permits
+command replacement; stop user processes before maintenance. A matching owned
+systemd Platform can be stopped and restarted for repair/upgrade.
+
+`zelavis doctor [--user|--system] [--json]` inspects PATH, receipt/current/private
+Node, data owner, service state, ports and Agent cgroup/delegation. Use sudo for
+root-readable system receipts. It writes no files, takes no locks and downloads
+nothing; errors return exit status 1. Install, doctor and complete removal are
+host-local commands with no HTTP/dashboard route. Use `--instance <name>` on install, serve, doctor and complete removal for a
+named Linux/systemd instance. A new install needs an explicit `--port` (1024–65535).
+User mode supports default only. The selected `current`/receipt/runtime descriptor
+live under `/opt/zelavis/instances/<name>`, with data/config/account/unit names
+scoped to the instance. Releases and the management command remain shared.
+Only default may own host Edge; secondary instances run with Edge off.
+`uninstall --instance <name> --all` removes all of that instance’s data and
+retains shared state needed by other receipts. The last instance removes shared
+releases, templates and package/APT state. Removing default releases its host
+Edge record/kernel lock. Use `--url` for endpoint-backed commands on a secondary
+Platform; `--instance` never changes a remote target.
+
+## Runtime Operations
+
+The CLI is the intended layer for operator-facing runtime workflows such as
+installing, activating, disabling, or removing services. Those workflows should
+use official Zelavis runtime APIs and adapter-provided capabilities instead of
+application code passing service toggles into `new Zelavis(...)`.
+
+Adapter-specific behavior should stay behind adapter boundaries. The CLI can
+ship first-party commands for supported adapters, but concrete host mechanics
+such as local file caches or future Deno runtime setup should live in adapter
+modules that the CLI orchestrates.
+
+Complete host removal is the intentional exception to endpoint-backed command
+parity. It destroys the running Platform, its Agent, its authority material and
+all Project data, so it must be initiated locally on the machine. The
+runtime-neutral `ZelavisInstallationUninstaller` contract is exported by
+`zelavis/runtime`; the Node host implementation is
+`createNodeInstallationUninstaller` from `zelavis/adapters/node`.
+
+Framework bootstrap commands are intentionally absent. Zelavis is installed as
+a long-running Platform OS; framework bindings are adapters and provider
+capabilities are plugins rather than hosts for the Platform itself. The
+`bootstrap` command below is a different thing: it claims the first owner of an
+already-running Platform, not a project scaffold.
+
+## First Owner
+
+A freshly installed Platform has no accounts. Until one exists there is nobody
+to sign in as, so claiming the first owner is a one-time operation guarded by a
+token the operator sets on the server:
+
+```bash
+ZELAVIS_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)" zelavis serve
+```
+
+The endpoint stays closed unless that variable is set, so a Platform started
+without it cannot have an owner claimed by whoever reaches it first. With the
+Platform running, use the guided setup from the same machine:
+
+```bash
+zelavis setup
+```
+
+The setup wizard checks the installation, guides the owner account and
+security choices, and never prints the resulting owner session. It is the
+recommended interactive flow. The equivalent scriptable command is:
+
+```bash
+zelavis bootstrap --username owner --display-name "Owner"
+```
+
+The command prompts for the password with the terminal echo turned off. There
+is deliberately no `--password` option: anything passed as an argument is
+readable in shell history and in the system process list, which is not an
+acceptable place for the credential that owns the Platform. Passing it is
+refused rather than ignored. For unattended installs, pipe it instead:
+
+```bash
+printf '%s' "$OWNER_PASSWORD" | zelavis bootstrap --username owner --password-stdin
+```
+
+To check where an installation stands before doing anything:
+
+```bash
+zelavis bootstrap status
+```
+
+That reports whether an owner exists and whether bootstrap is configured.
+The owner claims the installation with a username and password. `--email` is
+optional and is verified once email delivery is configured.
+
+`zelavis auth <group> <action>` mirrors the [Auth API operations](/api/platform-operations/#authentication).
+Pass `--data JSON` to commands that take a request body and `--json` for
+machine-readable output. Use `--token` for an access token or service-account
+token on authenticated requests. For human sign-in, give the sign-in command
+`--session-file PATH` and pass the same path and URL to later Auth commands.
+The CLI stores the tokens in an owner-only file and refreshes expired access
+tokens on demand. `zelavis auth session sign-out` with the file ends the
+session and clears its tokens. Without the file, `zelavis auth session refresh`
+takes a `refreshToken` in its JSON body and returns a replacement bundle.
+
+## OAuth sign-in
+
+The Authorization Code flow is part of Zelavis Auth: it holds the state, nonce,
+and PKCE verifier, which are the parts that are dangerous to get wrong and the
+same for every provider. Google, GitHub, Apple and generic OpenID Connect ship
+with Zelavis; another issuer needs only its URL.
+
+The credentials your installation was issued are yours to supply:
+
+```bash
+curl -X PUT https://example.com/zelavis/api/v1/auth/oauth/connections/github   -H 'content-type: application/json'   -d '{
+    "clientId": "...",
+    "clientSecret": "...",
+    "redirectUri": "https://example.com/zelavis/api/v1/auth/oauth/github/callback"
+  }'
+```
+
+The client secret is write-only: no endpoint returns it, and omitting it on a
+later write keeps the stored one. A redirect URI must use `https` outside
+`localhost`, because the authorization code arrives on that URL and a code is
+enough to complete a sign-in.
+
+An installation that must come up already configured can set
+`ZELAVIS_AUTH_<PROVIDER>_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, and
+`_SCOPES` instead. Anything stored through the API wins.
+
+### Adding a provider by its issuer
+
+Any OpenID Connect provider is added by pasting its issuer URL. Zelavis reads
+the endpoints from the issuer's own `/.well-known/openid-configuration`, so
+Google, Microsoft, Okta, Auth0, Keycloak, or your company's SSO needs no plugin
+and no release when an endpoint moves:
+
+```bash
+curl -X PUT https://example.com/zelavis/api/v1/auth/oauth/connections/acme \
+  -H 'content-type: application/json' \
+  -d '{
+    "issuer": "https://id.example.com",
+    "clientId": "...",
+    "clientSecret": "...",
+    "redirectUri": "https://example.com/zelavis/api/v1/auth/oauth/acme/callback"
+  }'
+```
+
+The document's own `issuer` must match the URL requested and every endpoint
+must be https — one of them supplies the keys that decide whether an ID token
+is genuine.
+
+## Extensions
+
+A plugin that extends another declares a capability owned by it —
+`zelavis/auth:authenticator`, not the domain namespace `provider:auth`. It is an
+ordinary plugin in every other way; the only difference is who it points at.
+
+That relationship is what lets an extension be listed beside the plugin it
+extends rather than in a general catalogue:
+
+```bash
+zelavis extensions
+zelavis extensions --for zelavis/auth
+```
+
+The same over the API, which is what a plugin's own settings page asks for:
+
+```
+GET /zelavis/api/v1/runtime/extensions?owner=zelavis/auth
+```
+
+Each entry in `runtime/services` carries `extends`, so a general listing can
+leave extensions out. Installing one whose owner is not present is refused: the
+plugin it points at is what discovers it, so on its own it would look installed
+and do nothing.
+
+Runtime service management is available through the `services` command group:
+
+```bash
+zelavis services list
+zelavis services register --specifier https://example.com/service.mjs
+zelavis services register --specifier https://example.com/service.mjs --install
+zelavis services install @zelavis/ecommerce
+zelavis services disable @zelavis/ecommerce
+```
+
+The commands talk to `http://localhost:3000/zelavis` by default. Use `--url`
+when the runtime is mounted elsewhere:
+
+```bash
+zelavis services list --url http://localhost:8787/zelavis
+```
+
+## Product Services
+
+Services can be dropped into a folder on the server instead of composed in
+code. The Platform scans `<data directory>/services` at boot:
+
+```
+/var/lib/zelavis/services/
+  acme-analytics/package.json
+  @acme/theme/package.json
+```
+
+Each package needs a `package.json` with a `zelavis` block naming its `kind`,
+`type: "module"`, and an `exports` entry. Scoped packages nest one level
+deeper, exactly as they do in `node_modules`. Restart the Platform to pick up
+changes.
+
+Code in this folder runs with Platform authority, which is inherent to a folder
+on your own server — treat adding a package there as seriously as installing
+one. Discovery still refuses anything it cannot verify: an `exports` entry that
+resolves outside its own package directory, a missing entry file, an invalid
+manifest, an invalid capability, or a package claiming a reserved system service
+name. Each is skipped with a logged reason, and a package that throws on import
+is skipped too, so one bad package cannot stop the Platform from booting.
+
+### Declaring what a plugin extends
+
+A capability says which contract a service satisfies. Alongside the Platform's
+own namespaces (`api:routes`, `provider:auth`), a capability can be owned by
+the package that defines it:
+
+```json
+{
+  "zelavis": {
+    "kind": "plugin",
+    "capabilities": [
+      "zelavis/auth:authenticator"
+    ],
+    "namespace": "example"
+  }
+}
+```
+
+This is how a provider says which plugin it extends. `provider:payments` states
+what interface a plugin implements but not whose contract it is, so two
+commerce plugins scanning for it would each pick up the other's providers.
+
+There is no parent/child relationship behind this. Discovery is a flat scan,
+naming an owner asks to be considered by it and grants nothing, and the owning
+plugin still validates every provider against its own registration contract.
+
+### Bundled services
+
+The distribution seeds the services it ships into the services folder
+the first time it starts, the way a CMS lays down its bundled plugins. They are
+ordinary packages from that point on: list them, replace them, or delete them.
+A deleted one stays deleted rather than reappearing on the next restart.
+
+Packages in the folder can import `zelavis` — the running Platform is linked
+into `<data directory>/services/node_modules` so Node's resolution
+finds it, and the link always points at the Platform that loaded the package
+rather than another copy on the machine.
+
+### Frontends and their mount path
+
+A static frontend is built once and served from wherever it is installed. Two
+manifest fields make that work:
+
+```json
+{
+  "zelavis": {
+    "kind": "frontend",
+    "frontend": {
+      "runtime": "static",
+      "bundle": "build/client",
+      "mode": "spa",
+      "assetBase": "/assets/",
+      "basePathGlobal": "__ZELAVIS_BASE_PATH__"
+    }
+  }
+}
+```
+
+`assetBase` names the prefix the bundle's own references were built against, so
+the Platform can rewrite them to the real mount — including unquoted CSS
+references such as `url(/assets/font.woff2)`.
+
+`assetBase` moves references that appear in the markup. It cannot tell a
+client-side router where it lives, because that is a value the bundle reads at
+boot rather than a path to rewrite. `basePathGlobal` names a global the Platform
+defines on the served page, holding the mount path; the bundle reads it and
+configures its own router. The Platform knows nothing about what reads it, so
+this works for any framework.
+
+Without `basePathGlobal` a bundle must be built for a fixed mount, which is what
+kept a frontend from being installed anywhere but the path it was built for.

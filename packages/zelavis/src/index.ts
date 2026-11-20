@@ -15,7 +15,7 @@ import { describeFailure, evaluate, integration, present, unwrapFailure, Integra
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
 import { publicInstallChoices, publicProjectRecipe, publicServiceRegistryIdentity, type ServiceExtensionEntry, type ServiceExtensionPoint } from "./platform/service-registry-view.js";
 import { createEmailSubsystem, type EmailOutbox, type EmailSend } from "./app/email/index.js";
-import { AUTH_TENANT, createAuthSubsystem, projectAuthSealingSecret, type AuthServiceApi, type AuthSubsystem, type ZelavisAuthOptions } from "./auth/subsystem.js";
+import { createAuthSubsystem, projectAuthSealingSecret, type AuthServiceApi, type AuthSubsystem, type ZelavisAuthOptions } from "./auth/subsystem.js";
 import { collectOAuthProviders } from "./auth/oauth/plugins.js";
 import { projectDatabaseIdentitySource, systemStoreIdentitySource } from "./auth/import/sources.js";
 import {
@@ -27,6 +27,7 @@ import {
 import { DocumentConflict } from "./db/errors.js";
 import { type DatabaseApi, makeDatabase } from "./db/database.js";
 import { memoryKvEngine } from "./db/engines/memory-kv.js";
+import { AUTH_TENANT_ID } from "./db/naming.js";
 import { partitionMapFor } from "./db/topology.js";
 import { openShardOverKv } from "./db/kv-store.js";
 import { effectDatabaseOf } from "./db/runtime-api.js";
@@ -6923,7 +6924,7 @@ export function zelavis(
             ? options.serviceContext.platform.metadata.projectId
             : undefined;
           return yield* createAuthSubsystem({
-            tenant: database.forTenant(AUTH_TENANT),
+            tenant: database.forTenant(AUTH_TENANT_ID),
             role: projectRole ? "project" : "platform",
             projectId,
             masterSecret: (projectRole ? compositionOptions[projectAuthSealingSecret] : undefined)

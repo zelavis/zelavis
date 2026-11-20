@@ -1,0 +1,128 @@
+---
+layout: docs
+title: "Route Conventions"
+---
+
+# Route Conventions
+
+The default Zelavis runtime mounts the dashboard under a safe root path and groups API services under a versioned API namespace.
+
+## Default mounted paths
+
+With the default runtime settings:
+
+```txt
+/zelavis
+/zelavis/marketplace
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
+/zelavis/assets/*
+/zelavis/api/v1/runtime/config
+/zelavis/api/v1/runtime/settings
+/zelavis/api/v1/auth/*
+/zelavis/api/v1/database/*
+/zelavis/api/v1/storage/files/*
+/zelavis/api/v1/storage/files/*?format=metadata
+/zelavis/api/v1/workloads/*
+/zelavis/api/v1/workloads/http/:projectId/*path
+```
+
+## Root path behavior
+
+- `rootPath` defaults to `/zelavis`.
+- `/zelavis` opens the Projects overview.
+- Project-local dashboard pages live under `${rootPath}/projects/:projectId/*`.
+- Global Marketplace and management areas live outside project URLs.
+- Project marketplace lives under `${rootPath}/projects/:projectId/marketplace`.
+- Managed app projects may expose hosting-style project pages instead of Zelavis-native backend pages.
+- The dashboard shell and dashboard client routes live under `rootPath`.
+- Static dashboard assets live under `${rootPath}/assets/*`.
+- Service APIs live under `${rootPath}${api.prefix}/${api.version}/...`.
+
+With:
+
+```ts
+const zv = new Zelavis({
+  rootPath: "/admin",
+  api: {
+    prefix: "/api",
+    version: "v2",
+  },
+});
+```
+
+That example uses the preferred high-level entrypoint and the standard `zv` local instance name.
+
+the mounted paths become:
+
+```txt
+/admin
+/admin/marketplace
+/admin/projects/:projectId
+/admin/projects/:projectId/marketplace
+/admin/projects/:projectId/settings
+/admin/server
+/admin/server/domains
+/admin/server/backups
+/admin/server/logs
+/admin/assets/*
+/admin/api/v2/runtime/config
+/admin/api/v2/runtime/settings
+/admin/api/v2/auth/*
+/admin/api/v2/database/*
+/admin/api/v2/storage/files/*
+/admin/api/v2/storage/files/*?format=metadata
+/admin/api/v2/workloads/*
+/admin/api/v2/workloads/http/:projectId/*path
+```
+
+The storage routes are present when Zelavis has a file storage resource to expose through the storage subsystem. `?format=metadata` returns structured file information and the ready-to-use Zelavis file reference for that path.
+
+Workload HTTP routes under `/workloads/http/:projectId/*path` are the current
+trusted-development test binding for project functions. Public website-style
+route binding such as `/api/hello` is a later layer and should not be treated
+as production isolation.
+
+## Endpoint-backed capabilities
+
+Dashboard routes are client routes. Platform actions should live under the API namespace as service endpoints.
+
+If a dashboard surface can run a check, mutate settings, create a domain, install a service, manage backups, change project state, or read operational telemetry, the same capability should be reachable through `${rootPath}${api.prefix}/${api.version}/...`.
+
+This keeps the dashboard, CLI, AI agents, plugins, scripts, and external admin tools on the same platform contract.
+
+## The public root
+
+Zelavis reserves the configured dashboard root path and anything under it. The
+public root `/` is served by the installed frontend: on a Project, its static
+`kind: "frontend"` package (a placeholder answers until one is installed); on the
+Platform, a folder frontend is mounted under `/apps/<name>` and can never take over
+`/`.
+
+## Service app routes
+
+Services that declare an `app` field are synthesized into normal Zelavis service routes.
+
+System services keep the mount chosen by the operator. The built-in `@zelavis/ui` dashboard is a system app service, so the runtime mounts it under the configured dashboard root path.
+
+Extension services are safer by default:
+
+- with `app.domainPolicy: "optional"`, an extension app falls back to `/apps/<service-name>` when no verified domain binding exists
+- with `app.domainPolicy: "required"`, an extension app is not served until the runtime has a verified domain binding for that project or service
+- when a verified binding exists, the app can serve its declared mount on that host, for example `/` on `shop.acme.com`
+
+Concrete hostnames live in runtime domain bindings, not in service package metadata.
+
+## Related docs
+
+- [Dashboard Settings](/reference/dashboard-settings/)
+- [Endpoint-Backed Capabilities](/architecture/endpoint-backed-capabilities/)
+- [Service Model](/architecture/service-model/)
+- [Project Model](/architecture/project-model/)
+- [First Runtime](/getting-started/first-runtime/)
+- [zelavis/core](/packages/core/)

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { integration } from "../../core/runtime/effect-boundary.js";
 import type { DatabaseApi, TenantApi } from "../../db/database.js";
 import type { DocumentCursor } from "../../db/document-model.js";
+import { AUTH_TENANT_ID, LEGACY_AUTH_SETTINGS_TENANT_ID } from "../../db/naming.js";
 import type { ZelavisSystemStore } from "../../system-store.js";
 import { GrantSchema } from "../accounts/tables.js";
 import { sha256Hex } from "../lib/crypto.js";
@@ -199,8 +200,8 @@ function projectSetting(tenant: TenantApi) {
 }
 
 export function projectDatabaseIdentitySource(database: DatabaseApi): IdentitySource {
-  const legacy = database.forTenant("service:zelavis-auth");
-  const providers = database.forTenant("service:zelavis-auth-settings");
+  const legacy = database.forTenant(AUTH_TENANT_ID);
+  const providers = database.forTenant(LEGACY_AUTH_SETTINGS_TENANT_ID);
   return {
     pages: (kind, after) => Effect.gen(function* () {
       const tenant = kind === "connections" ? providers : legacy;

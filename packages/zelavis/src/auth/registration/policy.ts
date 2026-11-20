@@ -62,6 +62,8 @@ export const registrationSettingsInputJsonSchema = Schema.toJsonSchemaDocument(
 const limits = defineRateLimits("registration", {
   client: { kind: "token bucket", rate: REGISTRATION_CLIENT_LIMIT, period: HOUR },
   runtime: { kind: "token bucket", rate: REGISTRATION_ATTEMPT_LIMIT, period: REGISTRATION_WINDOW_MS },
+  passwordClient: { kind: "token bucket", rate: REGISTRATION_CLIENT_LIMIT, period: HOUR },
+  passwordRuntime: { kind: "token bucket", rate: REGISTRATION_ATTEMPT_LIMIT, period: REGISTRATION_WINDOW_MS },
 });
 
 // A runtime-wide bucket under one fixed key: sign-up is creation, not redemption, so I6 allows it.
@@ -86,6 +88,8 @@ export interface Registration {
   readonly check: (tx: AuthTxBase) => Effect.Effect<void, RegistrationClosed | TransactionTooLarge>;
   /** Admit one sign-up: open, and a token from both buckets. Consumed with the sign-up's own commit. */
   readonly admit: (tx: AuthTxBase) => Effect.Effect<void, RegistrationClosed | RegistrationRateLimited | TransactionTooLarge>;
+  /** Admission for password hashing. Commits before hashing, including when the sign-up later fails. */
+  readonly admitPasswordAttempt: (tx: AuthTxBase) => Effect.Effect<void, RegistrationClosed | RegistrationRateLimited | TransactionTooLarge>;
 }
 
 export function createRegistration(options: RegistrationOptions): Registration {
@@ -117,16 +121,24 @@ export function createRegistration(options: RegistrationOptions): Registration {
     if (!(yield* isOpen(tx))) return yield* Effect.fail(new RegistrationClosed());
   });
 
-  const admit = Effect.fn("auth.registration.admit")(function* (tx: AuthTxBase) {
+  const charge = Effect.fn("auth.registration.charge")(function* (
+    tx: AuthTxBase,
+    clientBucket: "client" | "passwordClient",
+    runtimeBucket: "runtime" | "passwordRuntime",
+  ) {
     yield* check(tx);
     // A call with no client address (in-process, no listener) is limited by the runtime bucket alone.
     if (tx.request.ip !== null) {
-      const perClient = yield* limits.limit(tx, "client", { key: tx.request.ip });
+      const perClient = yield* limits.limit(tx, clientBucket, { key: tx.request.ip });
       if (!perClient.ok) return yield* Effect.fail(new RegistrationRateLimited({ retryAfterMs: perClient.retryAfter }));
     }
-    const perRuntime = yield* limits.limit(tx, "runtime", { key: RUNTIME_KEY });
+    const perRuntime = yield* limits.limit(tx, runtimeBucket, { key: RUNTIME_KEY });
     if (!perRuntime.ok) return yield* Effect.fail(new RegistrationRateLimited({ retryAfterMs: perRuntime.retryAfter }));
   });
 
-  return { settings, setSettings, isOpen, check, admit };
+  return {
+    settings, setSettings, isOpen, check,
+    admit: (tx) => charge(tx, "client", "runtime"),
+    admitPasswordAttempt: (tx) => charge(tx, "passwordClient", "passwordRuntime"),
+  };
 }

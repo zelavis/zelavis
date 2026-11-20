@@ -1,0 +1,69 @@
+<section class="amp-dark amp-faq" id="questions" data-local-content>
+	<div class="amp-wrap faq-wrap">
+		<div class="faq-head" data-reveal>
+			<p class="amp-eyebrow">Clear answers</p>
+			<h2>Frequently asked questions</h2>
+			<p>Everything you need to know about self-hosting, architecture, and technology choices.</p>
+		</div>
+
+		<div class="faq-list" data-reveal>
+			<details open class="faq-item">
+				<summary class="faq-summary">
+					<span>What does Zelavis replace?</span>
+					<span class="faq-toggle" aria-hidden="true"><i></i><i></i></span>
+				</summary>
+				<div class="faq-answer">
+					<p>Zelavis combines the platform capabilities engineering teams usually stitch together from separate tools: backend-as-a-service (auth, database, real-time), CMS (schemas, entries, media), hosting control panels (domains, deployments, logs), and functions/workloads platforms. You can run the entire platform unified or embed specific subpaths.</p>
+				</div>
+			</details>
+
+			<details class="faq-item">
+				<summary class="faq-summary">
+					<span>Can I run it completely on my own infrastructure?</span>
+					<span class="faq-toggle" aria-hidden="true"><i></i><i></i></span>
+				</summary>
+				<div class="faq-answer">
+					<p>Yes. Self-hosting is a foundational architectural requirement, not an afterthought or enterprise-only export. Zelavis is designed to host applications directly on your own VPS, bare-metal servers, or private cloud, with managed Zelavis Cloud offered as a seamless option.</p>
+				</div>
+			</details>
+
+			<details class="faq-item">
+				<summary class="faq-summary">
+					<span>Is Zelavis tied strictly to SQLite?</span>
+					<span class="faq-toggle" aria-hidden="true"><i></i><i></i></span>
+				</summary>
+				<div class="faq-answer">
+					<p>No. The database storage engine operates over an ordered key-value boundary. While SQLite is the zero-config default, RocksDB and LMDB drivers are built in and operate behind the identical logical database API and multi-model projections.</p>
+				</div>
+			</details>
+
+			<details class="faq-item">
+				<summary class="faq-summary">
+					<span>Does a single-node setup still use the sharded architecture?</span>
+					<span class="faq-toggle" aria-hidden="true"><i></i><i></i></span>
+				</summary>
+				<div class="faq-answer">
+					<p>Yes. Every official Zelavis App is physically and locally sharded from the moment of creation. On a single server, the virtual shard ranges simply colocate on one machine. When you scale horizontally, the platform moves shard placements rather than forcing an architectural rewrite.</p>
+				</div>
+			</details>
+
+			<details class="faq-item">
+				<summary class="faq-summary">
+					<span>Which parts are implemented and usable today?</span>
+					<span class="faq-toggle" aria-hidden="true"><i></i><i></i></span>
+				</summary>
+				<div class="faq-answer">
+					<p>The core runtime, Node process isolation, multi-model document/column/measure/graph projections, authentication foundations, background workloads, official @zelavis/ui dashboard, and native server hosting are implemented. Real-time multiplayer collaboration and team issue planning are committed roadmap milestones.</p>
+				</div>
+			</details>
+		</div>
+
+		<div class="faq-footer-cta" data-reveal>
+			<p>Have questions about your specific stack or deployment?</p>
+			<div class="faq-cta-links">
+				<a href="/docs/" class="faq-link">Browse Documentation →</a>
+				<a href="https://github.com/zelavis/zelavis/discussions" class="faq-link" target="_blank" rel="noopener">Join Community Discussions →</a>
+			</div>
+		</div>
+	</div>
+</section>

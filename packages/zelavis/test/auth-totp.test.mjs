@@ -8,6 +8,7 @@ import test from "node:test";
 import { Effect } from "effect";
 import { createServiceRuntime } from "../dist/core/index.js";
 import { accountsTables } from "../dist/auth/accounts/tables.js";
+import { createAuth } from "../dist/auth/create-auth.js";
 import { decryptSecret } from "../dist/edge/acme-crypto.js";
 import { BACKUP_CODE_COUNT, generateBackupCodes, hashBackupCode } from "../dist/auth/totp/backupCodes.js";
 import { createExpiredPendingSignInsSweep } from "../dist/auth/totp/cleanup.js";
@@ -657,10 +658,14 @@ test("(b) an email + password sign-in of an enrolled account is gated too", asyn
   assert.equal(done.userId, tokens.userId);
 });
 
-test("(b) an OpenID Connect sign-in of an enrolled account is gated too", async (t) => {
+test("(b) OpenID Connect enrollment and verification survive engine replacement", async (t) => {
   let a;
   const provider = await fakeOAuthProvider(t, { kind: "oidc", now: () => a.clock.now });
-  a = await compose(t, { oauth: { fetch: provider.fetch, allowedRedirectOrigins: [APP] } });
+  const oauthOptions = { fetch: provider.fetch, allowedRedirectOrigins: [APP] };
+  a = await compose(t, { oauth: oauthOptions });
+  const reopen = () => a.run(createAuth({
+    tenant: a.tenant, masterSecret: TEST_MASTER_SECRET, role: "platform", clock: () => a.clock.now, oauth: oauthOptions,
+  }));
   const oauth = a.auth.methods.oauth;
   const connection = { clientId: provider.state.clientId, clientSecret: provider.state.clientSecret, redirectUri: `${ORIGIN}/auth/oauth/acme/callback`, issuer: provider.origin };
   assert.equal((await a.run(oauth.connections.configure("acme", connection))).status, "saved");
@@ -672,23 +677,35 @@ test("(b) an OpenID Connect sign-in of an enrolled account is gated too", async 
   };
   const first = await signInWithOidc();
   assert.equal(first.status, "complete", "the sign-up of a new identity is not gated");
-  // An account without a password enrolls from a recent session.
-  const started = await json(await a.post("mfa/totp", {}, first.tokens.accessToken));
-  await json(await a.confirm(started.totpId, await a.codeFor(started.secret), { token: first.tokens.accessToken }));
+  await a.run(a.auth.mfa.policy.set(CALL, { requiredFor: "all", expectedRevision: 0 }));
+  const enrollment = await signInWithOidc();
+  assert.equal(enrollment.status, "mfa_enrollment_required");
+  const enrolling = await reopen();
+  const started = await a.run(enrolling.mfa.startEnrollment(CALL, { challenge: enrollment.challenge }));
+  assert.equal(started.success, true);
+  const confirmed = await a.run(enrolling.mfa.confirmEnrollment(CALL, {
+    challenge: enrollment.challenge, totpId: started.totpId, code: await a.codeFor(started.secret),
+  }));
+  assert.equal(confirmed.signIn?.tokens.userId, first.tokens.userId);
   a.advance(PERIOD_MS);
   const gated = await signInWithOidc();
   assert.equal(gated.status, "mfa_required");
-  const done = await json(await a.post("mfa/verify", { challenge: gated.challenge, code: await a.codeFor(started.secret) }));
-  assert.equal(done.userId, first.tokens.userId);
-  const [session] = (await a.run(a.auth.core.listSessions(CALL, { userId: done.userId })));
+  const verifying = await reopen();
+  const done = await a.run(verifying.mfa.verify(CALL, { challenge: gated.challenge, code: await a.codeFor(started.secret) }));
+  assert.equal(done.status, "complete");
+  assert.equal(done.tokens.userId, first.tokens.userId);
+  const [session] = (await a.run(a.auth.core.listSessions(CALL, { userId: done.tokens.userId })));
   assert.ok(session, "the session belongs to the OIDC account");
   a.advance(PERIOD_MS);
   const stale = await signInWithOidc();
   assert.equal((await a.run(oauth.connections.configure("acme", { ...connection, title: "Acme renamed" }))).status, "saved");
   const code = await a.codeFor(started.secret);
-  assert.equal((await json(await a.post("mfa/verify", { challenge: stale.challenge, code }), 400)).code, "invalid_challenge");
+  const replacement = await reopen();
+  assert.deepEqual(await a.run(replacement.mfa.verify(CALL, { challenge: stale.challenge, code })), {
+    success: false, userError: { error: "INVALID_CHALLENGE" },
+  });
   const current = await signInWithOidc();
-  assert.equal((await json(await a.post("mfa/verify", { challenge: current.challenge, code }))).userId, done.userId);
+  assert.equal((await json(await a.post("mfa/verify", { challenge: current.challenge, code }))).userId, done.tokens.userId);
 });
 
 test("an account without a password enrolls only from a session started within ten minutes", async (t) => {

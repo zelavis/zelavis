@@ -95,7 +95,7 @@ installation inventory and update watcher.
 Installations without this host/protocol need one full local installer run with
 a restart. Unsupported live handovers are refused; no compatibility restart
 fallback is retained. Multi-host handover remains planned. See
-[the update architecture](../website/src/content/docs/architecture/updates.md).
+[the update architecture](../website/pages/architecture/updates/index.md).
 
 ## Releasing
 

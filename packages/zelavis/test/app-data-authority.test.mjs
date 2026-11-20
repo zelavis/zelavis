@@ -64,3 +64,48 @@ test("the Gateway delegates exact data authority and the child enforces reads, w
   assert.equal((await call("none", "events/read")).status, 403);
   assert.equal(forwarded, undefined);
 });
+
+test("Database inspection sees App and plugin data and refuses current and legacy Auth storage", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const pluginTenant = "service:test-plugin";
+  const authTenants = ["service:zelavis-auth", "service:zelavis-auth-settings"];
+  for (const tenantId of ["acme", pluginTenant, ...authTenants]) {
+    const { documents } = api.forTenant(tenantId);
+    await documents.createCollection({ name: "posts" });
+    await documents.insert({ collection: "posts", id: "example", data: { tenantId } });
+  }
+  const runtime = await createServiceRuntime({
+    prefix: "/api",
+    services: [defineDatabaseService(api)],
+    resolvePrincipal: () => ({
+      id: "operator",
+      type: "user",
+      permissions: ["database.inspect", "database.read", "database.write", "database.backup"],
+      metadata: { tenantId: "acme" },
+    }),
+  });
+  const call = (path, body) => runtime.fetch(new Request(`http://child.test/api/database/${path}`, body === undefined ? undefined : {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+
+  assert.equal((await call("documents/collections?tenantId=acme")).status, 200);
+  assert.equal((await call(`documents/collections?tenantId=${pluginTenant}`)).status, 200);
+  for (const tenantId of authTenants) {
+    assert.equal((await call(`documents/collections?tenantId=${tenantId}`)).status, 403);
+    assert.equal((await call("documents/posts", { tenantId, data: {} })).status, 403);
+    assert.equal((await call(`tenants/${tenantId}/export`, {})).status, 403);
+    assert.equal((await call("documents/posts/scatter", { tenants: [tenantId] })).status, 403);
+    assert.equal((await api.forTenant(tenantId).documents.count("posts")), 1, "the internal database handle retains access");
+  }
+
+  for (const [path, body] of [["tenants"], ["tenants/overview"], ["menu/tables"], ["documents/posts/scatter", {}]]) {
+    const response = await call(path, body);
+    assert.equal(response.status, 200, path);
+    const content = await response.text();
+    assert.match(content, /acme/, path);
+    assert.ok(content.includes(pluginTenant), path);
+    for (const tenantId of authTenants) assert.ok(!content.includes(tenantId), path);
+  }
+});

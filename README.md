@@ -25,7 +25,7 @@ origins are the whole trust chain, and a release is `npm publish`. Linux uses sy
 with root/sudo; macOS and Linux without sudo use user mode (`--user`), followed by
 `zelavis serve`. The new installer ships with the next alpha. An APT repository and a
 published `.deb` are planned. See the
-[installation guide](website/src/content/docs/getting-started/installation.md)
+[installation guide](website/pages/getting-started/installation/index.md)
 and [distribution documentation](distribution/README.md).
 
 Native installers print a one-time bootstrap token. Open the dashboard to use

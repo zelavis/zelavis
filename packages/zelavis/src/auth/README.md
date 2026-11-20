@@ -65,13 +65,17 @@ service account's bearer tokens. Bulk import checks identifiers in batches and c
 
 Generic OpenID Connect accounts are keyed by the verified issuer and subject. Authorization requests and tickets
 carry the connection revision, as do pending second-factor sign-ins. Reconfiguring or removing a connection
-invalidates its pending flows. Disabling a method invalidates its pending MFA challenges even if that method
-is enabled again. Platform method settings keep the owner's password route enabled, using their username when
-present and their email otherwise.
+invalidates its pending flows. An engine restart preserves current pending MFA challenges. The sign-in methods
+catalogue uses saved provider settings and never waits for issuer discovery. Disabling a method invalidates its
+pending MFA challenges even if that method is enabled again. Platform method settings keep the owner's password
+route enabled, using their username when present and their email otherwise.
 
 Verified email and password sign-in works without an email outbox. Email operations that need to send a message
 report `email_unavailable`. Imported passwords retain their original format until replaced, even if they are
 rehashed at sign-in. New and replacement passwords use the current format rules.
+
+Public username and email password signups share an attempt budget, charged before hashing. The account creation
+transaction still checks current registration policy and consumes its own admission budget.
 
 Password recovery binds the link to the account that owned the verified address when the link was issued. The service
 checks the link and applies a per-client rate limit before hashing. The final transaction consumes the link, sets the

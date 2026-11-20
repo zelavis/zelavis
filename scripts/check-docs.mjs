@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 
 const repoRoot = process.cwd();
-const docsRoot = "website/src/content/docs";
+const docsRoot = "website/pages";
 const targets = [
   docsRoot,
   "packages/zelavis/README.md",

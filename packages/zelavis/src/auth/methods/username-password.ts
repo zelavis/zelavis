@@ -150,7 +150,7 @@ export function setupUsernamePassword(core: AuthCore, options: UsernamePasswordO
     if (userError !== null) {
       return { status: "error", userError } satisfies SignUpResult;
     }
-    yield* bound.query(call, (tx, helpers) => helpers.assertSignUpOpen(tx));
+    yield* bound.mutation(call, (tx, helpers) => helpers.admitPasswordAttempt(tx));
     // Hashed before the transaction: a retry after a conflict never hashes again.
     const passwordHashPHC = yield* hashPassword(password);
 

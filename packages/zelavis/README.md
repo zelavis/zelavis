@@ -1257,7 +1257,7 @@ native App cards. SDK `client.projects.versions(id?)` and
 Choices are qualified installed engines; each uses its matching bundled recipe.
 The default for new Apps is the latest available engine. An installation without
 the persistent host needs one full installer run with a restart before it can use
-live updates. See the [update architecture](../../website/src/content/docs/architecture/updates.md).
+live updates. See the [update architecture](../../website/pages/architecture/updates/index.md).
 
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside
@@ -1270,7 +1270,7 @@ from `zelavis/sdk` while a package is loaded. The manifest namespace owns its
 generated routes, and the existing SDK and CLI discover those operations.
 Use `{ routes: false }` for local authoring helpers and `operations.create`
 for explicit schemas, response codes, and route contracts. See the
-[plugin API guide](../../website/src/content/docs/guides/plugin-api.md).
+[plugin API guide](../../website/pages/guides/plugin-api/index.md).
 
 Running local Projects receive a separate HTTP preview port from Zelavis Edge.
 The dashboard's Site and managed Admin links use its browser hostname and that

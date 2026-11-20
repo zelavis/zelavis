@@ -52,7 +52,7 @@ import {
 } from "../lib/oauth/redemption.js";
 import { SignInError, type CreateUserFn, type OnSignInFn } from "../lib/types.js";
 import { oauthAccounts } from "../oauth/provider.js";
-import { type OAuthConnections, type VersionedOAuthConnection, createConnections } from "../oauth/connections.js";
+import { type OAuthConnections, type VersionedOAuthConnection, canSignIn, createConnections, isBuiltInProvider, validProviderName } from "../oauth/connections.js";
 import type { OAuthProviderDefinition } from "../oauth/plugins.js";
 import { type AuthRuntime, NO_REQUEST, authRequest } from "../runtime/index.js";
 import { recordSecurityEvent } from "../security/events.js";
@@ -178,7 +178,9 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
 
   // One bound method per module (an OpenID Connect connection is bound under `oauth:<name>`), created on first use.
   const bound = new Map<string, BoundMethod<OAuthProfile>>();
-  const boundFor = (name: string, provider: string) => {
+  const methodNameOf = (provider: string) => isBuiltInProvider(provider) ? provider : `oauth:${provider}`;
+  const boundFor = (provider: string) => {
+    const name = methodNameOf(provider);
     const existing = bound.get(name);
     if (existing !== undefined) return existing;
     const method = core.bindMethod<OAuthProfile>({
@@ -193,13 +195,15 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
     return method;
   };
 
-  /** What a connection needs to be used for a sign-in. */
-  const usable = (connection: VersionedOAuthConnection | undefined): connection is VersionedOAuthConnection =>
-    connection !== undefined && connection.enabled && connection.clientId !== "" && connection.clientSecret !== undefined;
+  // A persisted MFA proof can be the first use of this provider in a replacement engine.
+  const bindPendingMethod = (method: string): void => {
+    const provider = method.startsWith("oauth:") ? method.slice("oauth:".length) : method;
+    if (validProviderName(provider) && methodNameOf(provider) === method) boundFor(provider);
+  };
 
   const resolve = Effect.fn("auth.methods.oauth.resolve")(function* (name: string): Effect.fn.Return<ResolvedProvider | undefined, AuthFailure> {
     const read = yield* connections.read(name);
-    if (!usable(read) || read.clientSecret === undefined) return undefined;
+    if (!canSignIn(read)) return undefined;
     const clientId = read.clientId;
     const clientSecret = read.clientSecret;
     const extra = read.scopes ?? [];
@@ -258,19 +262,6 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
     }
   });
 
-  const methodNameOf = (provider: ResolvedProvider) => (provider.module === "oauth" ? `oauth:${provider.name}` : provider.module);
-
-  /** The enabled providers a sign-in page offers: name and title only. */
-  const providers = Effect.fn("auth.methods.oauth.providers")(function* () {
-    const listed = yield* connections.list();
-    const offered: Array<{ readonly name: string; readonly title: string }> = [];
-    for (const entry of listed) {
-      if (!entry.enabled || !entry.hasClientSecret) continue;
-      if ((yield* resolve(entry.provider)) !== undefined) offered.push({ name: entry.provider, title: entry.title ?? entry.provider });
-    }
-    return offered;
-  });
-
   const unknownProvider = { status: "error", userError: { error: "UNKNOWN_PROVIDER" } } as const;
 
   /**
@@ -307,7 +298,7 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
       providerName: provider.name,
       connectionRevision: provider.connection.revision,
       isCurrent: (tx) => connections.isCurrent(tx, provider.name, provider.connection.revision),
-      bound: boundFor(methodNameOf(provider), provider.name),
+      bound: boundFor(provider.name),
       authenticatedBy: provider.module,
       accounts: provider.accounts,
       profile: provider.profile,
@@ -322,7 +313,7 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
   const linkAccount = Effect.fn("auth.methods.oauth.linkAccount")(function* (call: AuthCall, args: { provider: string; code: string; state: string }): Effect.fn.Return<LinkResult, AuthFailure> {
     const provider = yield* resolve(args.provider);
     if (provider === undefined) return unknownProvider;
-    return yield* boundFor(methodNameOf(provider), provider.name).mutation(call, (tx) =>
+    return yield* boundFor(provider.name).mutation(call, (tx) =>
       Effect.gen(function* (): Effect.fn.Return<LinkResult, AuthFailure> {
         // A stolen ticket must not be spent on a session that is gone.
         const userId = yield* getAuthUserId(tx);
@@ -408,7 +399,7 @@ export function setupOAuth(core: AuthCore, options: OAuthOptions) {
     });
   });
 
-  return { providers, startSignIn, completeSignIn, linkAccount, callback, connections };
+  return { providers: connections.offered, startSignIn, completeSignIn, linkAccount, callback, connections, bindPendingMethod };
 }
 
 /** The OAuth methods as the runtime composes them. */

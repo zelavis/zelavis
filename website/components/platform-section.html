@@ -1,0 +1,266 @@
+<section class="amp-section amp-platform" id="platform" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered platform-heading" data-reveal>
+			<p class="amp-eyebrow">One platform, end to end</p>
+			<h2>Everything your app requires.<br />Under one unified boundary.</h2>
+			<p>No stitching third-party SaaS services together. Zelavis gives you auth, data, workloads, and hosting with zero compromise on ownership.</p>
+		</div>
+
+		<div class="amp-tabs-wrap" data-reveal>
+			<zelavis-segmented
+				id="platform-tabs"
+				class="segmented segmented--light"
+				style="--segment-count:5;--segmented-width:560px"
+				role="tablist"
+				aria-label="Platform capabilities"
+				data-value="apps"
+			>
+				<span class="segmented-indicator" aria-hidden="true"></span>
+				<button type="button" role="tab" aria-selected="true" tabindex="0" data-segment-value="apps"><span>Apps</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="data"><span>Data</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="workloads"><span>Workloads</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="hosting"><span>Hosting</span></button>
+				<button type="button" role="tab" aria-selected="false" tabindex="-1" data-segment-value="content"><span>Content</span></button>
+			</zelavis-segmented>
+		</div>
+
+		<div class="amp-platform-panel" data-reveal>
+			<div class="platform-visual">
+				<!-- Tab 1: Apps -->
+				<div class="visual-pane active" data-pane="apps">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">zelavis://northstar/runtime</span>
+							<span class="toolbar-badge">isolated</span>
+						</div>
+						<div class="visual-body apps-body">
+							<div class="apps-sidebar">
+								<span class="apps-title">Workloads</span>
+								<div class="apps-item active">
+									<b>northstar-api</b>
+									<small>zelavis/app@1.0.4</small>
+								</div>
+								<div class="apps-item">
+									<b>atlas-worker</b>
+									<small>queue-processor</small>
+								</div>
+								<div class="apps-item">
+									<b>storefront</b>
+									<small>fuzor-static</small>
+								</div>
+							</div>
+							<div class="apps-detail">
+								<div class="apps-detail-header">
+									<div>
+										<h5>northstar-api</h5>
+										<span class="status-chip"><i class="dot"></i> Running (pid: 14920)</span>
+									</div>
+									<code>node:22-alpine</code>
+								</div>
+								<div class="apps-specs">
+									<div class="spec-cell">
+										<span>Recipe Lock</span>
+										<b>zelavis/app@1.0.4</b>
+									</div>
+									<div class="spec-cell">
+										<span>Data Boundary</span>
+										<b>.zelavis/data/</b>
+									</div>
+									<div class="spec-cell">
+										<span>Gateway Route</span>
+										<b>/projects/northstar/*</b>
+									</div>
+								</div>
+								<div class="apps-code-preview">
+									<code>&gt; Gateway proxy active: localhost:4000 -&gt; isolated:5173</code>
+									<code>&gt; Tenant isolation verified. 4 shards connected.</code>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 2: Data -->
+				<div class="visual-pane" data-pane="data">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">tenant.documents.put()</span>
+							<span class="toolbar-badge purple">4 lenses</span>
+						</div>
+						<div class="visual-body data-body">
+							<div class="data-code-block">
+								<span class="code-comment">// 1 write payload</span>
+								<pre><code>db.forTenant("acme").documents.put({
+  id: "ord_102",
+  total: 420.00,
+  customer: "c_88",
+  status: "verified"
+})</code></pre>
+							</div>
+							<div class="data-lenses-strip">
+								<div class="lens-tag">
+									<b>◫ Document</b>
+									<span>JSON Object Store</span>
+								</div>
+								<div class="lens-tag">
+									<b>▥ Column</b>
+									<span>Fast Aggregations</span>
+								</div>
+								<div class="lens-tag">
+									<b>⌡ Measure</b>
+									<span>Metric Signals</span>
+								</div>
+								<div class="lens-tag">
+									<b>⌘ Graph</b>
+									<span>Customer Rel</span>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 3: Workloads -->
+				<div class="visual-pane" data-pane="workloads">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">zelavis.workloads.config</span>
+							<span class="toolbar-badge green">active</span>
+						</div>
+						<div class="visual-body workloads-body">
+							<div class="workload-row">
+								<div class="workload-icon cron" aria-hidden="true">
+									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+										<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5" /><path d="M9 2h6" />
+									</svg>
+								</div>
+								<div class="workload-info">
+									<b>Reconcile Inventory</b>
+									<code>cron("*/10 * * * *")</code>
+								</div>
+								<span class="badge-success">Scheduled</span>
+							</div>
+							<div class="workload-row">
+								<div class="workload-icon webhook" aria-hidden="true">
+									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+										<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+									</svg>
+								</div>
+								<div class="workload-info">
+									<b>Stripe Webhook Handler</b>
+									<code>POST /webhooks/stripe-checkout</code>
+								</div>
+								<span class="badge-success">Verified</span>
+							</div>
+							<div class="workload-row">
+								<div class="workload-icon worker" aria-hidden="true">
+									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+										<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.77 1.02 1.41 1.12.2.03.39.04.59.04H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+									</svg>
+								</div>
+								<div class="workload-info">
+									<b>Report PDF Generator</b>
+									<code>worker.queue("reports", { concurrency: 4 })</code>
+								</div>
+								<span class="badge-success">Idle</span>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 4: Hosting -->
+				<div class="visual-pane" data-pane="hosting">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">https://northstar.app</span>
+							<span class="toolbar-badge blue">SSL Active</span>
+						</div>
+						<div class="visual-body hosting-body">
+							<div class="hosting-card">
+								<div class="hosting-card-head">
+									<div>
+										<b>Production Domain</b>
+										<span>northstar.app · 142.93.18.42</span>
+									</div>
+									<span class="status-chip"><i class="dot"></i> Active</span>
+								</div>
+								<div class="hosting-metrics">
+									<div><span>SSL Cert</span><b>Auto-renew (89d)</b></div>
+									<div><span>Edge Cache</span><b>Enabled (Hit 98%)</b></div>
+									<div><span>Deploy Mode</span><b>Zero-downtime</b></div>
+								</div>
+								<div class="hosting-deploy-status">
+									<span>Active Release: <b>v1.0.4 (commit 8f92ab)</b></span>
+									<small>Deployed 12m ago via git push</small>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 5: Content -->
+				<div class="visual-pane" data-pane="content">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">schema: documentation_articles</span>
+							<span class="toolbar-badge orange">CMS</span>
+						</div>
+						<div class="visual-body content-body">
+							<div class="schema-tree">
+								<div class="schema-field">
+									<span class="field-name">title</span>
+									<span class="field-type">string · required</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">slug</span>
+									<span class="field-type">slug · unique</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">content</span>
+									<span class="field-type">richText · lexical</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">coverImage</span>
+									<span class="field-type">media · image/webp</span>
+								</div>
+							</div>
+							<div class="schema-summary">
+								<span>Output format: <b>Headless REST &amp; TypeScript SDK</b></span>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="platform-copy">
+				<p class="amp-eyebrow" data-panel-label>Apps</p>
+				<h3 data-panel-title>Projects that start production-ready</h3>
+				<p data-panel-body>Create isolated projects with their runtime, version, services, and data boundary already locked. Every project runs in its own process envelope without touching the parent platform.</p>
+
+				<ul class="platform-highlights" data-panel-highlights>
+					<li>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+						<span>Isolated child runtime (Node process or container)</span>
+					</li>
+					<li>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+						<span>Recipe version locking prevents silent breakages</span>
+					</li>
+					<li>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+						<span>Project Gateway handles auth and proxying</span>
+					</li>
+				</ul>
+
+				<a class="platform-cta-link" data-panel-link href="/architecture/project-model/">
+					<span data-panel-link-text>Explore the project model</span>
+					<span class="link-arrow">→</span>
+				</a>
+			</div>
+		</div>
+	</div>
+</section>

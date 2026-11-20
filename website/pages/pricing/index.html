@@ -1,0 +1,339 @@
+---
+layout: marketing
+title: Pricing — Zelavis Plus
+description: Self-host Zelavis for free, or run it managed with Zelavis Plus. Compare Community, Plus, and Enterprise.
+---
+<div class="page-pricing page-marketing-light hero-dark-nav">
+	<sticky-local-nav-pricing></sticky-local-nav-pricing>
+	<div class="pricing-intro">
+		<div class="p-grid-bg" aria-hidden="true"></div>
+		<svg class="p-facets" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+			<defs>
+				<linearGradient id="pricing-facet-a" x1="0%" y1="0%" x2="100%" y2="100%">
+					<stop offset="0%" stop-color="#1e293b" stop-opacity="0.45" />
+					<stop offset="100%" stop-color="#0f172a" stop-opacity="0" />
+				</linearGradient>
+				<linearGradient id="pricing-facet-b" x1="100%" y1="0%" x2="0%" y2="100%">
+					<stop offset="0%" stop-color="#f97316" stop-opacity="0.16" />
+					<stop offset="100%" stop-color="#f97316" stop-opacity="0" />
+				</linearGradient>
+			</defs>
+			<polygon points="0,0 740,0 410,900 0,900" fill="url(#pricing-facet-a)" />
+			<polygon points="940,0 1440,0 1440,680 600,680" fill="url(#pricing-facet-b)" />
+			<line x1="740" y1="0" x2="410" y2="900" stroke="rgba(148, 163, 184, 0.14)" stroke-width="1" />
+			<line x1="940" y1="0" x2="600" y2="680" stroke="rgba(251, 146, 60, 0.16)" stroke-width="1" />
+		</svg>
+		<section class="p-hero">
+			<div class="p-glow" aria-hidden="true"></div>
+			<div class="wrap p-hero-inner">
+				<div class="pricing-controls">
+					<h1 class="eyebrow" data-reveal>Pricing</h1>
+					<div class="billing-switch" data-reveal style="--delay: 70">
+						<zelavis-segmented
+							id="billing-cycle"
+							class="segmented segmented--glass"
+							style="--segment-count:2;--segmented-width:286px"
+							role="radiogroup"
+							aria-label="Billing cycle"
+							data-value="monthly"
+						>
+							<span class="segmented-indicator" aria-hidden="true"></span>
+							<button type="button" role="radio" aria-checked="true" tabindex="0" data-segment-value="monthly"><span>Monthly</span></button>
+							<button type="button" role="radio" aria-checked="false" tabindex="-1" data-segment-value="yearly"><span>Annual <small class="segmented-badge">−20%</small></span></button>
+						</zelavis-segmented>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="p-plans" id="plans">
+			<div class="wrap plans">
+				<article class="card plan" id="community" data-reveal style="--delay: 0">
+					<h2>Community</h2>
+					<p class="plan-tagline">Self-host the whole platform.</p>
+
+					<div class="plan-price">
+						<span class="price-cur">$</span>
+						<span class="price-amount" data-monthly="0" data-yearly="0">0</span>
+						<span class="price-unit">/ seat / month</span>
+					</div>
+
+					<a class="btn plan-cta btn-ghost" href="/install/">Install Zelavis</a>
+					<p class="plan-note">Free and open source, forever.</p>
+
+					<div class="plan-features-wrap">
+						<div class="plan-divider" aria-hidden="true"></div>
+						<p class="features-kicker">Key features</p>
+						<ul class="plan-features">
+							<li class="feature-item" data-feature-index="0">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Unlimited projects on your own hardware</span>
+							</li>
+							<li class="feature-item" data-feature-index="1">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Auth, database, content, and media</span>
+							</li>
+							<li class="feature-item" data-feature-index="2">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Project-scoped workloads</span>
+							</li>
+							<li class="feature-item" data-feature-index="3">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Native website hosting</span>
+							</li>
+							<li class="feature-item" data-feature-index="4">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Community support on GitHub</span>
+							</li>
+						</ul>
+					</div>
+				</article>
+
+				<article class="card plan is-featured" id="plus" data-reveal style="--delay: 100">
+					<span class="plan-flag">Most popular</span>
+					<h2>Zelavis Plus</h2>
+					<p class="plan-tagline">Managed on zelavis.com, run by us.</p>
+
+					<div class="plan-price">
+						<span class="price-cur">$</span>
+						<span class="price-amount" data-monthly="24" data-yearly="19">24</span>
+						<span class="price-unit">/ seat / month</span>
+					</div>
+
+					<a class="btn plan-cta btn-primary" href="https://zelavis.com/signup">Start free trial</a>
+					<p class="plan-note">14-day trial. No card required.</p>
+
+					<div class="plan-features-wrap">
+						<div class="plan-divider" aria-hidden="true"></div>
+						<p class="features-kicker">Key features</p>
+						<ul class="plan-features">
+							<li class="feature-item" data-feature-index="0">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Everything in Community</span>
+							</li>
+							<li class="feature-item" data-feature-index="1">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>All five product intelligence pillars</span>
+							</li>
+							<li class="feature-item" data-feature-index="2">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Managed control plane and updates</span>
+							</li>
+							<li class="feature-item" data-feature-index="3">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Daily backups with point-in-time restore</span>
+							</li>
+							<li class="feature-item" data-feature-index="4">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Replica placement and failover</span>
+							</li>
+							<li class="feature-item" data-feature-index="5">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Custom domains with managed TLS</span>
+							</li>
+							<li class="feature-item" data-feature-index="6">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Priority support, 1 business day</span>
+							</li>
+						</ul>
+					</div>
+				</article>
+
+				<article class="card plan" id="enterprise" data-reveal style="--delay: 200">
+					<h2>Enterprise</h2>
+					<p class="plan-tagline">Your compliance, your placement rules.</p>
+
+					<div class="plan-price">
+						<span class="price-custom">Custom</span>
+					</div>
+
+					<a class="btn plan-cta btn-ghost" href="mailto:sales@zelavis.com">Talk to us</a>
+					<p class="plan-note">Annual agreements.</p>
+
+					<div class="plan-features-wrap">
+						<div class="plan-divider" aria-hidden="true"></div>
+						<p class="features-kicker">Key features</p>
+						<ul class="plan-features">
+							<li class="feature-item" data-feature-index="0">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Everything in Plus</span>
+							</li>
+							<li class="feature-item" data-feature-index="1">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Single tenant or bring your own cloud</span>
+							</li>
+							<li class="feature-item" data-feature-index="2">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>SSO and audit logging</span>
+							</li>
+							<li class="feature-item" data-feature-index="3">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Custom shard and tenant placement</span>
+							</li>
+							<li class="feature-item" data-feature-index="4">
+								<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+								<span>Dedicated support channel and SLA</span>
+							</li>
+						</ul>
+					</div>
+				</article>
+			</div>
+		</section>
+		<div class="hero-brand-dock"><brand-marquee></brand-marquee></div>
+	</div>
+
+	<section class="pillars-section" id="plus-pillars" data-local-content>
+		<div class="wrap">
+			<div class="pillars-head" data-reveal>
+				<p class="pillars-eyebrow">Included with Zelavis Plus</p>
+				<h2>Five pillars. One complete growth system.</h2>
+				<p>Understand behavior, find the reason behind it, test what works, and turn customer signals into better products.</p>
+			</div>
+
+			<div class="pillars-grid">
+				<article class="pillar-card" data-reveal style="--delay: 0">
+					<span class="pillar-icon" aria-hidden="true">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M3 3v18h18" /><path d="M18 17V9" /><path d="M13 17V5" /><path d="M8 17v-3" />
+						</svg>
+					</span>
+					<h3>Product &amp; Marketing Analytics</h3>
+					<p>Track user funnels, see where people drop off during sign-up, and understand which features keep customers coming back.</p>
+				</article>
+				<article class="pillar-card" data-reveal style="--delay: 70">
+					<span class="pillar-icon" aria-hidden="true">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="3" y="8" width="18" height="12" rx="3" /><path d="M12 4v4" /><circle cx="12" cy="3" r="1" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" />
+						</svg>
+					</span>
+					<h3>AI Agents &amp; Analytics</h3>
+					<p>Ask advanced Global Agents product questions in plain English for instant root-cause analysis, and understand how customers use your own AI features.</p>
+					<p class="pillar-example">“Why are new users dropping before setup?”</p>
+				</article>
+				<article class="pillar-card" data-reveal style="--delay: 140">
+					<span class="pillar-icon" aria-hidden="true">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="2" y="4" width="20" height="14" rx="2" /><polygon points="10 8 15 11 10 14 10 8" /><path d="M8 21h8" />
+						</svg>
+					</span>
+					<h3>Session Replay &amp; Heatmaps</h3>
+					<p>Watch visual recordings of real user sessions and reveal exactly where people get stuck, hesitate, or become confused.</p>
+				</article>
+				<article class="pillar-card" data-reveal style="--delay: 210">
+					<span class="pillar-icon" aria-hidden="true">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M9 3h6" /><path d="M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3" /><path d="M7.5 15h9" />
+						</svg>
+					</span>
+					<h3>Feature &amp; Web Experimentation</h3>
+					<p>Run A/B tests across features and webpages to learn which version performs best before releasing it to everyone.</p>
+				</article>
+				<article class="pillar-card" data-reveal style="--delay: 280">
+					<span class="pillar-icon" aria-hidden="true">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 9h8" /><path d="M8 13h5" />
+						</svg>
+					</span>
+					<h3>AI Feedback</h3>
+					<p>Bring customer comments and reviews together from across the web, then use AI to categorize what users are asking for.</p>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<section class="section" id="compare" data-local-content>
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Compare every plan.</h2>
+				<p class="section-lede">
+					Compare the open self-hosted foundation with the managed operations and five
+					product-intelligence pillars included with Plus.
+				</p>
+			</div>
+
+			<div class="matrix-scroll" data-reveal>
+				<table class="matrix">
+					<thead>
+						<tr>
+							<th scope="col">Feature</th>
+							<th scope="col">Community</th>
+							<th scope="col" class="col-plus">Plus</th>
+							<th scope="col">Enterprise</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr class="matrix-group"><th scope="rowgroup" colspan="4">Platform</th></tr>
+						<tr><th scope="row">Projects</th><td>Unlimited</td><td class="col-plus">Unlimited</td><td>Unlimited</td></tr>
+						<tr><th scope="row">Auth, database, content, and media</th><td><span class="yes" aria-label="Included">✓</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Functions, jobs, schedules, and webhooks</th><td><span class="yes" aria-label="Included">✓</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Storage drivers</th><td>SQLite, RocksDB, LMDB</td><td class="col-plus">All drivers</td><td>All drivers</td></tr>
+						<tr><th scope="row">Native website hosting</th><td><span class="yes" aria-label="Included">✓</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Marketplace and plugins</th><td><span class="yes" aria-label="Included">✓</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+
+						<tr class="matrix-group"><th scope="rowgroup" colspan="4">Product intelligence</th></tr>
+						<tr><th scope="row">Product &amp; Marketing Analytics</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">AI Agents &amp; Analytics</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Session Replay &amp; Heatmaps</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Feature &amp; Web Experimentation</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">AI Feedback</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+
+						<tr class="matrix-group"><th scope="rowgroup" colspan="4">Operations</th></tr>
+						<tr><th scope="row">Managed control plane</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Automated backups</th><td>Self-managed</td><td class="col-plus">Daily + PITR</td><td>Custom schedule</td></tr>
+						<tr><th scope="row">Replication and failover</th><td>Self-managed</td><td class="col-plus"><span class="yes" aria-label="Included">✓</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Custom domains and TLS</th><td>Self-managed</td><td class="col-plus">Managed</td><td>Managed</td></tr>
+						<tr><th scope="row">Bring your own cloud</th><td><span class="yes" aria-label="Included">✓</span></td><td class="col-plus"><span class="no" aria-label="Not included">—</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Custom placement rules</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="no" aria-label="Not included">—</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+
+						<tr class="matrix-group"><th scope="rowgroup" colspan="4">Team</th></tr>
+						<tr><th scope="row">Seats</th><td>Unlimited</td><td class="col-plus">Per seat</td><td>Unlimited</td></tr>
+						<tr><th scope="row">SSO</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus"><span class="no" aria-label="Not included">—</span></td><td><span class="yes" aria-label="Included">✓</span></td></tr>
+						<tr><th scope="row">Audit logging</th><td><span class="no" aria-label="Not included">—</span></td><td class="col-plus">Basic</td><td>Full</td></tr>
+						<tr><th scope="row">Support</th><td>Community</td><td class="col-plus">1 business day</td><td>SLA</td></tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<section class="section band" id="questions" data-local-content>
+		<div class="wrap faq-wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Questions.</h2>
+			</div>
+			<div class="faqs">
+				<details class="faq" data-reveal style="--delay: 0">
+					<summary>Is Zelavis still free if I self-host? <span class="faq-icon" aria-hidden="true">+</span></summary>
+					<p>Yes. The platform is open source and the Community plan is the full self-hosted product — every storage driver, native website hosting, workloads, and the Marketplace. Zelavis Plus pays for us to run and operate it for you.</p>
+				</details>
+				<details class="faq" data-reveal style="--delay: 80">
+					<summary>Can I still get Zelavis Plus if I self-host? <span class="faq-icon" aria-hidden="true">+</span></summary>
+					<p>Yes. Zelavis Plus works whether Zelavis is self-hosted or hosted for you on Zelavis Cloud. If you prefer self-hosting, you can keep Zelavis where it is and add the five Plus pillars. If you prefer a fully managed experience, we can host and operate the complete platform for you.</p>
+				</details>
+				<details class="faq" data-reveal style="--delay: 160">
+					<summary>What happens to my data if I leave Plus? <span class="faq-icon" aria-hidden="true">+</span></summary>
+					<p>Projects are portable by design. Every project locks its exact recipe version and owns its own data directory, so a managed project can be exported and started on your own hardware without a rewrite.</p>
+				</details>
+				<details class="faq" data-reveal style="--delay: 240">
+					<summary>Do you charge per project? <span class="faq-icon" aria-hidden="true">+</span></summary>
+					<p>No. Plus is priced per seat, and projects are unlimited on every plan.</p>
+				</details>
+				<details class="faq" data-reveal style="--delay: 320">
+					<summary>When do planning and collaboration arrive? <span class="faq-icon" aria-hidden="true">+</span></summary>
+					<p>Project planning and real-time collaboration are committed roadmap direction rather than shipped features today. They are not part of what any plan bills for right now, and pricing for them will be announced before they ship.</p>
+				</details>
+			</div>
+		</div>
+	</section>
+
+	<section class="cta" data-local-content>
+		<div class="wrap cta-inner" data-reveal>
+			<h2>Try it before you pay for it.</h2>
+			<p>Self-host in a minute, or start a 14-day Plus trial.</p>
+			<div class="cta-row">
+				<a class="btn btn-primary" href="https://zelavis.com/signup">Start free trial</a>
+				<a class="btn btn-ghost" href="/getting-started/installation/">Install yourself</a>
+			</div>
+		</div>
+	</section>
+</div>

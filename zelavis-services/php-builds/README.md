@@ -28,4 +28,4 @@ Use an R2 API token limited to that one bucket. After an upload the page shows t
 `distribution/php-builds/pin.mjs`; pinning them into the recipes stays a repository change shipped through npm.
 
 Source of the build: `distribution/php-builds` (`build.sh`, `extensions.txt`, `spc.pins`), carried inside the start
-operation. See `website/src/content/docs/architecture/php-builds.md`.
+operation. See `website/pages/architecture/php-builds/index.md`.

@@ -38,6 +38,7 @@ const isTransactionTooLarge = (error: unknown): error is TransactionTooLarge =>
 export interface RegistrationGate {
   readonly check: (tx: AuthTx) => Effect.Effect<void, RegistrationClosed | TransactionTooLarge>;
   readonly admit: (tx: AuthTx) => Effect.Effect<void, RegistrationRefused | TransactionTooLarge>;
+  readonly admitPasswordAttempt: (tx: AuthTx) => Effect.Effect<void, RegistrationRefused | TransactionTooLarge>;
 }
 
 /**
@@ -338,6 +339,7 @@ export function createAuthCore(options: {
           return created;
         }),
       assertSignUpOpen: (tx) => Effect.andThen(requireMethod(tx, name), options.registration?.check(tx) ?? Effect.void),
+      admitPasswordAttempt: (tx) => Effect.andThen(requireMethod(tx, name), options.registration?.admitPasswordAttempt(tx) ?? Effect.void),
       revokeOtherSessions: (tx) => revokeOtherSessionsIn(tx, ttl),
       revokeAllSessions: (tx, userId) =>
         Effect.gen(function* () {

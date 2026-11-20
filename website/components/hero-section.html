@@ -1,0 +1,314 @@
+<section class="amp-hero">
+	<div class="hero-ambient-amber" aria-hidden="true"></div>
+	<div class="hero-ambient-slate" aria-hidden="true"></div>
+	<svg class="hero-facets" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+		<defs>
+			<linearGradient id="z-facet-a" x1="0%" y1="0%" x2="100%" y2="100%">
+				<stop offset="0%" stop-color="#1e293b" stop-opacity="0.52" />
+				<stop offset="100%" stop-color="#0f172a" stop-opacity="0.06" />
+			</linearGradient>
+			<linearGradient id="z-facet-b" x1="100%" y1="0%" x2="0%" y2="100%">
+				<stop offset="0%" stop-color="#f97316" stop-opacity="0.14" />
+				<stop offset="55%" stop-color="#1e293b" stop-opacity="0.22" />
+				<stop offset="100%" stop-color="#090d16" stop-opacity="0" />
+			</linearGradient>
+		</defs>
+		<path fill="url(#z-facet-a)" d="M0 590 L1440 240 L1440 900 L0 900 Z" />
+		<path fill="url(#z-facet-b)" d="M520 -40 L1440 180 L1440 430 L340 120 Z" />
+		<path fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1" d="M0 590 L1440 240" />
+		<path fill="none" stroke="rgba(251,146,60,0.16)" stroke-width="1" d="M340 120 L1440 430" />
+		<path fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" d="M980 0 L620 900" />
+	</svg>
+	<div class="amp-grid-overlay" aria-hidden="true"></div>
+
+	<div class="amp-hero-inner">
+		<div class="amp-hero-copy">
+			<a href="#agentic" class="hero-badge" data-reveal>
+				<span class="hero-badge-pill">v1.0 Preview</span>
+				<span class="hero-badge-text">The Agentic App Platform</span>
+				<svg class="hero-badge-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+					<path d="M5 12h14M12 5l7 7-7 7" />
+				</svg>
+			</a>
+
+			<h1 data-reveal style="--delay: 70">
+				Plan. Build. Manage.<br />
+				<span class="hero-gradient-text">Own every layer.</span>
+			</h1>
+
+			<p class="amp-hero-lede" data-reveal style="--delay: 140">
+				Manage projects, data, and content with built-in hosting &amp; deployments—the agentic platform to plan, collaborate, market, and scale.
+			</p>
+
+			<div class="hero-launch-dock" data-reveal style="--delay: 210">
+				<zelavis-segmented
+					id="hero-launch-tabs"
+					class="segmented segmented--glass hero-launch-tabs"
+					style="--segment-count:3;--segmented-width:100%"
+					role="tablist"
+					aria-label="Hero launch options"
+					data-value="start"
+				>
+					<span class="segmented-indicator" aria-hidden="true"></span>
+					<button type="button" id="hero-tab-start" role="tab" aria-selected="true" aria-controls="hero-panel-start" tabindex="0" data-segment-value="start"><span>Get Started</span></button>
+					<button type="button" id="hero-tab-self-host" role="tab" aria-selected="false" aria-controls="hero-panel-self-host" tabindex="-1" data-segment-value="self-host"><span>Self-Host</span></button>
+					<button type="button" id="hero-tab-local-apps" role="tab" aria-selected="false" aria-controls="hero-panel-local-apps" tabindex="-1" data-segment-value="local-apps"><span>Local Apps</span></button>
+				</zelavis-segmented>
+
+				<div class="hero-dock-panels">
+					<div class="hero-dock-panel is-active" id="hero-panel-start" role="tabpanel" aria-labelledby="hero-tab-start" data-hero-panel="start">
+						<div class="amp-actions">
+							<a class="hero-platform-pill" href="/getting-started/installation/">
+								<span>Start building</span>
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+									<path d="M5 12h14M12 5l7 7-7 7" />
+								</svg>
+							</a>
+							<a class="hero-platform-pill" href="/docs/">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+								</svg>
+								<span>Read the docs</span>
+							</a>
+						</div>
+					</div>
+
+					<div class="hero-dock-panel" id="hero-panel-self-host" role="tabpanel" aria-labelledby="hero-tab-self-host" data-hero-panel="self-host" hidden>
+						<div class="hero-selfhost-row">
+							<div class="hero-terminal">
+								<span class="hero-terminal-prompt" aria-hidden="true">$</span>
+								<code class="hero-terminal-code">npx zelavis create my-app</code>
+								<button class="hero-terminal-copy" type="button" data-copy-cmd="npx zelavis create my-app" aria-label="Copy install command to clipboard">
+									<svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+										<rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+										<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+									</svg>
+									<svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+										<polyline points="20 6 9 17 4 12" />
+									</svg>
+								</button>
+							</div>
+							<a class="hero-dock-meta-link" href="/install/">All installers &rarr;</a>
+						</div>
+					</div>
+
+					<div class="hero-dock-panel" id="hero-panel-local-apps" role="tabpanel" aria-labelledby="hero-tab-local-apps" data-hero-panel="local-apps" hidden>
+						<div class="hero-downloads" role="group" aria-label="Download Zelavis apps">
+							<a class="hero-platform-pill" href="/install/">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M3 5.5 10.5 4.4v6.9H3V5.5Zm8.6-1.3L21 2.8v8.5h-9.4V4.2ZM3 12.6h7.5v7L3 18.5v-5.9Zm8.6 0H21v8.6l-9.4-1.4v-7.2Z" />
+								</svg>
+								<span>Win</span>
+							</a>
+							<a class="hero-platform-pill" href="/install/">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M16.4 12.7c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.7-1.3-.1-2.5.8-3.1.8-.6 0-1.6-.7-2.7-.7-1.4 0-2.7.8-3.4 2-1.5 2.5-.4 6.2 1 8.2.7 1 1.5 2.1 2.6 2 1 0 1.4-.7 2.7-.7 1.2 0 1.6.7 2.7.7 1.1 0 1.8-1 2.5-2 .8-1.2 1.1-2.3 1.1-2.4-.1 0-2.2-.8-2.2-3Zm-2.1-6.2c.6-.7 1-1.7.9-2.7-.9 0-1.9.6-2.5 1.3-.5.6-1 1.6-.9 2.6 1 .1 2-.5 2.5-1.2Z" />
+								</svg>
+								<span>Mac</span>
+							</a>
+							<a class="hero-platform-pill" href="/architecture/mobile-slot-ready-dashboard/">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M5 16v-4a7 7 0 0 1 14 0v4" />
+									<path d="M8.5 5.5 7 3.5" />
+									<path d="M15.5 5.5 17 3.5" />
+									<path d="M4 16h16" />
+								</svg>
+								<span>Android</span>
+							</a>
+							<a class="hero-platform-pill" href="/architecture/mobile-slot-ready-dashboard/">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<rect width="12" height="20" x="6" y="2" rx="2" />
+									<path d="M10 5h4" />
+								</svg>
+								<span>iPhone</span>
+							</a>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="amp-product-stage" aria-label="Zelavis project overview dashboard" data-reveal style="--delay: 180">
+			<div class="stage-glow"></div>
+			<div class="stage-window">
+				<div class="stage-topbar">
+					<div class="window-controls" aria-hidden="true">
+						<span class="dot dot-red"></span>
+						<span class="dot dot-amber"></span>
+						<span class="dot dot-green"></span>
+					</div>
+					<div class="stage-address">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+							<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+							<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+						</svg>
+						<span>zelavis://northstar</span>
+						<span class="stage-env">prod</span>
+					</div>
+					<div class="stage-status">
+						<i aria-hidden="true"></i>
+						<span>healthy</span>
+					</div>
+				</div>
+
+				<div class="stage-body">
+					<aside class="stage-sidebar">
+						<div class="stage-brand-row">
+							<span class="stage-logo" aria-hidden="true">
+								<svg width="15" height="15" viewBox="0 0 128 128">
+									<path fill="currentColor" d="M37 25h62c5 0 7 6 4 9L49 91h45c5 0 7 6 4 9l-7 7c-2 2-4 3-7 3H22c-5 0-7-6-4-9l54-57H27c-5 0-7-6-4-9l7-7c2-2 4-3 7-3Z" />
+									<path fill="currentColor" fill-opacity=".42" d="M72 44h27c5 0 7-6 4-9l-7-7c-2-2-4-3-7-3H63L49 44h23ZM56 91H29c-5 0-7 6-4 9l7 7c2 2 4 3 7 3h26l14-19H56Z" />
+								</svg>
+							</span>
+							<div class="stage-proj-meta">
+								<b>northstar</b>
+								<small>v1.0.4 · isolated</small>
+							</div>
+						</div>
+						<nav class="stage-nav" aria-label="Dashboard preview navigation">
+							<span class="nav-item active">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" />
+								</svg>
+								Overview
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
+								</svg>
+								Database
+								<small class="pill-badge">4</small>
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+								</svg>
+								Auth
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
+								</svg>
+								Workloads
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<rect width="20" height="8" x="2" y="2" rx="2" ry="2" /><rect width="20" height="8" x="2" y="14" rx="2" ry="2" /><line x1="6" x2="6.01" y1="6" y2="6" /><line x1="6" x2="6.01" y1="18" y2="18" />
+								</svg>
+								Hosting
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+								</svg>
+								Assistant
+								<small class="pill-badge agentic-sparkle">AI</small>
+							</span>
+						</nav>
+					</aside>
+
+					<div class="stage-canvas">
+						<div class="stage-canvas-head">
+							<div>
+								<span class="canvas-kicker">Cluster Overview</span>
+								<h4>Data Fabric &amp; Runtime</h4>
+							</div>
+							<div class="canvas-tag">Node Process #2411</div>
+						</div>
+
+						<div class="stage-metrics-row">
+							<div class="metric-card">
+								<span>Virtual Shards</span>
+								<b>4 physical</b>
+								<small>64 virtual ranges</small>
+							</div>
+							<div class="metric-card">
+								<span>Event Ingestion</span>
+								<b>18,420/s</b>
+								<small class="positive">↑ 14% peak</small>
+							</div>
+							<div class="metric-card">
+								<span>P95 Latency</span>
+								<b>0.68ms</b>
+								<small>SQLite · in-memory WAL</small>
+							</div>
+						</div>
+
+						<div class="stage-chart-card">
+							<div class="chart-header">
+								<span>Event Stream Activity (Last 60s)</span>
+								<div class="chart-legend">
+									<span class="legend-dot legend-doc"></span><span>Writes</span>
+									<span class="legend-dot legend-proj"></span><span>Projections</span>
+								</div>
+							</div>
+							<div class="stage-chart" aria-hidden="true">
+								<i style="--h: 42%"></i>
+								<i style="--h: 68%"></i>
+								<i style="--h: 54%"></i>
+								<i style="--h: 88%"></i>
+								<i style="--h: 72%"></i>
+								<i style="--h: 96%"></i>
+								<i style="--h: 85%"></i>
+								<i style="--h: 100%"></i>
+								<i style="--h: 78%"></i>
+								<i style="--h: 91%"></i>
+								<i style="--h: 65%"></i>
+								<i style="--h: 89%"></i>
+							</div>
+						</div>
+
+						<div class="stage-shard-pills">
+							<div class="shard-pill active">
+								<span class="shard-dot"></span>
+								<span>shard-01</span>
+								<code>0000–3fff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-02</span>
+								<code>4000–7fff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-03</span>
+								<code>8000–bfff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-04</span>
+								<code>c000–ffff</code>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="stage-float stage-float-top">
+				<div class="float-icon float-icon-green" aria-hidden="true">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<polyline points="20 6 9 17 4 12" />
+					</svg>
+				</div>
+				<div class="float-content">
+					<span>Deployment Complete</span>
+					<b>Release v1.0.4 · Zero-downtime</b>
+				</div>
+			</div>
+
+			<div class="stage-float stage-float-bottom">
+				<div class="float-icon float-icon-amber" aria-hidden="true">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
+					</svg>
+				</div>
+				<div class="float-content">
+					<span>Multi-Model Store</span>
+					<b>Document · Column · Graph</b>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="hero-brand-dock"><brand-marquee></brand-marquee></div>
+</section>

@@ -1,0 +1,147 @@
+<section class="amp-section amp-together" id="architecture" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered" data-reveal>
+			<p class="amp-eyebrow">Better together</p>
+			<h2>One platform. Clean boundaries.</h2>
+			<p>The control plane and project runtimes work as one cohesive product without sharing one failure domain.</p>
+		</div>
+
+		<div class="together-grid">
+			<div class="together-copy">
+				<button class="together-item active" type="button" aria-pressed="true" data-capability-id="database" data-capability-accent="blue">
+					<span class="item-num">01</span>
+					<div class="item-text">
+						<b>Database</b>
+						<p>Sharded from the first project</p>
+					</div>
+					<i class="item-arrow" aria-hidden="true">→</i>
+				</button>
+				<button class="together-item" type="button" aria-pressed="false" data-capability-id="fabric" data-capability-accent="violet">
+					<span class="item-num">02</span>
+					<div class="item-text">
+						<b>Platform Fabric</b>
+						<p>Placement is authority, not a URL</p>
+					</div>
+					<i class="item-arrow" aria-hidden="true">→</i>
+				</button>
+				<button class="together-item" type="button" aria-pressed="false" data-capability-id="surfaces" data-capability-accent="coral">
+					<span class="item-num">03</span>
+					<div class="item-text">
+						<b>Open surfaces</b>
+						<p>Use the dashboard—or do not</p>
+					</div>
+					<i class="item-arrow" aria-hidden="true">→</i>
+				</button>
+			</div>
+
+			<div class="together-visual" data-accent="blue" data-reveal>
+				<div class="topo-view active" data-view="database">
+					<div class="topology-head">
+						<span>App Data Topology</span>
+						<b>4 shards · 64 ranges · version 18</b>
+					</div>
+					<div class="topology-map">
+						<div class="topology-node root">
+							<span>Logical App Database</span>
+							<b>northstar</b>
+						</div>
+						<div class="topology-router">
+							<span>hash(tenant_id) router</span>
+						</div>
+						<div class="topology-links"></div>
+						<div class="topology-shards">
+							<div class="shard-box">
+								<span class="shard-num">Shard 01</span>
+								<b>0000–3fff</b>
+								<small>tenants a–f</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 02</span>
+								<b>4000–7fff</b>
+								<small>tenants g–m</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 03</span>
+								<b>8000–bfff</b>
+								<small>tenants n–s</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 04</span>
+								<b>c000–ffff</b>
+								<small>tenants t–z</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="topo-view" data-view="fabric">
+					<div class="topology-head">
+						<span>Fabric Architecture</span>
+						<b>Control Plane vs. Data Plane</b>
+					</div>
+					<div class="fabric-stack">
+						<div class="fabric-card control-plane">
+							<span class="layer-tag">Platform Fabric · Privileged Control Plane</span>
+							<b>Fleet Placement · Generation Fences · Lease Authority</b>
+						</div>
+						<div class="gateway-barrier">
+							<span>Project Gateway Boundary</span>
+						</div>
+						<div class="fabric-workers">
+							<div class="worker-card">
+								<span>Worker 01</span>
+								<b>northstar-api</b>
+								<small>Node Process</small>
+							</div>
+							<div class="worker-card">
+								<span>Worker 02</span>
+								<b>atlas-jobs</b>
+								<small>Isolated Container</small>
+							</div>
+							<div class="worker-card">
+								<span>Worker 03</span>
+								<b>storefront</b>
+								<small>Static Edge</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="topo-view" data-view="surfaces">
+					<div class="topology-head">
+						<span>Universal Access Surface</span>
+						<b>Every client maps to stable endpoints</b>
+					</div>
+					<div class="surfaces-stack">
+						<div class="clients-row">
+							<div class="client-pill">
+								<span>UI</span>
+								<b>@zelavis/ui</b>
+							</div>
+							<div class="client-pill">
+								<span>CLI</span>
+								<b>npx zelavis</b>
+							</div>
+							<div class="client-pill">
+								<span>AI</span>
+								<b>Agent API</b>
+							</div>
+							<div class="client-pill">
+								<span>SDK</span>
+								<b>zelavis/core</b>
+							</div>
+						</div>
+						<div class="surfaces-line"></div>
+						<div class="endpoint-card">
+							<span class="layer-tag">Typed Gateway Contracts &amp; RPC</span>
+							<b>Unified System &amp; Project Service API</b>
+							<code>GET/POST /api/v1/projects/:id/*</code>
+						</div>
+					</div>
+				</div>
+
+				<p class="together-desc" data-capability-description>Every official Zelavis App routes stable virtual ranges across physical shards—even when they all live on one node. Scaling out simply redistributes shard placements rather than changing your application model.</p>
+			</div>
+		</div>
+	</div>
+</section>

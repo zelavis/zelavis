@@ -10,12 +10,12 @@ import {
 } from "../core/index.js";
 import { RESTORE_MODES } from "./backup.js";
 import { followerFailureBody } from "./leader.js";
-import { APP_TENANT_ID, SERVICE_TENANT_PREFIX } from "./naming.js";
+import { APP_TENANT_ID, AUTH_TENANT_ID, LEGACY_AUTH_SETTINGS_TENANT_ID, SERVICE_TENANT_PREFIX } from "./naming.js";
 import type { AggregateDefinition } from "./aggregates.js";
 import type { ImportSource } from "./imports.js";
 import type { MergeResolution } from "./branch-merge.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
-import { partitionKeyFor } from "./topology.js";
+import { partitionKeyFor, tenantOfPartition } from "./topology.js";
 import type {
   CollectionSurface,
   DocumentCursor,
@@ -109,6 +109,18 @@ function mayChooseTenant(principal: ZelavisPrincipal | undefined): boolean {
   return Boolean(principal.grants?.some((grant) => holds(grant.permission)));
 }
 
+function databaseTenantIsVisible(tenantId: string): boolean {
+  const tenant = tenantOfPartition(tenantId);
+  return tenant !== AUTH_TENANT_ID && tenant !== LEGACY_AUTH_SETTINGS_TENANT_ID;
+}
+
+function requireVisibleDatabaseTenant(tenantId: string): string {
+  if (!databaseTenantIsVisible(tenantId)) {
+    throw new TenantNotPermitted("Auth storage is only available through the Auth API.");
+  }
+  return tenantId;
+}
+
 /**
  * Whether the caller may accept data loss in a failover promotion: an owner-level right of its own, not implied by
  * `database.replicate` (which lets a follower read and acknowledge). A wildcard holds it, as for every permission.
@@ -161,7 +173,7 @@ function readTenantId(value: unknown, principal?: ZelavisPrincipal): string {
   }
   const tenantId = requested ?? own;
   if (!tenantId) throw new TypeError("A Tenant ID is required.");
-  return tenantId;
+  return requireVisibleDatabaseTenant(tenantId);
 }
 
 const VALID_COLLECTION_SURFACES = new Set<CollectionSurface>([
@@ -784,7 +796,7 @@ function defineDatabaseRootService(
           id: "database.tenants.list",
           spec: {
             operationId: "listDatabaseTenants",
-            summary: "List every Tenant holding data",
+            summary: "List Database Tenants holding data",
             description:
               "What an operator surface offers as a choice. Tenants are discovered from the shards that hold them, not from who has a credential.",
             tags: ["database"],
@@ -795,7 +807,7 @@ function defineDatabaseRootService(
           path: "/tenants",
           handler: ({ service }) => present(Effect.gen(function* () {
     return {
-            body: { tenants: (yield* integrationValue(service.tenants())) },
+            body: { tenants: (yield* integrationValue(service.tenants())).filter(databaseTenantIsVisible) },
           };
   })),
         },
@@ -803,7 +815,7 @@ function defineDatabaseRootService(
           id: "database.tenants.overview",
           spec: {
             operationId: "overviewDatabaseTenants",
-            summary: "List every Tenant with what it holds",
+            summary: "List Database Tenants with what they hold",
             description:
               "Each Tenant's shard, number of tables, documents, stored records and the bytes of their bodies. A divided Tenant is one entry with no shard of its own: its `parts` list each part's shard, tables, documents, records and bytes, and the Tenant's counts are their sums (a part holding nothing is not listed). Documents are counted from each collection's identifiers in the index (linear in the collection, no document is read). Stored records are what the partition keeps, so a table's own definition counts beside its documents; they and the bytes are kept by the database as it writes. A Tenant whose tables were all dropped is still listed: it keeps its history.",
             tags: ["database"],
@@ -824,7 +836,7 @@ function defineDatabaseRootService(
               return { shard: held?.shard ?? service.shardOf(partition), tables: collections.length, documents: documentCount, records: held?.records ?? 0, bytes: held?.bytes ?? 0 };
             });
             const tenants = [];
-            for (const tenantId of names) {
+            for (const tenantId of names.filter(databaseTenantIsVisible)) {
               const parts = service.partsOf(tenantId);
               // A branch says where it came from, so it can be merged back.
               const origin = yield* integrationValue(service.branchedFrom(tenantId));
@@ -1013,7 +1025,8 @@ function defineDatabaseRootService(
           access: { permissions: ["database.restore"] },
           path: "/tenants/:tenantId/recovery",
           handler: ({ service, params }) => present(Effect.gen(function* () {
-            return { body: yield* integration(() => service.recoveryWindow(params.tenantId)) };
+            const tenantId = requireVisibleDatabaseTenant(params.tenantId);
+            return { body: yield* integration(() => service.recoveryWindow(tenantId)) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
@@ -1960,13 +1973,11 @@ function defineDatabaseRootService(
           access: { permissions: ["database.inspect"] },
           path: "/menu/tables",
           handler: ({ service, query, principal }) => present(Effect.gen(function* () {
-            // Named, this is one Tenant's tables. Unnamed, it is every Tenant
-            // holding data: a menu that silently showed one Tenant's tables is
-            // how an App's own records became invisible in the dashboard.
+            // Include every visible Tenant when no Tenant was requested.
             const requested = query.get("tenantId");
             const tenantIds = requested
               ? [yield* evaluate(() => readTenantId(requested, principal))]
-              : yield* integration(() => service.partitions());
+              : (yield* integration(() => service.partitions())).filter(databaseTenantIsVisible);
             const several = tenantIds.length > 1;
 
             const items = [];
@@ -1985,7 +1996,8 @@ function defineDatabaseRootService(
                 });
               }
             }
-            const viewTenant = tenantIds[0] ?? readString(principal?.metadata?.tenantId);
+            const own = readString(principal?.metadata?.tenantId);
+            const viewTenant = tenantIds[0] ?? (own !== undefined && databaseTenantIsVisible(own) ? own : undefined);
             if (!viewTenant) return { body: { items } };
             for (const view of service.forTenant(viewTenant).systemViews.list()) {
               items.push({
@@ -3092,9 +3104,11 @@ export function defineDatabaseDocumentsService(
                 throw new TypeError(`${name} must be an integer from 1 to 1000.`);
               }
             }
+            const visible = tenants?.map(requireVisibleDatabaseTenant)
+              ?? (yield* integration(() => service.partitions())).filter(databaseTenantIsVisible);
             return { body: yield* integration(() => service.scatter({
               collection: params.collection,
-              ...(tenants === undefined ? {} : { tenants }),
+              tenants: visible,
               where: readFilters(input.where), orderBy: readSort(input.orderBy),
               ...(Array.isArray(input.related) ? { related: input.related as ReadonlyArray<RelatedFilter> } : {}),
               ...(typeof input.search === "string" ? { search: input.search } : {}),

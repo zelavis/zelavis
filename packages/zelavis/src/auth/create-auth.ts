@@ -259,7 +259,12 @@ export const createAuth = Effect.fn("auth.create")(function* (options: CreateAut
     authenticate: (request) => Effect.suspend(() => importing ? Effect.succeed(undefined) : baseAuthenticator.authenticate(request)),
   };
 
-  const mfa = setupMfa(core, { runtime: coreRuntime, key: secondFactorKey, issuer: options.mfa?.issuer ?? options.passkeys?.name ?? "Zelavis" });
+  const mfa = setupMfa(core, {
+    runtime: coreRuntime,
+    key: secondFactorKey,
+    issuer: options.mfa?.issuer ?? options.passkeys?.name ?? "Zelavis",
+    bindPendingOAuthMethod: oauth.bindPendingMethod,
+  });
   const methods = { usernamePassword, usernamePasskey, emailPassword, oauth };
   // Who may read and change the OAuth connections: the settings permission of this runtime.
   const settingsAccess: ZelavisAccessRequirement = options.role === "platform"

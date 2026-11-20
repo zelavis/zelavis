@@ -1,0 +1,104 @@
+<section class="amp-section amp-soft" id="data" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered" data-reveal>
+			<p class="amp-eyebrow">Data without the seams</p>
+			<h2>One write. Many ways to understand it.</h2>
+			<p>The event log is the single source of truth. Document, column, measure, and graph lenses stay close enough to intersect without moving data between disparate database engines.</p>
+		</div>
+
+		<div class="lens-stage" data-reveal>
+			<div class="lens-flow">
+				<div class="lens-source-card">
+					<div class="lens-card-header">
+						<span class="step-tag">01 · Origin Write</span>
+						<span class="step-api">documents API</span>
+					</div>
+					<b>tenant.documents.put()</b>
+					<code>{ id: "ord_102", customer: "c_88", total: 420.00, items: 2 }</code>
+				</div>
+
+				<div class="lens-flow-arrow" aria-hidden="true">
+					<div class="flow-line"></div>
+					<div class="flow-pulse"></div>
+				</div>
+
+				<div class="lens-event-card">
+					<div class="lens-card-header">
+						<span class="step-tag">02 · Replication Stream</span>
+						<span class="step-badge">Append-Only</span>
+					</div>
+					<b>Event Log Stream</b>
+					<small>Deterministic replication stream with cryptographic cursor and generation fencing.</small>
+				</div>
+			</div>
+
+			<div class="lens-projections-head">
+				<span class="step-tag">03 · One Identifier Space, Four Lens Projections</span>
+				<p>Click any lens below to view how the same write is projected without data duplication:</p>
+			</div>
+
+			<div class="lens-grid" role="tablist" aria-label="Database projections">
+				<button class="lens-card active" type="button" role="tab" aria-selected="true" data-lens-id="document">
+					<span class="lens-icon">◫</span>
+					<b>Document Lens</b>
+					<span>Objects, nested fields &amp; JSON schema</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="column">
+					<span class="lens-icon">▥</span>
+					<b>Column Lens</b>
+					<span>Vectorized columnar scans &amp; fast aggregations</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="measure">
+					<span class="lens-icon">⌡</span>
+					<b>Measure Lens</b>
+					<span>Time-series metrics &amp; signal rollups</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="graph">
+					<span class="lens-icon">⌘</span>
+					<b>Graph Lens</b>
+					<span>Relational traversal across entity pointers</span>
+				</button>
+			</div>
+
+			<div class="lens-output-box">
+				<div class="lens-output-bar">
+					<span class="output-dot"></span>
+					<span class="output-label" data-output-title>Document Projection (JSON Store)</span>
+					<span class="output-perf">0.12ms query</span>
+				</div>
+				<pre class="lens-code"><code data-output-code>// Projected Document Lens
+{
+  "id": "ord_102",
+  "tenant_id": "acme",
+  "customer": "c_88",
+  "total": 420.00,
+  "items": [{ "sku": "ZEL-10", "qty": 2, "unitPrice": 210.00 }],
+  "_version": 1,
+  "_cursor": "0000000000000001"
+}</code></pre>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- Brand Statement & Architecture Proof Quote -->
+<section class="amp-section amp-statement" data-local-content>
+	<div class="amp-wrap narrow" data-reveal>
+		<p class="amp-eyebrow">Fewer seams. Clearer ownership.</p>
+		<h2>Your app should not feel like five vendors sitting next to each other.</h2>
+		<p>Zelavis gives every project one boundary for its runtime, data, services, version, and lifecycle—without giving up the option to replace the physical engines underneath.</p>
+	</div>
+</section>
+
+<section class="amp-proof" data-local-content>
+	<div class="amp-wrap proof-inner" data-reveal>
+		<div class="proof-mark" aria-hidden="true">
+			<svg width="24" height="24" viewBox="0 0 128 128">
+				<path fill="currentColor" d="M37 25h62c5 0 7 6 4 9L49 91h45c5 0 7 6 4 9l-7 7c-2 2-4 3-7 3H22c-5 0-7-6-4-9l54-57H27c-5 0-7-6-4-9l7-7c2-2 4-3 7-3Z" />
+				<path fill="currentColor" fill-opacity=".42" d="M72 44h27c5 0 7-6 4-9l-7-7c-2-2-4-3-7-3H63L49 44h23ZM56 91H29c-5 0-7 6-4 9l7 7c2 2 4 3 7 3h26l14-19H56Z" />
+			</svg>
+		</div>
+		<blockquote>“The platform shell is a client of Zelavis—not the place where Zelavis happens.”</blockquote>
+		<p>Every dashboard action maps to a stable endpoint and capability, so the exact same system remains open to coding agents, CLIs, automation scripts, and your own custom frontend.</p>
+	</div>
+</section>

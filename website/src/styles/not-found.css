@@ -1,0 +1,91 @@
+/* ---------- Not Found Page (.page-not-found) ---------- */
+
+.page-not-found {
+	position: relative;
+	min-height: calc(100vh - 220px);
+	display: grid;
+	place-items: center;
+	padding: clamp(130px, 18vh, 180px) 24px 96px;
+	overflow: clip;
+	color: #f8fafc;
+	background:
+		radial-gradient(ellipse 68% 50% at 74% 16%, rgba(249, 115, 22, 0.22), transparent 58%),
+		radial-gradient(ellipse 58% 50% at 22% 84%, rgba(56, 189, 248, 0.1), transparent 55%),
+		linear-gradient(155deg, #070b14 0%, #0d1424 52%, #111827 100%);
+	text-align: center;
+}
+
+.page-not-found .nf-grid-bg {
+	position: absolute;
+	inset: 0;
+	background-image:
+		linear-gradient(to right, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+		linear-gradient(to bottom, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+	background-size: 56px 56px;
+	mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 30%, transparent 100%);
+	-webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 30%, transparent 100%);
+	pointer-events: none;
+}
+
+.page-not-found .nf-inner {
+	position: relative;
+	z-index: 2;
+	max-width: 620px;
+}
+
+.page-not-found .nf-code {
+	display: inline-block;
+	margin: 0 0 14px;
+	padding: 4px 12px;
+	border-radius: 7px;
+	background: rgba(249, 115, 22, 0.16);
+	border: 1px solid rgba(251, 146, 60, 0.35);
+	font-family: var(--mono);
+	font-size: 12.5px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	color: #fdba74;
+}
+
+.page-not-found h1 {
+	margin: 0 0 16px;
+	font-size: clamp(2.4rem, 5.5vw, 3.8rem);
+	line-height: 1.08;
+	letter-spacing: -0.035em;
+	color: #ffffff;
+}
+
+.page-not-found p {
+	margin: 0 0 32px;
+	color: #cbd5e1;
+	font-size: 1.06rem;
+	line-height: 1.65;
+}
+
+.page-not-found .nf-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 12px;
+}
+
+.page-not-found .btn-primary {
+	background: #ffffff;
+	color: #0f172a;
+	box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+.page-not-found .btn-primary:hover {
+	background: #f1f5f9;
+}
+
+.page-not-found .btn-ghost {
+	border-color: rgba(255, 255, 255, 0.3);
+	background: rgba(15, 23, 42, 0.55);
+	color: #f8fafc;
+}
+
+.page-not-found .btn-ghost:hover {
+	border-color: rgba(251, 146, 60, 0.55);
+	background: rgba(30, 41, 59, 0.78);
+}

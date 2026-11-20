@@ -164,12 +164,8 @@ export const redeemPendingSignIn = Effect.fn("auth.totp.redeemPendingSignIn")(fu
  */
 export const verifyPendingSignIn = Effect.fn("auth.totp.verifyPendingSignIn")(function* (
   tx: AuthTxBase,
-  { challenge, code, key }: { challenge: string; code: string; key: string },
+  { row, code, key }: { row: PendingSignIn; code: string; key: string },
 ) {
-  const row = yield* findPendingSignIn(tx, { challenge, kind: "verify" });
-  if (row === null) {
-    return { success: false, userError: { error: "INVALID_CHALLENGE" } } as const;
-  }
   const verified = yield* verifyCode(tx, { userId: row.userId, code, key });
   if (!verified.success) {
     if (verified.userError.error === "INCORRECT_CODE") yield* countWrongCode(tx, row);

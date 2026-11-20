@@ -23,5 +23,5 @@ stopped Projects ready for the customer to start. Disabling Hosting revokes its
 service principal. Existing Projects, role assignments and provider billing
 remain in place. Domain resale, refunds and tax calculation are outside Hosting.
 
-See the [Hosting Provider guide](../../website/src/content/docs/guides/hosting-provider.md)
+See the [Hosting Provider guide](../../website/pages/guides/hosting-provider/index.md)
 for setup and the HTTP, SDK and CLI operations.

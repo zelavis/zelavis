@@ -12,19 +12,22 @@
     }
   },
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "astro": "astro"
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/preview.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "routes": "node scripts/routes.mjs"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.42.5",
-    "@fontsource/poppins": "^5.3.0",
-    "astro": "^7.3.8",
-    "sharp": "^0.35.5"
+    "@fontsource/poppins": "^5.3.0"
   },
-  "overrides": {
-    "vite": "^7"
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "effect": "4.0.0",
+    "fuzor": "0.5.3",
+    "shiki": "4.4.3",
+    "typescript": "^6.0.3",
+    "vite": "^6.2.6"
   }
 }
