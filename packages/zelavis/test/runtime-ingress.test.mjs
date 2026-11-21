@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { channel } from "node:diagnostics_channel";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { once } from "node:events";
 import { Effect } from "effect";
 import { createNodeRuntimeIngress } from "../dist/adapters/_node-runtime-ingress.js";
+import { fetchNodeSite } from "../dist/adapters/_node-site-fetch.js";
 import { NODE_RUNTIME_READY_PATH } from "../dist/adapters/_node-runtime-protocol.js";
 
 async function until(predicate) {
@@ -14,9 +16,9 @@ async function until(predicate) {
   }
   throw new Error("Ingress condition did not become true.");
 }
-async function fixture() {
+async function fixture(handle = (_, response) => response.end("engine")) {
   const sockets = new Set();
-  const engine = createServer((_, response) => response.end("engine"));
+  const engine = createServer(handle);
   engine.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
   engine.on("upgrade", (_, socket, head) => {
     socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");
@@ -32,6 +34,60 @@ async function fixture() {
     close: async () => { await Effect.runPromise(ingress.close); for (const socket of sockets) socket.destroy(); await new Promise(resolve => engine.close(resolve)); },
   };
 }
+
+test("a queued request survives the engine closing its previous idle connection", { timeout: 5000 }, async () => {
+  let idleSocket;
+  const f = await fixture((request, response) => {
+    if (request.url === "/warm") idleSocket = request.socket;
+    response.end("engine");
+  });
+  const clientRequest = channel("http.client.request.created");
+  const closeIdle = ({ request }) => {
+    if (request.path === "/after-admission" && !idleSocket.destroyed) idleSocket.resetAndDestroy();
+  };
+  try {
+    assert.equal(await (await fetch(`${f.url}/warm`)).text(), "engine");
+    await Effect.runPromise(f.ingress.admission.pause);
+    const queued = fetch(`${f.url}/after-admission`, { signal: AbortSignal.timeout(2000) });
+    await until(() => f.ingress.admission.snapshot().waiting === 1);
+    clientRequest.subscribe(closeIdle);
+    await Effect.runPromise(f.ingress.admission.resume);
+    const response = await queued;
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "engine");
+  } finally {
+    clientRequest.unsubscribe(closeIdle);
+    await f.close();
+  }
+});
+
+test("private site fetches survive the target closing its previous idle connection", { timeout: 5000 }, async () => {
+  let idleSocket;
+  const sockets = new Set();
+  const site = createServer((request, response) => {
+    if (request.url === "/warm") idleSocket = request.socket;
+    response.end("site");
+  });
+  site.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+  site.listen(0, "127.0.0.1"); await once(site, "listening");
+  const origin = `http://127.0.0.1:${site.address().port}`;
+  const clientRequest = channel("http.client.request.created");
+  const closeIdle = ({ request }) => {
+    if (request.path === "/next" && idleSocket && !idleSocket.destroyed) idleSocket.resetAndDestroy();
+  };
+  try {
+    const first = await fetchNodeSite(new URL("/warm", origin), { method: "GET" });
+    assert.equal(await first.text(), "site");
+    clientRequest.subscribe(closeIdle);
+    const second = await fetchNodeSite(new URL("/next", origin), { method: "GET" });
+    assert.equal(second.status, 200);
+    assert.equal(await second.text(), "site");
+  } finally {
+    clientRequest.unsubscribe(closeIdle);
+    for (const socket of sockets) socket.destroy();
+    await new Promise(resolve => site.close(resolve));
+  }
+});
 
 test("a cancelled queued HTTP request frees its admission slot", { timeout: 5000 }, async () => {
   const f = await fixture();

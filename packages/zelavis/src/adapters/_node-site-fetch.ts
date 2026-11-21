@@ -10,6 +10,8 @@ export function fetchNodeSite(url: URL, init: RequestInit, tls?: { servername: s
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => { headers[name] = value; });
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+      // Fresh private connections avoid reusing an idle socket as the target closes it.
+      agent: false,
       method: init.method, headers, signal: init.signal ?? undefined, ...tls,
     }, (incoming) => {
       const responseHeaders = new Headers();

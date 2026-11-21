@@ -89,6 +89,9 @@ const run = Effect.gen(function* () {
       () => integration(() => owner.runtime.fetch(...args)),
       release => Effect.sync(release),
     )); } }, { trustClientAddressHeader: engine.trustClientAddressHeader !== false });
+    // A host from the previous release can still pool private connections.
+    // Close them explicitly after each response so the host cannot reuse them.
+    server.maxRequestsPerSocket = 1;
     yield* Effect.callback<void, IntegrationFailure>(resume => {
       const fail = (cause: Error) => resume(Effect.fail(new IntegrationFailure(cause)));
       server!.once("error", fail);

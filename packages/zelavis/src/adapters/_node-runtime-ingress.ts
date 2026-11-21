@@ -73,6 +73,9 @@ export function createNodeRuntimeIngress(options: {
     let finished = false;
     const done = () => { if (!finished) { finished = true; release(); } };
     const upstream = httpRequest({ hostname: target.hostname, port: target.port, method: incoming.method,
+      // An idle engine socket can close while admission is paused. A fresh
+      // private connection avoids that race without replaying any request.
+      agent: false,
       // Keep the original origin, request path and credentials. Gateway authorization
       // remains entirely inside the selected engine's dispatcher.
       path: incoming.url, headers: withClientAddress(incoming, endToEndHeaders(headers)),

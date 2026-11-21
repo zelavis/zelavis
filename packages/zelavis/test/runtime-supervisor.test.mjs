@@ -80,6 +80,10 @@ test("real child engines hand over a persistent port without dropping a request 
     assert.equal((await update).release.version, next.version);
     assert.equal(await (await queued).text(), "1");
     assert.equal(await (await fetch(f.url)).text(), next.version);
+    // A previous release's host may still send keep-alive to the new worker.
+    const privateResponse = await fetch(f.supervisor.target());
+    assert.equal(privateResponse.headers.get("connection"), "close");
+    assert.equal(await privateResponse.text(), next.version);
     const events = await readFile(join(f.directory, "events"), "utf8");
     assert.ok(events.indexOf("2.0.0:prepared") < events.indexOf("1.0.0:released"));
     assert.ok(events.indexOf("1.0.0:released") < events.indexOf("2.0.0:owned"));

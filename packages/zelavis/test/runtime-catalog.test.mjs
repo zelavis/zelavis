@@ -246,3 +246,32 @@ test("a file larger than one whole read is streamed, and its digest is held to t
     await assert.rejects(Effect.runPromise(verifyNodeRuntimeArtifact(value.root, selected)), /file digest mismatch: platform\/dist\/large\.bin/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("verifying a release runs its inventory walk and hashing off a busy main event loop", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-busy-loop-"));
+  let busy = true;
+  const spin = () => {
+    if (!busy) return;
+    const until = Date.now() + 12;
+    while (Date.now() < until) { /* hold the main event loop */ }
+    setTimeout(spin, 1);
+  };
+  try {
+    const value = await release(directory, "1.0.0");
+    await mkdir(join(value.root, "platform/dist/many"), { recursive: true });
+    await Promise.all(Array.from({ length: 250 }, (_, index) =>
+      writeFile(join(value.root, `platform/dist/many/file-${index}.js`), `export const n = ${index};\n`)));
+    const artifact = await Effect.runPromise(sealNodeRuntimeArtifact(value.root));
+    const selected = { version: "1.0.0", digest: artifact.digest };
+    // Warm the verifier worker first so startup overhead is excluded from the busy-loop budget.
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, selected));
+    const started = Date.now();
+    spin();
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, selected));
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1500, `expected off-loop verification to finish under 1500ms while main loop is busy, took ${elapsed}ms`);
+  } finally {
+    busy = false;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
