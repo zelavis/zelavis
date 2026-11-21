@@ -16,7 +16,7 @@ assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
 let to = process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION || JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
 import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
-import { qualificationSessionFile, signInQualificationOwner } from './lib/qualification-auth.mjs';
+import { qualificationSessionFile, rotateQualificationOwner, signInQualificationOwner } from './lib/qualification-auth.mjs';
 import { updateToLocalCandidate } from './lib/candidate-update.mjs';
 const load = (root, file) => import(pathToFileURL(join(root, 'platform/dist', file)));
 let { createZelavisClient } = await load(previous, 'sdk/fetch.js');
@@ -26,7 +26,13 @@ const config = { baseUrl, headers: { cookie, origin: baseUrl }, fetch: (url, ini
   ...init, signal: AbortSignal.any([init?.signal, AbortSignal.timeout(90_000)].filter(Boolean)),
 }) };
 let client = createZelavisClient(config);
+async function rotateOwnerClient() {
+  cookie = await rotateQualificationOwner(baseUrl, cookie);
+  config.headers = { cookie, origin: baseUrl };
+  client = createZelavisClient(config);
+}
 const id = 'update-continuity';
+const historicalConversion = from === "2.0.0-alpha.39";
 await client.projects.create({ id, name: 'Update continuity', start: false });
 const frontend = `/var/lib/zelavis/projects/${id}/.zelavis/services/continuity`;
 await mkdir(join(frontend, 'dist'), { recursive: true });
@@ -43,21 +49,37 @@ import { ZELAVIS_VERSION } from "zelavis";
 export function register() { zelavis.operations.create({ id: "engine.get", resource: "engine", action: "get", method: "GET", path: "/engine",
   spec: { operationId: "getExecutingEngine", summary: "Report the executing engine" }, handler: () => ({ status: 200, body: { version: ZELAVIS_VERSION } }) }); }`);
 execFileSync('chown', ['-R', 'zelavis:zelavis', join(frontend, '..')]);
-const app = await client.projects.start(id);
+const app = await client.projects.start(id).catch(async error => {
+  if (!historicalConversion || error.response?.status !== 500) throw error;
+  // The historical start can outlast its 15-second request while the old Agent continues launching the fixture.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const project = await client.projects.get(id);
+    if (project.runtime.status === "running") {
+      console.log("Published alpha.39 App reached its serving state after the historical startup request timed out.");
+      return project;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw error;
+});
 const previewOrigin = `http://127.0.0.1:${app.preview.port}`;
 const authPath = "/zelavis/api/v1/auth";
 const appPassword = "disposable qualification App password";
-async function appAuth(path, body) {
-  return fetch(previewOrigin + authPath + path, {
-    method: "POST", headers: { "content-type": "application/json" },
+async function appAuth(path, body, throughGateway = false) {
+  const origin = throughGateway ? `${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy` : previewOrigin;
+  return fetch(origin + authPath + path, {
+    method: "POST", headers: { "content-type": "application/json", ...(throughGateway ? { cookie, origin: baseUrl } : {}) },
     body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
   });
 }
-const registrationPath = `/runtime/projects/${id}/auth/registration/settings`;
-const settings = await client.json(registrationPath);
-await client.json(registrationPath, { method: "PUT", body: { enabled: true, expectedRevision: settings.revision } });
+// The alpha.39 conversion fixture predates the registration settings route and provides default signup through its App gateway.
+if (!historicalConversion) {
+  const registrationPath = `/runtime/projects/${id}/auth/registration/settings`;
+  const settings = await client.json(registrationPath);
+  await client.json(registrationPath, { method: "PUT", body: { enabled: true, expectedRevision: settings.revision } });
+}
 const legacyUsername = "qualification-app";
-const seeded = await appAuth("/sign-up/password", { identifier: legacyUsername, password: appPassword });
+const seeded = await appAuth("/sign-up/password", { identifier: legacyUsername, password: appPassword }, historicalConversion);
 assert.equal(seeded.status, 201, "The published App creates its original account");
 const originalAppAccount = (await seeded.json()).account.id;
 const data = () => client.data(id);
@@ -313,9 +335,18 @@ counts[catalogueControl] = 0;
 const beforeIntegration = await wpClient.runtime.config();
 assert.equal(beforeIntegration.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
-for (const capability of ['auth', 'database', 'storage', 'workloads']) {
-  assert.equal(beforeIntegration.capabilities[capability].available, true, `An adopted bound App must execute the current engine's ${capability} API`);
-  assert.equal(beforeIntegration.capabilities[capability].used, false, 'Unused APIs stay hidden after engine convergence');
+const boundRoot = join(wpProject, '.zelavis/integration');
+const releaseFormat = async version => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
+const [formatFrom, formatTo] = [await releaseFormat(from), await releaseFormat(to)];
+if (formatFrom !== formatTo) {
+  const held = JSON.parse(await readFile(join(boundRoot, 'runtime-handover.json'), 'utf8'));
+  assert.equal(held.selected.version, from, 'The bound App keeps the engine that wrote its data until migration');
+  assert.deepEqual((await client.projects.get(wp.id)).dataLayout, { state: 'upgradeRequired', from: formatFrom, to: formatTo });
+}
+for (const capability of [beforeIntegration.capabilities.auth ?? beforeIntegration.capabilities.identity,
+  beforeIntegration.capabilities.database, beforeIntegration.capabilities.storage, beforeIntegration.capabilities.workloads]) {
+  assert.equal(capability.available, true, 'The serving bound App exposes its data and account APIs');
+  assert.equal(capability.used, false, 'Unused APIs stay hidden');
 }
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
@@ -341,10 +372,6 @@ assert.equal(integration.runtime.status, 'running');
 // One normal request did both: the bound App's data is in the Platform's layout (migrated, with the earlier layout retained beside
 // it, when the two releases write different layouts), and the recipe moved.
 assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
-const boundRoot = join(wpProject, '.zelavis/integration');
-// The layout a release writes, from its runtime artifact; a release that declares none wrote layout 2.
-const releaseFormat = async version => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
-const [formatFrom, formatTo] = [await releaseFormat(from), await releaseFormat(to)];
 if (formatFrom !== formatTo) {
   assert.deepEqual([integration.dataMigration?.from, integration.dataMigration?.to], [formatFrom, formatTo], 'The upgrade migrates the bound App data across the layout change');
   assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `The same request brings the bound App data to layout ${formatTo}`);
@@ -374,10 +401,16 @@ if (contractAfter === contractBefore && integration.dataMigration === undefined)
   await stat(join(wpProject, '.zelavis/server/Caddyfile'));
   console.log(`PASS: WordPress moved from recipe contract ${contractBefore} to 2 under traffic; app/ holds the application alone.`);
 }
-assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
+const afterIntegration = await wpClient.runtime.config();
+assert.equal(afterIntegration.services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
+for (const capability of ['auth', 'database', 'storage', 'workloads']) {
+  assert.equal(afterIntegration.capabilities[capability].available, true, `The updated bound App runs the candidate's ${capability} API`);
+  assert.equal(afterIntegration.capabilities[capability].used, false, 'Unused APIs stay hidden after engine convergence');
+}
 await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
 assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
 console.log('PASS: running WordPress integration recipe update preserves processes, software, configuration, content and preview.');
+await rotateOwnerClient();
 const choices = await client.projects.versions(id);
 assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
@@ -434,6 +467,7 @@ if (dataFormatOf(from) === dataFormatOf(to)) {
   await verifySelected(crossed, to, 'App selection across a data layout change (stop, migrate, start)');
   await proveAppSignIn(legacyUsername, originalAppAccount);
 }
+await rotateOwnerClient();
 for (const version of ['latest', '^2.0.0', '99.0.0']) await assert.rejects(client.projects.switchVersion(id, version), { status: 400 });
 const historical = await client.projects.create({ id: 'explicit-historical', name: 'Historical', engineVersion: from, start: false });
 assert.equal(historical.engineVersion, from); assert.equal((await descriptor(historical.id)).engine.runtime.version, from);
@@ -463,6 +497,7 @@ for (const wikiId of ['installed-catalogue-dokuwiki', 'recreated-catalogue-dokuw
   await client.projects.remove(wikiId);
 }
 console.log('PASS: an acquired catalogue recipe runs again for a Project created after the first was deleted.');
+await rotateOwnerClient();
 await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',

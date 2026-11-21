@@ -58,6 +58,16 @@ export async function signInQualificationOwner(baseUrl, { email = qualificationE
   return cookie;
 }
 
+export async function rotateQualificationOwner(baseUrl, cookie) {
+  const response = await call(baseUrl, "/session/refresh", {}, cookie);
+  const refreshed = await readJson(response, 200, "Rotate the qualification owner's session");
+  assert.equal(refreshed.kind, "rotated");
+  const next = cookies(response);
+  assert.ok(next, "Refresh sets new session cookies");
+  await writeFile(qualificationSessionFile, next, { mode: 0o600 });
+  return next;
+}
+
 export async function refreshQualificationOwner(baseUrl) {
   const cookie = await readFile(qualificationSessionFile, "utf8");
   const status = await call(baseUrl, "/session", undefined, cookie);
