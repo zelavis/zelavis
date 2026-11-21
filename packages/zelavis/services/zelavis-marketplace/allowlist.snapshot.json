@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "sequence": 19,
-  "issuedAt": "2026-11-13T00:32:33.144Z",
-  "expiresAt": "2027-11-13T00:32:33.144Z",
+  "sequence": 20,
+  "issuedAt": "2026-11-21T14:25:45.355Z",
+  "expiresAt": "2027-11-21T14:25:45.355Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
       "kind": "plugin",
       "maintainer": "zelavis",
-      "title": "OpenID Connect Sign-in",
-      "summary": "Let people sign in with any OpenID Connect provider, or verify bearer tokens from one.",
+      "title": "OpenID Connect Bearer Tokens",
+      "summary": "Accept bearer tokens issued by any OpenID Connect provider.",
       "categories": [
         "auth",
         "identity",
@@ -30,9 +30,14 @@
           "version": "2.0.0-alpha.4",
           "integrity": "sha512-A2/vo+n9W1ePNCw2mhQmyUTy+IcnMqxmi099gGCIzOrmMVSWr1BQewTsODYAaWvZqjNa2apcfzJvyaEWCy011g==",
           "platform": "2.0.0-alpha.4"
+        },
+        {
+          "version": "2.0.0-alpha.5",
+          "integrity": "sha512-+AyR9gjm+KQqthACeVXs9IrC7CaIpqUmkFzbr0jzepb4tybhr4vO6En6Tved+lv5ANnWCahUh4MV25noiHMNVw==",
+          "platform": "2.0.0-alpha.46"
         }
       ],
-      "latest": "2.0.0-alpha.4"
+      "latest": "2.0.0-alpha.5"
     },
     {
       "name": "@zelavis/dokuwiki",
@@ -136,9 +141,14 @@
           "version": "2.0.0-alpha.4",
           "integrity": "sha512-s5xXJiisDREqnhd+Fh+1ReinUF9Q2Fr/h+EwndlnU/q8d1AQFXbIrPEE5dNifASch0MDurKOjobgEEz4FoL8xA==",
           "platform": "2.0.0-alpha.4"
+        },
+        {
+          "version": "2.0.0-alpha.5",
+          "integrity": "sha512-TaVKBwjqOpi94aQJWRLypMhQ1PGL7fJsh0/870/kEtLiJjSMduu5zw7XcW47kU1rmc8xLBx23xu7XWG5j4EiZw==",
+          "platform": "2.0.0-alpha.46"
         }
       ],
-      "latest": "2.0.0-alpha.4"
+      "latest": "2.0.0-alpha.5"
     },
     {
       "name": "@zelavis/ecommerce-paypal",
@@ -193,9 +203,34 @@
           "version": "1.0.0-alpha.3",
           "integrity": "sha512-Fe92VFksko5zlEwhnTt7FF7LsFAJKstkxcjaxTL7KkxF0QZQ0Zg7vAblRApNyWo19a0DxrwQ1raYOedQA5C4ew==",
           "platform": "2.0.0-alpha.4"
+        },
+        {
+          "version": "1.0.0-alpha.4",
+          "integrity": "sha512-ZH1jiSqDP44zVRouatdD6vBPEJmjNofrpmjjJ6tks3StbxDg6q7px4o034+vutRdPMIXBTd7oC1Ma2+fR0dviA==",
+          "platform": "2.0.0-alpha.46"
         }
       ],
-      "latest": "1.0.0-alpha.3"
+      "latest": "1.0.0-alpha.4"
+    },
+    {
+      "name": "@zelavis/hosting",
+      "kind": "plugin",
+      "maintainer": "zelavis",
+      "title": "Hosting Provider",
+      "summary": "For hosting and cloud companies using Zelavis as their panel. Sell plans, let customers create Projects within quota, and suspend Projects when payment lapses. Requires Ecommerce and a payment provider.",
+      "categories": [
+        "hosting",
+        "commerce",
+        "official"
+      ],
+      "versions": [
+        {
+          "version": "1.0.0-alpha.1",
+          "integrity": "sha512-/nn36lOt6mUGPlbDiOd0fL1QsJS51Jo+L9J9clh/h5VGL0hFl3C1mR2rsJKNBGrWNsT0pT77Rp7/1un0/fJRcw==",
+          "platform": "2.0.0-alpha.46"
+        }
+      ],
+      "latest": "1.0.0-alpha.1"
     },
     {
       "name": "@zelavis/joomla",
