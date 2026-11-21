@@ -9,6 +9,8 @@ export default defineConfig({
           theme: "github-dark",
         },
       },
+      // `/zelavis/` is the Platform dashboard (login included), served outside this site.
+      links: { ignorePaths: ["/zelavis/"] },
       searchIndex: true,
     }),
   ],
