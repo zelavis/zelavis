@@ -1,5 +1,26 @@
 # @zelavis/ecommerce
 
+## 2.0.0-alpha.5
+
+### Minor Changes
+
+- db75481: Add sealed per-service credentials and runtime-owned service workers. Authorize
+  Ecommerce operations and add hosted checkout, customer portals, atomic signed
+  provider events and durable fulfillment delivery, with Stripe settings and payment
+  support on the Platform and native Apps.
+
+### Patch Changes
+
+- Updated dependencies [ecf2021]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [19b519a]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [9f35b3f]
+- Updated dependencies [db75481]
+  - zelavis@2.0.0-alpha.46
+
 ## 2.0.0-alpha.4
 
 ### Patch Changes

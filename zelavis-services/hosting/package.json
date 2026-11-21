@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/hosting",
-  "version": "1.0.0-alpha.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "description": "Sell hosting plans and provision Zelavis Projects through Ecommerce subscriptions.",
   "license": "MIT",
@@ -60,8 +60,8 @@
     "directory": "zelavis-services/hosting"
   },
   "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.45",
-    "@zelavis/ecommerce": ">=2.0.0-alpha.4",
+    "zelavis": ">=2.0.0-alpha.46",
+    "@zelavis/ecommerce": ">=2.0.0-alpha.5",
     "effect": "4.0.0"
   },
   "devDependencies": {

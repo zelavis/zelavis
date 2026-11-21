@@ -1,5 +1,19 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.46
+
+### Patch Changes
+
+- Updated dependencies [ecf2021]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [19b519a]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [9f35b3f]
+- Updated dependencies [db75481]
+  - zelavis@2.0.0-alpha.46
+
 ## 1.1.0-alpha.45
 
 ### Patch Changes

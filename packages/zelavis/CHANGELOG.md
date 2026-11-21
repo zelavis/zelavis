@@ -1,5 +1,28 @@
 # zelavis
 
+## 2.0.0-alpha.46
+
+### Minor Changes
+
+- db75481: Add operator-approved service principals, sealed in-process Platform access, lifecycle revocation and Marketplace permission consent.
+
+### Patch Changes
+
+- ecf2021: Keep App authentication records out of Database browsing, apply signup attempt limits before password hashing, and preserve pending OAuth second-factor sign-ins across engine restarts. Sign-in method lists stay responsive when an OpenID Connect issuer is slow.
+- db75481: Add sealed per-service credentials and runtime-owned service workers. Authorize
+  Ecommerce operations and add hosted checkout, customer portals, atomic signed
+  provider events and durable fulfillment delivery, with Stripe settings and payment
+  support on the Platform and native Apps.
+- baf5c69: Keep native App engine upgrades responsive under dashboard traffic by reusing unchanged release metadata and avoiding duplicate verification within an upgrade step.
+- 19b519a: Prevent intermittent HTTP 502 responses during live Platform updates and speed up App upgrades and rollbacks by disabling loopback keep-alive socket pooling on private host-to-worker/site fetches and moving full release artifact verification off the main event loop.
+- db75481: Add Hosting Provider, an optional Platform service for selling Project plans
+  through Ecommerce, enforcing quotas, and suspending Projects when payment lapses.
+  
+  Keep local Marketplace services scoped as extensions and let sandboxed service
+  pages offer hosted links in the dashboard.
+- baf5c69: Preserve existing MariaDB files when a restored or interrupted Project database is missing its initialization marker.
+- 9f35b3f: Rename the exported `ZelavisStorageCoreServiceOptions` type to `ZelavisStorageSubsystemOptions`, and call the Platform's auth, database, storage, Fabric and workloads "subsystems" throughout messages and docs.
+
 ## 2.0.0-alpha.45
 
 ### Minor Changes

@@ -1,5 +1,21 @@
 # @zelavis/app-auth-oidc
 
+## 2.0.0-alpha.5
+
+### Patch Changes
+
+- db75481: Declare the zelavis/auth:authenticator capability for Zelavis Auth.
+- db75481: Describe the plugin as a bearer-token authenticator for Zelavis Auth; browser sign-in with an OpenID Connect issuer is built into Zelavis Auth.
+- Updated dependencies [ecf2021]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [19b519a]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [9f35b3f]
+- Updated dependencies [db75481]
+  - zelavis@2.0.0-alpha.46
+
 ## 2.0.0-alpha.4
 
 ### Patch Changes

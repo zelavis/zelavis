@@ -1,5 +1,29 @@
 # @zelavis/ui
 
+## 1.1.0-alpha.46
+
+### Minor Changes
+
+- db75481: Add operator-approved service principals, sealed in-process Platform access, lifecycle revocation and Marketplace permission consent.
+
+### Patch Changes
+
+- db75481: Add Hosting Provider, an optional Platform service for selling Project plans
+  through Ecommerce, enforcing quotas, and suspending Projects when payment lapses.
+  
+  Keep local Marketplace services scoped as extensions and let sandboxed service
+  pages offer hosted links in the dashboard.
+- 9f35b3f: Rename the exported `ZelavisStorageCoreServiceOptions` type to `ZelavisStorageSubsystemOptions`, and call the Platform's auth, database, storage, Fabric and workloads "subsystems" throughout messages and docs.
+- Updated dependencies [ecf2021]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [19b519a]
+- Updated dependencies [db75481]
+- Updated dependencies [baf5c69]
+- Updated dependencies [9f35b3f]
+- Updated dependencies [db75481]
+  - zelavis@2.0.0-alpha.46
+
 ## 1.1.0-alpha.45
 
 ### Minor Changes
