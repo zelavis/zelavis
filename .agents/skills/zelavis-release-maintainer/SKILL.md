@@ -163,25 +163,6 @@ tested, and the result with the candidate commit. Document the covered layouts,
 operator steps, downtime, and data that must be rebuilt in the
 [owner checklist](../../../website/src/content/docs/architecture/updates.md#data-layout-changes).
 
-## First release with Zelavis Auth
-
-The first release after `2.0.0-alpha.45` replaces Identity, the earlier account engine, with Zelavis Auth
-(`AGENTS.md § Zelavis Auth`) and imports published accounts on **Update now** (operator view:
-`website/src/content/docs/architecture/updates.md` "Upgrading from Identity to Zelavis Auth"). Before
-publishing it:
-
-1. Run `pnpm release:qualify:history` and `pnpm release:qualify:update` on the candidate
-   (both are part of `release:check`), and check in the update gate's output that the owner
-   created on the previous release signs in with the same password after **Update now**.
-   A gate that passes without that sign-in is not qualification for this release.
-2. Add the release to `via` in `distribution/history.json`: it changes runtime behavior,
-   so later candidates must be carried through it.
-3. Confirm `LICENSE-APACHE` and `NOTICE` are in the package: run
-   `npm pack --dry-run` in `packages/zelavis` and look for both in the file list
-   (`package.json` `files`; `license` is `MIT AND Apache-2.0`).
-
-Once this release is published, remove this section.
-
 ## Useful commands
 
 ```bash
