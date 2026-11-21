@@ -10,6 +10,7 @@ import { validatePluginPackageManifest } from "../core/service/manifest.js";
 import type { ZelavisProjectRecipeLock } from "../project.js";
 import { normalizeProjectIsolationIntent } from "../project-isolation.js";
 import { verifyNodeRuntimeArtifact } from "./_node-runtime-artifact.js";
+import { fingerprintOf } from "./_node-file-digest.js";
 
 /**
  * The data layout of every release published before releases declared one: they all wrote format 2 (alpha.5 to
@@ -17,6 +18,12 @@ import { verifyNodeRuntimeArtifact } from "./_node-runtime-artifact.js";
  */
 const FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION = 2;
 const declaredDataFormat = (value: unknown): number => value === undefined ? FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION : value as number;
+const MAX_CATALOG_ENTRIES = 4096;
+
+type RuntimeAdvertisement = RuntimeRelease & { readonly nodeVersion: string; readonly dataFormat: number };
+// Status requests can name the same multi-megabyte manifest for every managed Project.
+// Keep its small decoded advertisement while its file identity matches. Selection still verifies the release.
+const advertisements = new Map<string, { readonly fingerprint: string; readonly value: RuntimeAdvertisement }>();
 
 /** The installation's already acquired immutable releases. Acquisition and
  * permission to install host code remain with the existing installer/updater;
@@ -49,14 +56,22 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
   const entry = Effect.fn("RuntimeCatalog.entry")(function* (version: string) {
     const tree = yield* exactDirectory(version);
     const file = join(tree, "runtime-artifact.json");
-    const stats = yield* integration(() => lstat(file));
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 16 * 1024 * 1024 || options.rootOwned && (stats.uid !== 0 || (stats.mode & 0o022) !== 0)) return yield* new IntegrationFailure(new Error("Runtime engine catalog requires an installer-owned artifact manifest."));
+    const stats = yield* integration(() => lstat(file, { bigint: true }));
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 16n * 1024n * 1024n || options.rootOwned && (stats.uid !== 0n || (stats.mode & 0o022n) !== 0n)) return yield* new IntegrationFailure(new Error("Runtime engine catalog requires an installer-owned artifact manifest."));
+    const fingerprint = fingerprintOf(stats);
+    const cached = advertisements.get(file);
+    if (cached?.fingerprint === fingerprint) return cached.value;
     const source = yield* integration(() => readFile(file, "utf8"));
-    return yield* evaluate(() => {
+    const value = yield* evaluate((): RuntimeAdvertisement => {
       const artifact = JSON.parse(source);
       if (artifact.version !== version || !/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || artifact.metadata?.protocol !== NODE_RUNTIME_PROTOCOL || artifact.metadata.platform !== process.platform || artifact.metadata.architecture !== process.arch || typeof artifact.metadata.nodeVersion !== "string") throw new Error("Runtime engine does not declare this host's exact handover protocol.");
-      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion as string, dataFormat: declaredDataFormat(artifact.metadata.dataFormat) };
+      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion, dataFormat: declaredDataFormat(artifact.metadata.dataFormat) };
     });
+    const after = yield* integration(() => lstat(file, { bigint: true }));
+    if (fingerprintOf(after) !== fingerprint) return yield* new IntegrationFailure(new Error("Runtime artifact manifest changed while it was read."));
+    if (advertisements.size >= MAX_CATALOG_ENTRIES) advertisements.clear();
+    advertisements.set(file, { fingerprint, value });
+    return value;
   });
   const catalog = {
     /** Advertised selections; nothing here is verified. `select` and `resolve` verify the release before it is used:
@@ -65,7 +80,7 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
      * explicit reason. */
     list: Effect.fn("RuntimeCatalog.list")(function* () {
       const directories = yield* integration(() => readdir(directory, { withFileTypes: true }));
-      if (directories.length > 4096) return yield* new IntegrationFailure(new Error("Runtime catalog exceeds its entry bound."));
+      if (directories.length > MAX_CATALOG_ENTRIES) return yield* new IntegrationFailure(new Error("Runtime catalog exceeds its entry bound."));
       const versions = directories.filter(value => value.isDirectory() && isExactVersion(value.name)).map(value => value.name).sort((a, b) => compareVersions(b, a));
       return yield* Effect.forEach(versions, version => Effect.result(entry(version)).pipe(Effect.map(result => result._tag === "Success"
         ? { ...result.success, status: "available" as const }

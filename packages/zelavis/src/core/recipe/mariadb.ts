@@ -67,10 +67,15 @@ export const initializeMariaDb = (host: RecipeHostApi, context: RecipeContext, s
   }
   const marker = `${spec.data.absolute}/.zelavis-initialized`;
   if (yield* host.files.exists(marker)) return;
+  // A logical restore, an older install or an interrupted bootstrap can leave data without the marker.
+  // No marker proves that initialization was not recorded. It does not authorize a new database.
+  for (const entry of ["mysql", spec.name, "ibdata1", "aria_log_control"]) {
+    if (yield* host.files.exists(`${spec.data.absolute}/${entry}`)) {
+      return yield* Effect.fail(refuse("install", "The MariaDB directory contains data but is missing its initialization marker. Verify the database before retrying."));
+    }
+  }
   yield* host.progress({ phase: "install", message: "Initializing the database." });
   const { root } = context.directories;
-  // An earlier attempt that died partway left a data directory with nothing in it worth keeping.
-  yield* host.files.remove(spec.data.absolute);
   yield* host.files.mkdir(spec.data.absolute);
   // The first FLUSH PRIVILEGES turns account management on: bootstrap runs without grant tables.
   yield* host.files.write("run/init.sql", [

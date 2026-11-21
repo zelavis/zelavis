@@ -13,9 +13,9 @@ const context = (container) => ({
   account: { user: "u", group: "g", uid: 1001, gid: 1002, switchUser: false },
 });
 
-function fakeHost(answers = {}) {
+function fakeHost(answers = {}, existing = []) {
   const calls = { runs: [], writes: new Map(), dirs: [], removed: [], secrets: [] };
-  const files = new Set();
+  const files = new Set(existing);
   const host = {
     files: {
       read: () => Effect.succeed(""), exists: (path) => Effect.succeed(files.has(path)),
@@ -73,6 +73,16 @@ test("initializing pulls the image and prepares the data directory for the conta
 
   const failing = fakeHost({ docker: { code: 1, stdout: "", stderr: "denied" } });
   await assert.rejects(direct(initializeMariaDb(failing.host, context(true), spec)), /image could not be fetched/);
+});
+
+test("initialization preserves a restored or interrupted MariaDB directory without its marker", async () => {
+  for (const entry of ["mysql", "app", "ibdata1", "aria_log_control"]) {
+    const fake = fakeHost({}, [`${spec.data.absolute}/${entry}`]);
+    await assert.rejects(direct(initializeMariaDb(fake.host, context(false), spec)), /contains data but is missing its initialization marker/);
+    assert.deepEqual(fake.calls.runs, []);
+    assert.deepEqual(fake.calls.removed, []);
+    assert.equal(fake.calls.writes.size, 0);
+  }
 });
 
 test("the container method refuses a stopped engine; the native method refuses an old server", async () => {

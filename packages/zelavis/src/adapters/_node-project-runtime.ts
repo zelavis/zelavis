@@ -659,7 +659,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 if (version !== undefined) return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installer-managed native Zelavis App."));
                 return undefined;
             }
-            const catalog = createNodeRuntimeCatalog(configuration);
+            const catalog = createNodeRuntimeCatalog(configuration, new Map());
             const selected = yield* (version === undefined ? catalog.latest() : catalog.select(version)).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
             const app = yield* catalog.app(selected.version).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
             return { engineVersion: selected.version, recipe: app.recipe };
@@ -696,17 +696,17 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }
             const engine = yield* readCreationEngine(directory);
             const installedCatalog = yield* catalogConfiguration();
+            const catalog = installedCatalog && createNodeRuntimeCatalog(installedCatalog, new Map());
             // A deliberate App upgrade selects the latest qualified engine as
             // well as its recipe. Parent replacement alone never changes this pin.
-            if (installedCatalog) {
-                const catalog = createNodeRuntimeCatalog(installedCatalog);
+            if (catalog) {
                 engine.runtime = yield* (candidate.engineVersion ? catalog.select(candidate.engineVersion) : catalog.latest());
             }
             const staging = join(directory, ".zelavis", "update-preparation", randomUUID());
             yield* integration(() => mkdir(staging, { recursive: true, mode: 0o700 }));
             return yield* Effect.gen(function* () {
-                const app = installedCatalog && candidate.recipe.name === "@zelavis/app" && engine.runtime
-                    ? yield* createNodeRuntimeCatalog(installedCatalog).app(engine.runtime.version) : undefined;
+                const app = catalog && candidate.recipe.name === "@zelavis/app" && engine.runtime
+                    ? yield* catalog.app(engine.runtime.version) : undefined;
                 if (app && app.recipe.version !== candidate.recipe.version) return yield* new IntegrationFailure(new Error("Selected engine and App recipe do not match."));
                 const artifact = yield* integration(() => ensureRecipeArtifact(candidate.recipe, staging, join(staging, ".zelavis"),
                     app ? () => app.packageDirectory : options.recipePackageDirectory));

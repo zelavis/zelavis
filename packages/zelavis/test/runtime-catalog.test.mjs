@@ -125,6 +125,12 @@ test("a release declares the data format it writes, and one that declares none i
     assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), CURRENT_FORMAT, "a newly sealed artifact declares this build's format");
     const file = join(root, "runtime-artifact.json");
     const artifact = JSON.parse(await readFile(file, "utf8"));
+    const before = await stat(file);
+    artifact.metadata.dataFormat = 9;
+    await writeFile(file, `${JSON.stringify(artifact)}\n`);
+    await utimes(file, before.atime, before.mtime);
+    assert.equal((await stat(file)).size, before.size);
+    assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), 9, "a same-size rewrite with restored mtime refreshes the advertisement");
     delete artifact.metadata.dataFormat;
     await writeFile(file, `${JSON.stringify(artifact)}\n`);
     assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), 2, "alpha.5 to alpha.42 declared nothing and wrote format 2");
