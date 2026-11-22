@@ -5,7 +5,7 @@ import { API_PREFIX } from "./mount.ts";
 export class ApiError extends Data.TaggedError("ApiError")<{ message: string; status?: number; code?: string; retryAfter?: string; permissions?: readonly string[] }> {}
 const ApiConfig = Schema.Struct({ api: Schema.Struct({ basePath: Schema.String }), rootPath: Schema.String, access: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), services: Schema.optional(Schema.Array(Schema.Unknown)), serviceRegistry: Schema.optional(Schema.Array(Schema.Unknown)) });
 const Bootstrap = Schema.Struct({ required: Schema.Boolean, available: Schema.Boolean, tokenRequired: Schema.Boolean, methods: Schema.Array(Schema.String) });
-const Project = Schema.Struct({ id: Schema.String, name: Schema.String, recipe: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), recipeStatus: Schema.optional(Schema.Unknown), dataLayout: Schema.optional(Schema.Unknown), engineVersion: Schema.optional(Schema.String), preview: Schema.optional(Schema.Unknown), kind: Schema.optional(Schema.String), runtimeKind: Schema.optional(Schema.String), runtime: Schema.Struct({ status: Schema.String, error: Schema.optional(Schema.String) }), deletion: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.String) });
+const Project = Schema.Struct({ id: Schema.String, name: Schema.String, recipe: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), recipeStatus: Schema.optional(Schema.Unknown), dataLayout: Schema.optional(Schema.Unknown), upgrade: Schema.optional(Schema.Unknown), engineVersion: Schema.optional(Schema.String), preview: Schema.optional(Schema.Unknown), kind: Schema.optional(Schema.String), runtimeKind: Schema.optional(Schema.String), runtime: Schema.Struct({ status: Schema.String, error: Schema.optional(Schema.String) }), deletion: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.String) });
 export type Project = typeof Project.Type & { status: string };
 export type Config = typeof ApiConfig.Type;
 export const Projects = Schema.Struct({ projects: Schema.Array(Project) });
@@ -35,29 +35,34 @@ const responseText = Effect.fn("new-ui.responseText")(function*(response: Respon
   );
 });
 
-const requestOnce = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX) {
-  if (!apiPrefix.startsWith("/") || !apiPrefix.endsWith("/") || apiPrefix.startsWith("//") || !path.startsWith(apiPrefix) || /\.\.|%|\\/u.test(apiPrefix) || path.includes("..")) return yield* Effect.fail(new ApiError({ message: "Refused a request outside the Zelavis API." }));
-  const response = yield* Effect.tryPromise({
-    try: signal => fetch(path, { signal, method, credentials: "same-origin", headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
-    catch: cause => new ApiError({ message: cause instanceof Error ? cause.message : "Could not connect to Zelavis." })
-  });
-  const text = yield* responseText(response);
-  const data = text ? yield* Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ApiError({ message: `Invalid JSON response (${response.status}).`, status: response.status }) }) : null;
-  if (!response.ok) {
-    const { error, code } = object(data);
-    return yield* Effect.fail(new ApiError({
-      message: typeof error === "string" ? error : `Request failed (${response.status}).`,
-      status: response.status,
-      code: typeof code === "string" ? code : undefined,
-      retryAfter: response.headers.get("retry-after") ?? undefined,
-      permissions: array(object(data).permissions).filter((p): p is string => typeof p === "string"),
-    }));
-  }
-  return data;
-}, Effect.timeout("30 seconds"), Effect.mapError(error => error instanceof ApiError ? error : new ApiError({ message: "Zelavis did not respond within 30 seconds." })));
+const requestOnce = (path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX, timeoutSeconds = 30) =>
+  Effect.gen(function*() {
+    if (!apiPrefix.startsWith("/") || !apiPrefix.endsWith("/") || apiPrefix.startsWith("//") || !path.startsWith(apiPrefix) || /\.\.|%|\\/u.test(apiPrefix) || path.includes("..")) return yield* Effect.fail(new ApiError({ message: "Refused a request outside the Zelavis API." }));
+    const response = yield* Effect.tryPromise({
+      try: signal => fetch(path, { signal, method, credentials: "same-origin", headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
+      catch: cause => new ApiError({ message: cause instanceof Error ? cause.message : "Could not connect to Zelavis." })
+    });
+    const text = yield* responseText(response);
+    const data = text ? yield* Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ApiError({ message: `Invalid JSON response (${response.status}).`, status: response.status }) }) : null;
+    if (!response.ok) {
+      const { error, code } = object(data);
+      return yield* Effect.fail(new ApiError({
+        message: typeof error === "string" ? error : `Request failed (${response.status}).`,
+        status: response.status,
+        code: typeof code === "string" ? code : undefined,
+        retryAfter: response.headers.get("retry-after") ?? undefined,
+        permissions: array(object(data).permissions).filter((p): p is string => typeof p === "string"),
+      }));
+    }
+    return data;
+  }).pipe(
+    Effect.withSpan("new-ui.request"),
+    Effect.timeout(`${timeoutSeconds} seconds`),
+    Effect.mapError(error => error instanceof ApiError ? error : new ApiError({ message: `Zelavis did not respond within ${timeoutSeconds} seconds.` })),
+  );
 
-export const request = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX) {
-  const call = requestOnce(path, method, body, apiPrefix);
+export const request = Effect.fn("new-ui.request")(function*(path: string, method = "GET", body?: unknown, apiPrefix = API_PREFIX, timeoutSeconds = 30) {
+  const call = requestOnce(path, method, body, apiPrefix, timeoutSeconds);
   return yield* call.pipe(Effect.catch(error => Effect.gen(function* () {
     if (error.status !== 401 || error.code !== "access_token_expired") return yield* Effect.fail(error);
     // A proxy request carries the dashboard's cookie, so refresh belongs to the parent API.

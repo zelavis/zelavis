@@ -9,7 +9,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type CreateInvitationInput, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|registration-settings|set-registration-settings|auth-method-settings|set-auth-method-settings|passkey-settings|set-passkey-settings|oauth-connections|configure-oauth-connection|remove-oauth-connection|mfa-policy|set-mfa-policy|rotate-auth-keys|email-settings|set-email-settings|send-test-email|email-deliveries|invitations|invite|resend-invitation|revoke-invitation|set-account-access|roles|create-role|update-role|delete-role|domains|hosted-zones|add-domain|verify-domain|remove-domain|get|create|rename|start|stop|restart|upgrade|switch-version|retained-data|remove-retained-data|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--tls external|managed] [--dns manual|automatic] [--revision N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|registration-settings|set-registration-settings|auth-method-settings|set-auth-method-settings|passkey-settings|set-passkey-settings|oauth-connections|configure-oauth-connection|remove-oauth-connection|mfa-policy|set-mfa-policy|rotate-auth-keys|email-settings|set-email-settings|send-test-email|email-deliveries|invitations|invite|resend-invitation|revoke-invitation|set-account-access|roles|create-role|update-role|delete-role|domains|hosted-zones|add-domain|verify-domain|remove-domain|get|create|rename|start|stop|restart|upgrade|switch-version|retained-data|remove-retained-data|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--async] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--tls external|managed] [--dns manual|automatic] [--revision N] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -51,6 +51,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let start = true;
   let installHostPackages = false;
   let restart = false;
+  let asyncMode = false;
   let reveal = false;
   let tenant: string | undefined;
   let table: string | undefined;
@@ -85,6 +86,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (arg === "--install-host-packages") { installHostPackages = true; continue; }
     if (arg === "--no-start") { start = false; continue; }
     if (arg === "--restart") { restart = true; continue; }
+    if (arg === "--async") { asyncMode = true; continue; }
     if (arg === "--reveal") { reveal = true; continue; }
     if (arg === "--until-consistent") { untilConsistent = true; continue; }
     if (arg === "--dry-run") { dryRun = true; continue; }
@@ -160,6 +162,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (storage !== undefined && action !== "create-image") throw new Error("--storage is only supported by projects create-image.");
   if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
   if (restart && action !== "upgrade") throw new Error("--restart is only supported by projects upgrade.");
+  if (asyncMode && action !== "upgrade") throw new Error("--async is only supported by projects upgrade.");
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
@@ -459,10 +462,13 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "upgrade": {
       const project = yield* integration(() => client.projects.upgrade(requireTarget("id"), {
         ...(restart ? { restart: true } : {}),
+        ...(asyncMode ? { async: true } : {}),
         ...(recipe ? { recipeName: recipe } : {}),
         ...(engineVersion ? { engineVersion } : {}),
       }));
-      print({ project }, () => `Upgraded ${line(project)}`);
+      print({ project }, () => project.upgrade?.state === "running"
+        ? `Started upgrading ${line(project)}`
+        : `Upgraded ${line(project)}`);
       return;
     }
     case "rename": {

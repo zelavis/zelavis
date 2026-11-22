@@ -200,8 +200,22 @@ export interface ZelavisProjectDataMigration {
   readonly tenantsWithoutHistory: number;
   /** Documents of those Tenants past their first version: each keeps its version; its earlier versions' events are not carried. */
   readonly documentsWithHistoryDropped: number;
-  /** The directory beside the Project's data that keeps the data as it was; remove it when it is no longer needed. */
-  readonly retained: string;
+  /**
+   * The directory beside the Project's data that keeps the data as it was; remove it when it is no longer needed.
+   * Omitted when the migrated database had no user data and its empty copy was cleaned up after commit.
+   */
+  readonly retained?: string;
+}
+
+/** Progress and outcome of an in-flight or recently finished Project upgrade. Derived on read, never stored. */
+export interface ZelavisProjectUpgradeStatus {
+  readonly id: string;
+  readonly state: "running" | "completed" | "failed";
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly phase?: string;
+  readonly error?: string;
+  readonly dataMigration?: ZelavisProjectDataMigration;
 }
 
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
@@ -221,6 +235,8 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   readonly standby?: ZelavisProjectStandby;
   /** Present only on the response of the upgrade that migrated this Project's data; never stored. */
   dataMigration?: ZelavisProjectDataMigration;
+  /** Progress and outcome of an in-flight or recent asynchronous upgrade. Derived on read, never stored. */
+  upgrade?: ZelavisProjectUpgradeStatus;
   /**
    * The locked isolation intent compared with the assigned backend, present
    * only when the recipe declares intent. Derived on every read, like
@@ -565,8 +581,10 @@ export interface ZelavisProjectManager {
    * `restart`: a running Project whose upgrade cannot be done live is stopped first and started
    * again afterwards (it is started again even when the upgrade fails, as the recipe it had).
    * Without it, such an upgrade is refused until the Project is stopped.
+   * `async`: validate and start the upgrade in the background, returning immediately with
+   * `project.upgrade.state === "running"` so callers can poll `list()` or `get(id)` for progress.
    */
-  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean }): Promise<ZelavisProjectRecord>;
+  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean; async?: boolean }): Promise<ZelavisProjectRecord>;
   switchVersion(id: string, version: string): Promise<ZelavisProjectRecord>;
   /** Data an upgrade's migration kept beside this Project's live data. */
   retainedData(id: string): Promise<readonly ZelavisProjectRetainedData[]>;
@@ -1599,10 +1617,33 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const current = unchanged ? project : applySnapshot(project, snapshot);
         return yield* (unchanged || !persist ? ingressView(current) : write(current));
     });
+    const UPGRADE_STATUS_TTL_MS = 10 * 60_000;
+    const upgradeStates = new Map<string, { readonly status: ZelavisProjectUpgradeStatus; readonly expiresAt?: number }>();
+    const activeUpgradeStatus = (projectId: string): ZelavisProjectUpgradeStatus | undefined => {
+        const entry = upgradeStates.get(projectId);
+        if (!entry) return undefined;
+        if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
+            upgradeStates.delete(projectId);
+            return undefined;
+        }
+        return entry.status;
+    };
+    const isUpgradeRunning = (projectId: string): boolean => activeUpgradeStatus(projectId)?.state === "running";
+    const setUpgradePhase = (projectId: string, opId: string, phase: string): void => {
+        const entry = upgradeStates.get(projectId);
+        if (entry?.status.id === opId && entry.status.state === "running") {
+            upgradeStates.set(projectId, { status: { ...entry.status, phase } });
+        }
+    };
+    const withUpgradeStatus = (project: ZelavisProjectRecord | undefined): ZelavisProjectRecord | undefined => {
+        if (!project || project.deletion) return project;
+        const status = activeUpgradeStatus(project.id);
+        return status ? { ...project, upgrade: status } : project;
+    };
     /** A managed app whose data layout trails the Platform's says so, so its card can offer the upgrade that migrates it. */
     const withDataLayout = Effect.fn("Projects.withDataLayout")(function* (project: ZelavisProjectRecord | undefined): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
         const listVersions = runtimeEffects.versions;
-        if (!project || !project.recipe.managed || project.deletion || project.runtimeUpdate || listVersions === undefined) return project;
+        if (!project || !project.recipe.managed || project.deletion || project.runtimeUpdate || isUpgradeRunning(project.id) || listVersions === undefined) return project;
         const versions = yield* Effect.orElseSucceed(listVersions(project), () => undefined);
         if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat === versions.latestDataFormat) return project;
         return { ...project, dataLayout: { state: "upgradeRequired" as const, from: versions.currentDataFormat, to: versions.latestDataFormat } };
@@ -1614,7 +1655,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (!record) return project;
         return { ...project, standby: { nodeId: record.nodeId, status: record.state, ...(record.error === undefined ? {} : { error: record.error }) } };
     });
-    const refresh = (id: string, persist: boolean) => Effect.flatMap(Effect.flatMap(refreshRecord(id, persist), withDataLayout), withStandby);
+    const refresh = (id: string, persist: boolean) => Effect.map(Effect.flatMap(Effect.flatMap(refreshRecord(id, persist), withDataLayout), withStandby), withUpgradeStatus);
     const deleteProject = Effect.fn("Projects.deleteProject")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
         const existingProject = yield* read(id);
         if (!existingProject) {
@@ -2366,6 +2407,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
             yield* refreshRecipes(RECIPE_LABEL_MAX_AGE_MS);
+            if (isUpgradeRunning(projectId)) return yield* refresh(projectId, false);
             return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
         }),
         view: Effect.fn("Projects.view")(function* (id: Parameters<ZelavisProjectManager["view"]>[0]) {
@@ -2616,194 +2658,260 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
-            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
-            if (options.acquireRecipe) {
-                const target = input?.recipeName?.trim() || (yield* requireProject(yield* evaluate(() => normalizeProjectId(id)))).recipe.name;
-                yield* integration(() => options.acquireRecipe!(target));
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            if (isUpgradeRunning(projectId)) {
+                return yield* Effect.fail(new ZelavisProjectConflictError(`Project "${projectId}" already has an upgrade in progress.`));
             }
-            yield* refreshRecipes();
-            {
-                const ahead = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
-                if (ahead.recipe.managed && runtimeEffects.prepareData && !ahead.placement && !ahead.deletion) yield* runtimeEffects.prepareData(ahead);
-            }
-            if (input?.restart === true) {
-                const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
-                const liveCapable = runtime.supportsLiveUpdate?.(current) === true && !(yield* changesDataLayout(current, input.engineVersion)) &&
-                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
-                const managedIntegration = runtime.capabilities(current).recipeUpdateMode === "integration";
-                // Only a running Project that cannot be upgraded where it stands is taken down for it.
-                if (current.runtime.status === "running" && !liveCapable && !managedIntegration) {
-                    yield* manager.stop(current.id);
-                    const upgrade = yield* Effect.exit(manager.upgrade(current.id, { ...input, restart: false }));
-                    // It was running, so it runs again: the upgraded Project, or the one it was if the upgrade failed.
-                    const started = yield* Effect.exit(manager.start(current.id));
-                    if (Exit.isFailure(upgrade)) return yield* Effect.failCause(upgrade.cause);
-                    if (Exit.isFailure(started)) return yield* Effect.failCause(started.cause);
-                    return upgrade.value.dataMigration ? { ...started.value, dataMigration: upgrade.value.dataMigration } : started.value;
+            const executeUpgrade = (
+                targetId: string,
+                upgradeInput: Parameters<ZelavisProjectManager["upgrade"]>[1],
+                opId: string,
+            ): Effect.Effect<ZelavisProjectRecord, TaggedFailure> => Effect.gen(function* () {
+                yield* clearStartBackoff(targetId);
+                if (options.acquireRecipe) {
+                    setUpgradePhase(targetId, opId, "Checking recipe updates");
+                    const target = upgradeInput?.recipeName?.trim() || (yield* requireProject(targetId)).recipe.name;
+                    yield* integration(() => options.acquireRecipe!(target));
                 }
-            }
-            let performed: ZelavisProjectDataMigration | undefined;
-            let interrupted: ZelavisProjectRuntimeUpdateIntent | undefined;
-            // The data migration is a step of its own: requests to the Project wait only while its bound host is down for it, and the
-            // recipe update after it holds them again for its own, shorter time, so neither hold is the sum of both. It is still one
-            // request, and a Project left between the two is a migrated App on its earlier recipe, which a retry finishes.
-            const migrated = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.migration")(function* () {
-                let project = yield* requireProject(id);
-                // A deletion tombstone always wins over recovery of an update.
-                if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
-                interrupted = project.runtimeUpdate;
-                project = yield* recoverProjectUpdate(project);
-                (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
-                if (input?.engineVersion !== undefined && project.placement)
-                    return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
-                // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
-                // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
-                if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
-                    const report = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
-                    performed = report;
-                    if (report && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: report };
-                }
-                return undefined;
-            }));
-            if (migrated) return migrated;
-            const upgraded = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
-                const project = yield* requireProject(id);
-                if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
-                (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
-                if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
-                    (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
-                const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true && !(yield* changesDataLayout(project, input?.engineVersion)) &&
-                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
-                const integrationUpdate = runtime.capabilities(project).recipeUpdateMode === "integration" &&
-                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
-                if (!live && !["stopped", "failed"].includes(project.runtime.status)) {
-                    return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`)));
-                }
-                const targetName = input?.recipeName?.trim() || project.recipe.name;
-                const entry = projectRecipeMap.get(targetName);
-                if (!entry) {
-                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" is not shipped with this Platform.` +
-                        (input?.recipeName ? "" : " Name the recipe to move this Project to."))));
-                }
-                // A listing only advertises a package the Marketplace would acquire: it carries no install
-                // methods and no code, so it is installed first, as it is before a Project is created from it.
-                if (entry.status === "available" && entry.specifier?.startsWith("npm:")) {
-                    return (yield* Effect.fail(new ZelavisProjectValidationError(`${entry.service.marketplace?.title ?? targetName}${entry.service.version ? ` ${entry.service.version}` : ""} is listed in the Marketplace but not installed yet. Install it, then upgrade "${project.id}".`)));
-                }
-                // A frontend stays a frontend and an app stays an app; a Project's kind
-                // label follows its recipe's name, so it is re-derived below.
-                if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
-                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
-                }
-                let next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
-                // Whether the Project crosses from a layout its new recipe takes over (an earlier, hand-written
-                // runtime of the same app): its processes are swapped rather than updated in place.
-                let adopting = false;
-                // The install method and software version are the Project's own choice, made at creation.
-                // A newer recipe keeps them when it still offers them; otherwise the upgrade is refused.
-                const manifest = entry.service.project?.install;
-                if (project.recipe.install) {
-                    const kept = project.recipe.install;
-                    const offered = manifest?.methods.some((method) => method.id === kept.method && method.driver === kept.driver) &&
-                        manifest.software.some((software) => software.version === kept.software);
-                    if (!offered) {
-                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" no longer offers the "${kept.method}" method with software ${kept.software} this Project uses. Create a new Project to use it.`)));
+                yield* refreshRecipes();
+                {
+                    const ahead = yield* requireProject(targetId);
+                    if (ahead.recipe.managed && runtimeEffects.prepareData && !ahead.placement && !ahead.deletion) {
+                        setUpgradePhase(targetId, opId, "Preparing data migration");
+                        yield* runtimeEffects.prepareData(ahead);
                     }
-                    next = { ...next, install: kept };
-                } else if (manifest) {
-                    // An older layout of the same recipe can be adopted: its folders are moved, not converted.
-                    adopting = true;
-                    if (!manifest.adopt?.length) {
-                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with, and does not describe how to take over its files. Create a new Project to use it.`)));
+                }
+                if (upgradeInput?.restart === true) {
+                    const current = yield* requireProject(targetId);
+                    const liveCapable = runtime.supportsLiveUpdate?.(current) === true && !(yield* changesDataLayout(current, upgradeInput.engineVersion)) &&
+                        runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                    const managedIntegration = runtime.capabilities(current).recipeUpdateMode === "integration";
+                    // Only a running Project that cannot be upgraded where it stands is taken down for it.
+                    if (current.runtime.status === "running" && !liveCapable && !managedIntegration) {
+                        setUpgradePhase(targetId, opId, "Stopping project");
+                        yield* manager.stop(current.id);
+                        const upgrade = yield* Effect.exit(executeUpgrade(current.id, { ...upgradeInput, restart: false }, opId));
+                        // It was running, so it runs again: the upgraded Project, or the one it was if the upgrade failed.
+                        setUpgradePhase(targetId, opId, "Starting project");
+                        const started = yield* Effect.exit(manager.start(current.id));
+                        if (Exit.isFailure(upgrade)) return yield* Effect.failCause(upgrade.cause);
+                        if (Exit.isFailure(started)) return yield* Effect.failCause(started.cause);
+                        return upgrade.value.dataMigration ? { ...started.value, dataMigration: upgrade.value.dataMigration } : started.value;
                     }
-                    const install = yield* selectInstall(entry, {});
-                    if (install) next = { ...next, install };
                 }
-                if (input?.engineVersion !== undefined) yield* evaluate(() => readEngineVersion(input as unknown as Record<string, unknown>));
-                const selection = yield* (runtimeEffects.resolveVersion?.({ ...project, recipe: next }, input?.engineVersion) ?? Effect.succeed(undefined));
-                if (input?.engineVersion !== undefined && !selection)
-                    return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installed native Zelavis App."));
-                if (selection) next = selection.recipe;
-                if (!next.runtimeKinds.includes(project.runtimeKind)) {
-                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`)));
-                }
-                if (next.name === project.recipe.name &&
-                    next.version === project.recipe.version &&
-                    project.recipe.artifact && (!selection || project.engineVersion === selection.engineVersion)) {
-                    return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" already runs ${next.name}@${next.version}.`)));
-                }
-                const candidate: ZelavisProjectRecord = {
-                    ...project,
-                    kind: projectKindForRecipe(next.name),
-                    recipe: next,
-                    ...(selection ? { engineVersion: selection.engineVersion } : {}),
-                };
-                // Refused before anything changes: an upgrade that would leave the
-                // Project unable to start under its isolation intent is not an upgrade.
-                const refusal = isolationRefusal(candidate);
-                if (refusal)
-                    return (yield* Effect.fail(refusal));
-                // Freeze the new recipe first. The driver replaces the old artifact only
-                // once the new one is complete, so a failure here leaves the Project
-                // exactly as it was.
-                const now = new Date().toISOString();
-                const isolation = assessIsolation(candidate);
-                const upgraded: ZelavisProjectRecord = {
-                    ...candidate,
-                    capabilities: runtime.capabilities(candidate),
-                    ...(isolation ? { isolation } : {}),
-                    recipeStatus: recipeStatusOf(next),
-                    recipeHistory: [
-                        ...(project.recipeHistory ?? []),
-                        {
-                            from: { name: project.recipe.name, version: project.recipe.version },
-                            upgradedAt: now,
-                        },
-                    ].slice(-10),
-                    // The reason it could not start belonged to the old lock.
-                    runtime: { driver: runtime.name, status: "stopped" },
-                    updatedAt: now,
-                };
-                if (adopting && project.runtime.status === "running") return yield* crossLive(project, candidate, upgraded);
-                if ((!live && !integrationUpdate) || adopting) {
-                    const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
-                    yield* runtimeEffects.prepare(candidate, next);
-                    return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(
-                        Effect.flatMap((written) => (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.succeed(undefined)).pipe(
-                            Effect.orElseSucceed(() => undefined),
-                            Effect.map((migrated) => migrated ? { ...written, dataMigration: migrated } : written))),
-                        Effect.onError(() => Effect.gen(function* () {
-                            // Whatever the driver moved to prepare the new recipe goes back before anything else.
-                            yield* (runtimeEffects.abandonUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
-                            // And the earlier recipe is prepared again, which restores the frozen copy and descriptor the
-                            // failed upgrade replaced; the original failure is the one reported.
-                            yield* runtimeEffects.prepare(previousEngine ? { ...project, engineVersion: previousEngine } : project, project.recipe)
-                                .pipe(Effect.orElseSucceed(() => undefined));
-                        })));
-                }
-                const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
-                upgraded.recipe = execution.recipe;
-                upgraded.capabilities = runtime.capabilities(upgraded);
-                upgraded.runtime = project.runtime;
-                const intent: ZelavisProjectRuntimeUpdateIntent = { id: crypto.randomUUID(), startedAt: now, execution,
-                    previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory, engineVersion: project.engineVersion },
-                    target: { kind: upgraded.kind, recipe: upgraded.recipe, recipeHistory: upgraded.recipeHistory, engineVersion: upgraded.engineVersion } };
-                yield* write({ ...project, runtimeUpdate: intent });
-                return yield* Effect.gen(function* () {
-                    const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
-                        ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
-                    }).pipe(Effect.asVoid)));
+                let performed: ZelavisProjectDataMigration | undefined;
+                let interrupted: ZelavisProjectRuntimeUpdateIntent | undefined;
+                // The data migration is a step of its own: requests to the Project wait only while its bound host is down for it, and the
+                // recipe update after it holds them again for its own, shorter time, so neither hold is the sum of both. It is still one
+                // request, and a Project left between the two is a migrated App on its earlier recipe, which a retry finishes.
+                const migrated = yield* withProjectLifecycle(targetId, Effect.fn("Projects.migration")(function* () {
+                    let project = yield* requireProject(targetId);
+                    // A deletion tombstone always wins over recovery of an update.
+                    if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
+                    interrupted = project.runtimeUpdate;
+                    project = yield* recoverProjectUpdate(project);
+                    (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
+                    if (upgradeInput?.engineVersion !== undefined && project.placement)
+                        return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
+                    // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
+                    // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
+                    if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
+                        setUpgradePhase(targetId, opId, "Migrating data");
+                        const report = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
+                        performed = report;
+                        if (report && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: report };
+                    }
+                    return undefined;
+                }));
+                if (migrated) return migrated;
+                const upgraded = yield* withProjectLifecycle(targetId, Effect.fn("Projects.transition")(function* () {
+                    const project = yield* requireProject(targetId);
+                    if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
+                    (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
+                    if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
+                        (upgradeInput?.engineVersion === undefined || project.engineVersion === upgradeInput.engineVersion)) return project;
+                    const willMigrateLayout = yield* changesDataLayout(project, upgradeInput?.engineVersion);
+                    const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true && !willMigrateLayout &&
+                        runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                    const integrationUpdate = runtime.capabilities(project).recipeUpdateMode === "integration" &&
+                        runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                    if (!live && !["stopped", "failed"].includes(project.runtime.status)) {
+                        return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`)));
+                    }
+                    const targetName = upgradeInput?.recipeName?.trim() || project.recipe.name;
+                    const entry = projectRecipeMap.get(targetName);
+                    if (!entry) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" is not shipped with this Platform.` +
+                            (upgradeInput?.recipeName ? "" : " Name the recipe to move this Project to."))));
+                    }
+                    // A listing only advertises a package the Marketplace would acquire: it carries no install
+                    // methods and no code, so it is installed first, as it is before a Project is created from it.
+                    if (entry.status === "available" && entry.specifier?.startsWith("npm:")) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`${entry.service.marketplace?.title ?? targetName}${entry.service.version ? ` ${entry.service.version}` : ""} is listed in the Marketplace but not installed yet. Install it, then upgrade "${project.id}".`)));
+                    }
+                    // A frontend stays a frontend and an app stays an app; a Project's kind
+                    // label follows its recipe's name, so it is re-derived below.
+                    if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
+                    }
+                    let next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                    // Whether the Project crosses from a layout its new recipe takes over (an earlier, hand-written
+                    // runtime of the same app): its processes are swapped rather than updated in place.
+                    let adopting = false;
+                    // The install method and software version are the Project's own choice, made at creation.
+                    // A newer recipe keeps them when it still offers them; otherwise the upgrade is refused.
+                    const manifest = entry.service.project?.install;
+                    if (project.recipe.install) {
+                        const kept = project.recipe.install;
+                        const offered = manifest?.methods.some((method) => method.id === kept.method && method.driver === kept.driver) &&
+                            manifest.software.some((software) => software.version === kept.software);
+                        if (!offered) {
+                            return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" no longer offers the "${kept.method}" method with software ${kept.software} this Project uses. Create a new Project to use it.`)));
+                        }
+                        next = { ...next, install: kept };
+                    } else if (manifest) {
+                        // An older layout of the same recipe can be adopted: its folders are moved, not converted.
+                        adopting = true;
+                        if (!manifest.adopt?.length) {
+                            return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with, and does not describe how to take over its files. Create a new Project to use it.`)));
+                        }
+                        const install = yield* selectInstall(entry, {});
+                        if (install) next = { ...next, install };
+                    }
+                    if (upgradeInput?.engineVersion !== undefined) yield* evaluate(() => readEngineVersion(upgradeInput as unknown as Record<string, unknown>));
+                    const selection = yield* (runtimeEffects.resolveVersion?.({ ...project, recipe: next }, upgradeInput?.engineVersion) ?? Effect.succeed(undefined));
+                    if (upgradeInput?.engineVersion !== undefined && !selection)
+                        return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installed native Zelavis App."));
+                    if (selection) next = selection.recipe;
+                    if (!next.runtimeKinds.includes(project.runtimeKind)) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`)));
+                    }
+                    if (next.name === project.recipe.name &&
+                        next.version === project.recipe.version &&
+                        project.recipe.artifact && (!selection || project.engineVersion === selection.engineVersion)) {
+                        return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" already runs ${next.name}@${next.version}.`)));
+                    }
+                    const candidate: ZelavisProjectRecord = {
+                        ...project,
+                        kind: projectKindForRecipe(next.name),
+                        recipe: next,
+                        ...(selection ? { engineVersion: selection.engineVersion } : {}),
+                    };
+                    // Refused before anything changes: an upgrade that would leave the
+                    // Project unable to start under its isolation intent is not an upgrade.
+                    const refusal = isolationRefusal(candidate);
+                    if (refusal)
+                        return (yield* Effect.fail(refusal));
+                    // Freeze the new recipe first. The driver replaces the old artifact only
+                    // once the new one is complete, so a failure here leaves the Project
+                    // exactly as it was.
+                    const now = new Date().toISOString();
+                    const isolation = assessIsolation(candidate);
+                    const upgraded: ZelavisProjectRecord = {
+                        ...candidate,
+                        capabilities: runtime.capabilities(candidate),
+                        ...(isolation ? { isolation } : {}),
+                        recipeStatus: recipeStatusOf(next),
+                        recipeHistory: [
+                            ...(project.recipeHistory ?? []),
+                            {
+                                from: { name: project.recipe.name, version: project.recipe.version },
+                                upgradedAt: now,
+                            },
+                        ].slice(-10),
+                        // The reason it could not start belonged to the old lock.
+                        runtime: { driver: runtime.name, status: "stopped" },
+                        updatedAt: now,
+                    };
+                    setUpgradePhase(targetId, opId, willMigrateLayout ? "Migrating data" : "Applying recipe update");
+                    if (adopting && project.runtime.status === "running") return yield* crossLive(project, candidate, upgraded);
+                    if ((!live && !integrationUpdate) || adopting) {
+                        const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
+                        yield* runtimeEffects.prepare(candidate, next);
+                        return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(
+                            Effect.flatMap((written) => (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.succeed(undefined)).pipe(
+                                Effect.orElseSucceed(() => undefined),
+                                Effect.map((migrated) => migrated ? { ...written, dataMigration: migrated } : written))),
+                            Effect.onError(() => Effect.gen(function* () {
+                                // Whatever the driver moved to prepare the new recipe goes back before anything else.
+                                yield* (runtimeEffects.abandonUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
+                                // And the earlier recipe is prepared again, which restores the frozen copy and descriptor the
+                                // failed upgrade replaced; the original failure is the one reported.
+                                yield* runtimeEffects.prepare(previousEngine ? { ...project, engineVersion: previousEngine } : project, project.recipe)
+                                    .pipe(Effect.orElseSucceed(() => undefined));
+                            })));
+                    }
+                    const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
+                    upgraded.recipe = execution.recipe;
                     upgraded.capabilities = runtime.capabilities(upgraded);
-                    if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
-                    return yield* write(applySnapshot(upgraded, snapshot));
-                }).pipe(Effect.onError(cause => Effect.gen(function* () {
-                    const latest = yield* requireProject(project.id);
-                    const recovery = yield* Effect.result(recoverProjectUpdate(latest));
-                    if (recovery._tag === "Failure") yield* write({ ...latest, runtimeUpdate: { ...intent, error: String(Cause.squash(cause)).slice(0, 4000) } });
-                }).pipe(Effect.orDie)));
-            }));
-            // The migration this upgrade performed, so whoever asked can tell the owner what changed.
-            return performed && !upgraded.dataMigration ? { ...upgraded, dataMigration: performed } : upgraded;
+                    upgraded.runtime = project.runtime;
+                    const intent: ZelavisProjectRuntimeUpdateIntent = { id: crypto.randomUUID(), startedAt: now, execution,
+                        previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory, engineVersion: project.engineVersion },
+                        target: { kind: upgraded.kind, recipe: upgraded.recipe, recipeHistory: upgraded.recipeHistory, engineVersion: upgraded.engineVersion } };
+                    yield* write({ ...project, runtimeUpdate: intent });
+                    return yield* Effect.gen(function* () {
+                        const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
+                            ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
+                        }).pipe(Effect.asVoid)));
+                        upgraded.capabilities = runtime.capabilities(upgraded);
+                        if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
+                        return yield* write(applySnapshot(upgraded, snapshot));
+                    }).pipe(Effect.onError(cause => Effect.gen(function* () {
+                        const latest = yield* requireProject(project.id);
+                        const recovery = yield* Effect.result(recoverProjectUpdate(latest));
+                        if (recovery._tag === "Failure") yield* write({ ...latest, runtimeUpdate: { ...intent, error: String(Cause.squash(cause)).slice(0, 4000) } });
+                    }).pipe(Effect.orDie)));
+                }));
+                // The migration this upgrade performed, so whoever asked can tell the owner what changed.
+                return performed && !upgraded.dataMigration ? { ...upgraded, dataMigration: performed } : upgraded;
+            });
+            const opId = crypto.randomUUID();
+            const startedAt = new Date().toISOString();
+            if (input?.async === true) {
+                const current = yield* requireProject(projectId);
+                yield* evaluate(() => assertProjectIsOperable(current, "upgraded"));
+                upgradeStates.set(projectId, { status: { id: opId, state: "running", startedAt, phase: "Starting upgrade" } });
+                yield* Effect.forkIn(Effect.gen(function* () {
+                    const exit = yield* Effect.exit(executeUpgrade(projectId, { ...input, async: false }, opId));
+                    const active = upgradeStates.get(projectId);
+                    if (active?.status.id !== opId) return;
+                    const completedAt = new Date().toISOString();
+                    if (Exit.isSuccess(exit)) {
+                        upgradeStates.set(projectId, {
+                            status: {
+                                id: opId,
+                                state: "completed",
+                                startedAt,
+                                completedAt,
+                                ...(exit.value.dataMigration ? { dataMigration: exit.value.dataMigration } : {}),
+                            },
+                            expiresAt: Date.now() + UPGRADE_STATUS_TTL_MS,
+                        });
+                        return;
+                    }
+                    if (closing) {
+                        upgradeStates.delete(projectId);
+                        return;
+                    }
+                    const failure = unwrapFailure(Cause.squash(exit.cause));
+                    const message = failure instanceof Error ? failure.message : String(failure);
+                    upgradeStates.set(projectId, {
+                        status: {
+                            id: opId,
+                            state: "failed",
+                            startedAt,
+                            completedAt,
+                            error: message.slice(0, 4000),
+                        },
+                        expiresAt: Date.now() + UPGRADE_STATUS_TTL_MS,
+                    });
+                }), lifecycleScope);
+                return (yield* refresh(projectId, false)) ?? withUpgradeStatus(current)!;
+            }
+            upgradeStates.set(projectId, { status: { id: opId, state: "running", startedAt, phase: "Starting upgrade" } });
+            return yield* executeUpgrade(projectId, input, opId).pipe(Effect.ensuring(Effect.sync(() => {
+                if (upgradeStates.get(projectId)?.status.id === opId) upgradeStates.delete(projectId);
+            })));
         }),
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
             yield* requireProject(id);
@@ -2854,7 +2962,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         remove: Effect.fn("Projects.remove")(function* (id: Parameters<ZelavisProjectManager["remove"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
             yield* clearStartBackoff(projectId);
-            return yield* singleFlight(deletionRuns, projectId, () => withProjectLifecycle(projectId, () => deleteProject(projectId)));
+            const removed = yield* singleFlight(deletionRuns, projectId, () => withProjectLifecycle(projectId, () => deleteProject(projectId)));
+            upgradeStates.delete(projectId);
+            return removed;
         }),
         reconcile: Effect.fn("Projects.reconcile")(function* () {
             if (closing) return;

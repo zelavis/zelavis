@@ -12,7 +12,7 @@ import { notRunning, projectContext } from "./project-context.ts";
 import { siteUrl } from "./projects-pages.ts";
 import { providerCard } from "./settings-pages.ts";
 import { servicePageScreen } from "./service-pages.ts";
-import { mediaScreen, storageScreen } from "./storage-pages.ts";
+import { formatBytes, mediaScreen, storageScreen } from "./storage-pages.ts";
 import { workloadsScreen } from "./workloads-pages.ts";
 import { contentScreen } from "./content-pages.ts";
 import { tenantsScreen } from "./tenants-pages.ts";
@@ -145,12 +145,64 @@ function extensionsScreen(base: string) {
     resourceNotice("Project Extensions", "Extend this project with official plugins, AI assistants, and domain capabilities installed from the marketplace."));
 }
 
+function backupDetails(entry: Record<string, unknown>): { readonly title: string; readonly detail: string } {
+  const name = label(entry.name, "");
+  const bytes = formatBytes(Number(entry.bytes || 0));
+  const formatMatch = /^data\.format-(\d+)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/u.exec(name);
+  const discardedMatch = /^data\.discarded-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/u.exec(name);
+  const parts = formatMatch ? formatMatch.slice(2, 8) : discardedMatch ? discardedMatch.slice(1, 7) : undefined;
+  const parsed = parts ? new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), Number(parts[3]), Number(parts[4]), Number(parts[5]))) : undefined;
+  const when = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleString() : undefined;
+  const title = entry.kind === "set-aside-by-undo"
+    ? "Rolled-back migration copy"
+    : formatMatch
+      ? `Pre-upgrade backup (format ${formatMatch[1]})`
+      : "Pre-upgrade backup";
+  return { title, detail: [when, bytes, name].filter(Boolean).join(" · ") };
+}
+
+/** Pre-upgrade backups kept on disk after a non-empty data layout migration; only fetched when opening Project Settings. */
+const retainedBackupsCard = Effect.fn("ui.projectRetainedBackups")(function*(context: ScreenContext, project: Project) {
+  const path = `${context.config.api.basePath}/runtime/projects/${encodeURIComponent(project.id)}`;
+  const entries = yield* request(`${path}/retained-data`).pipe(
+    Effect.map(result => array(object(result).retained).map(object)),
+    Effect.catch(() => Effect.succeed([] as Record<string, unknown>[])),
+  );
+  if (entries.length === 0) return undefined;
+  const total = entries.reduce((sum, entry) => sum + Number(entry.bytes || 0), 0);
+  const canRemove = canAccess(context.config.access, { permissions: ["project.runtime.manage"], scope: { type: "project", projectId: project.id } });
+  const upgrading = object(project.upgrade).state === "running";
+  const blocked = !!project.deletion || upgrading;
+  const rows = entries.map(entry => {
+    const name = label(entry.name, "");
+    const bytes = formatBytes(Number(entry.bytes || 0));
+    const info = backupDetails(entry);
+    const remove = button("Delete backup", () => {
+      if (!window.confirm(`Delete this pre-upgrade backup (${bytes})? This frees disk space and cannot be undone. ${project.name}'s live data is not affected.`)) return;
+      context.run(request(`${path}/retained-data/${encodeURIComponent(name)}`, "DELETE"), () => {
+        setFlash("Pre-upgrade backup deleted.");
+        context.refresh();
+      });
+    }, { class: "danger", ...(blocked ? { disabled: "" } : {}), "aria-label": `Delete backup ${name}` });
+    return node("div", { class: "k-row" },
+      node("div", {}, node("p", { class: "k-row-label" }, info.title), node("p", { class: "k-row-detail" }, info.detail)),
+      canRemove ? node("div", { class: "k-row-meta" }, remove) : undefined);
+  });
+  return card(`Pre-upgrade backups (${formatBytes(total)})`,
+    node("p", { class: "muted" }, "Created automatically before a data layout upgrade so you could roll back if anything went wrong. Once your app is working normally, you can safely delete these backups to free disk space. Deleting a backup never touches your live data."),
+    ...rows);
+});
+
 const settingsScreen = Effect.fn("ui.projectSettings")(function*(context: ScreenContext, project: Project) {
-  const provider = yield* providerCard(context, project.id);
+  const [provider, backups] = yield* Effect.all([
+    providerCard(context, project.id),
+    retainedBackupsCard(context, project),
+  ], { concurrency: 2 });
   return page(
     flashNotice("Saved"),
     provider,
-    rowsCard("Project identity", dataRow("Project ID", project.id, badge("draft")), dataRow("Project type", "Zelavis-native app", badge("ready"))),
+    backups,
+    rowsCard("Project identity", dataRow("Project ID", project.id, badge("draft")), dataRow("Project type", project.runtimeKind === "managed" ? "Managed app" : "Zelavis-native app", badge("ready"))),
     rowsCard("Project bindings", dataRow("Database tenant", "Project-scoped data is isolated by tenant-aware storage.")),
     resourceNotice("Global settings moved", "Appearance, runtime services, root path, and server-wide preferences are available from the footer dropdown."));
 });

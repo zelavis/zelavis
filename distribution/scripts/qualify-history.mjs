@@ -176,11 +176,9 @@ if (phase === 'create-wordpress') {
     assert.equal(after.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host now follows the Platform's engine`);
     assert.deepEqual(after.layout, { format: await releaseFormat(after.engine) }, `${site.id}: the data layout is recorded`);
     const kept = after.retained.filter((name) => name.startsWith('data.format-2-'));
-    assert.equal(kept.length, 1, `${site.id}: the format-2 data is kept (${after.retained})`);
-    const shards = await readdir(join(after.root, kept[0], 'primary', 'shards'));
-    assert.ok(shards.some((name) => name.endsWith('.sqlite')), `${site.id}: the kept data is the original shards`);
+    assert.equal(kept.length, 0, `${site.id}: empty integration store cleaned its pre-upgrade backup (${after.retained})`);
     await open(cookie, site.id);
-    console.log(`PASS: ${site.id} runs on ${after.engine} with migrated data; the format-2 data is kept in ${kept[0]}.`);
+    console.log(`PASS: ${site.id} runs on ${after.engine} with migrated empty integration store (no leftover backup).`);
   }
 } else if (phase === 'create-native') {
   // A native Zelavis App made by the last release on the way (the last that writes layout 2), with documents in its own database.
@@ -238,23 +236,24 @@ if (phase === 'create-wordpress') {
   assert.ok((await readdir(root)).every((name) => name !== 'data-migration.json'), 'the swap is settled');
   console.log(`PASS: the native App runs on ${project.engineVersion} with its documents; the format-2 data is kept in ${kept[0]}.`);
 } else if (phase === 'retained-cleanup') {
-  // The data each migration kept is listed with its size and removed by exact name; nothing else can be removed and the live data stays.
+  // Non-empty migrated data is listed with its size and removed by exact name; empty migrated integration stores already cleaned up.
   const { cookie, client } = await sdk();
   const state = await readState();
-  const ids = [state.native.id, ...sites(state).map((site) => site.id)];
-  for (const id of ids) {
-    const listed = await client.projects.retainedData(id);
-    assert.equal(listed.length, 1, `${id}: one retained directory (${JSON.stringify(listed)})`);
-    assert.equal(listed[0].kind, 'replaced-by-migration');
-    assert.ok(listed[0].bytes > 0, `${id}: the kept data has a size`);
-    for (const wrong of ['data', '../data', 'data.format-2-nothere']) await assert.rejects(client.projects.removeRetainedData(id, wrong), `${id}: "${wrong}" is refused`);
-    const root = id === state.native.id ? join(projects, id, '.zelavis') : join(projects, id, '.zelavis', 'integration');
-    assert.ok((await readdir(root)).includes(listed[0].name), `${id}: still there after the refused removals`);
-    await client.projects.removeRetainedData(id, listed[0].name);
-    assert.deepEqual(await client.projects.retainedData(id), [], `${id}: nothing retained any more`);
-    assert.ok(!(await readdir(root)).includes(listed[0].name), `${id}: the directory is gone`);
-    console.log(`PASS: ${id}: ${listed[0].name} (${listed[0].bytes} bytes) listed and removed; wrong names refused.`);
+  for (const site of sites(state)) {
+    assert.deepEqual(await client.projects.retainedData(site.id), [], `${site.id}: empty integration store has no leftover backup`);
   }
+  const id = state.native.id;
+  const listed = await client.projects.retainedData(id);
+  assert.equal(listed.length, 1, `${id}: one retained directory (${JSON.stringify(listed)})`);
+  assert.equal(listed[0].kind, 'replaced-by-migration');
+  assert.ok(listed[0].bytes > 0, `${id}: the kept data has a size`);
+  for (const wrong of ['data', '../data', 'data.format-2-nothere']) await assert.rejects(client.projects.removeRetainedData(id, wrong), `${id}: "${wrong}" is refused`);
+  const root = join(projects, id, '.zelavis');
+  assert.ok((await readdir(root)).includes(listed[0].name), `${id}: still there after the refused removals`);
+  await client.projects.removeRetainedData(id, listed[0].name);
+  assert.deepEqual(await client.projects.retainedData(id), [], `${id}: nothing retained any more`);
+  assert.ok(!(await readdir(root)).includes(listed[0].name), `${id}: the directory is gone`);
+  console.log(`PASS: ${id}: ${listed[0].name} (${listed[0].bytes} bytes) listed and removed; wrong names refused.`);
   for (const [docId, body] of Object.entries(state.native.notes)) assert.deepEqual((await client.data(state.native.id).documents.get('notes', docId)).data, body, `document ${docId} still reads`);
   for (const site of sites(state)) await open(cookie, site.id);
   console.log('PASS: removing the retained data left every live database and site working.');

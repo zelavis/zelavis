@@ -1,14 +1,16 @@
 import { Effect } from "effect";
 import { ApiError, array, label, object, request } from "./api.ts";
 import { button, empty, link, message, node } from "./dom.ts";
-import { badge, card, columns, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
+import { badge, card, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
-import { formatBytes } from "./storage-pages.ts";
 import { runtimeStatusText, standbyFact } from "./project-standby.ts";
 import { canAccess } from "./navigation-menu.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
+
+const trackedUpgrades = new Map<string, { readonly id: string; readonly mode: "recipe" | "version" }>();
+const announcedUpgrades = new Set<string>();
 
 interface Recipe {
   name: string;
@@ -59,6 +61,33 @@ const dateText = (value: unknown) => { const date = new Date(label(value, "")); 
 const select = (name: string, aria: string, options: readonly (readonly [value: string, text: string, disabled?: boolean])[], selected: string) =>
   dropdown({ name, label: aria, value: selected }, options.map(([value, text, disabled]) => ({ value, label: text, ...(disabled ? { disabled } : {}) })));
 
+/** What a data-layout migration changed, for the line shown after an upgrade; an upgrade that migrated nothing leaves the data as it was. */
+function migrationSummary(value: unknown): string {
+  const migration = object(value);
+  if (migration.from === undefined || migration.to === undefined) return "Its data is unchanged.";
+  const docs = Number(migration.documents ?? 0);
+  const events = Number(migration.eventsCarried ?? 0);
+  const restarted = Number(migration.documentsWithHistoryDropped ?? 0);
+  if (docs === 0 && events === 0 && migration.retained === undefined) {
+    return `Its data layout moved from format ${label(migration.from)} to format ${label(migration.to)}.`;
+  }
+  const backup = typeof migration.retained === "string"
+    ? " A pre-upgrade backup was kept under Project Settings until you delete it."
+    : "";
+  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${docs} documents recreated with their versions, ${events} change events carried${restarted > 0 ? `; ${restarted} documents of compacted Tenants kept their versions without their earlier change history` : ""}).${backup}`;
+}
+
+function upgradeDoneMessage(project: Record<string, unknown>, mode: "recipe" | "version", fallbackVersion?: string): string {
+  const name = label(project.name);
+  const upgrade = object(project.upgrade);
+  const migration = upgrade.dataMigration ?? project.dataMigration;
+  if (mode === "version") {
+    return `${name} now uses Zelavis ${label(project.engineVersion, fallbackVersion ?? "")}. ${migrationSummary(migration)}`;
+  }
+  const next = object(project.recipe);
+  return `${name} now uses ${label(next.name)}${next.version ? ` ${label(next.version)}` : ""}. ${migrationSummary(migration)} ${object(project.runtime).status === "running" ? "It is running at the same address." : "Start it when you are ready."}`;
+}
+
 export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*(context: ScreenContext) {
   const api = context.config.api.basePath;
   const list = array(object(yield* request(`${api}/runtime/projects`)).projects).map(object);
@@ -68,8 +97,25 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   const showCreate = params.get("new") === "1";
   const recipes = recipesOf(context.config);
   const canCreate = canAccess(context.config.access, { permissions: ["projects.create"] });
-  const flash = flashNotice("Project updated");
   const say = setFlash;
+
+  // Catch fast async upgrades that already finished before this refresh landed.
+  for (const entry of list) {
+    const id = label(entry.id, "");
+    const up = entry.upgrade ? object(entry.upgrade) : undefined;
+    if (up?.state === "running" && typeof up.id === "string" && !trackedUpgrades.has(id)) {
+      trackedUpgrades.set(id, { id: up.id, mode: "recipe" });
+    } else if (up?.state === "completed" && typeof up.id === "string" && trackedUpgrades.get(id)?.id === up.id && !announcedUpgrades.has(up.id)) {
+      const tracked = trackedUpgrades.get(id)!;
+      announcedUpgrades.add(up.id);
+      trackedUpgrades.delete(id);
+      say(upgradeDoneMessage(entry, tracked.mode));
+    } else if (up?.state === "failed" && typeof up.id === "string" && trackedUpgrades.get(id)?.id === up.id) {
+      trackedUpgrades.delete(id);
+    }
+  }
+
+  const flash = flashNotice("Project updated");
   const act = (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) =>
     context.run(effect, result => { const text = done(object(result)); if (text) say(text); context.refresh(); });
 
@@ -114,7 +160,7 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
         ...(selected?.hasInstall && params.get("software") ? { softwareVersion: params.get("software") } : {}),
         ...(packages.checked ? { installHostPackages: true } : {})
       };
-      context.run(request(`${api}/runtime/projects`, "POST", body).pipe(Effect.ensuring(Effect.sync(() => submit.removeAttribute("disabled")))), result => {
+      context.run(request(`${api}/runtime/projects`, "POST", body, undefined, 120).pipe(Effect.ensuring(Effect.sync(() => submit.removeAttribute("disabled")))), result => {
         say(`${label(object(object(result).project).name)} is running in its own project runtime.`);
         context.setSearch({ new: undefined, name: undefined, recipe: undefined, engineVersion: undefined, method: undefined, software: undefined });
       });
@@ -134,23 +180,67 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   const versionData = versionTarget
     ? object(yield* request(`${api}/runtime/projects/${encodeURIComponent(versionProject)}/versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))))
     : undefined;
-  // Data an earlier upgrade kept beside a Project's live data: a read per Project, a few at a time, and a failed read only hides the panel.
-  const retained = new Map<string, readonly Record<string, unknown>[]>(yield* Effect.forEach(visible, project => {
-    const projectId = label(project.id, "");
-    return request(`${api}/runtime/projects/${encodeURIComponent(projectId)}/retained-data`).pipe(
-      Effect.map(result => [projectId, array(object(result).retained).map(object)] as const),
-      Effect.catch(() => Effect.succeed([projectId, []] as const)));
-  }, { concurrency: 4 }));
-  const cards = visible.map(project => projectCard(context, project, recipes, act, label(project.id, "") === versionProject ? versionData : undefined, retained.get(label(project.id, "")) ?? []));
+
+  const phaseNodes = new Map<string, HTMLElement>();
+  const activeIds = new Set<string>();
+  for (const project of list) {
+    const id = label(project.id, "");
+    const up = project.upgrade ? object(project.upgrade) : undefined;
+    const rtUpdate = project.runtimeUpdate ? object(project.runtimeUpdate) : undefined;
+    if (up?.state === "running" || (rtUpdate !== undefined && typeof rtUpdate.error !== "string")) {
+      activeIds.add(id);
+    }
+  }
+
+  const cards = visible.map(project => projectCard(context, project, recipes, act, phaseNodes, label(project.id, "") === versionProject ? versionData : undefined));
   if (cards.length) sections.push(node("div", { class: "k-grid cols-3" }, ...cards));
   else if (list.length === 0) sections.push(canCreate
     ? empty("No projects yet", "Create a Zelavis App project to start its independent local runtime.")
     : empty("No projects assigned", "Your account can access Projects after an administrator assigns a Project grant."));
   else sections.push(resourceNotice("No matching projects", "Try a different project search."));
+
+  if (activeIds.size > 0) {
+    yield* Effect.forkScoped(Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep("1500 millis");
+        const polled = yield* request(`${api}/runtime/projects`).pipe(
+          Effect.map(result => array(object(result).projects).map(object)),
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+        if (!polled) continue;
+        let shouldRefresh = false;
+        for (const id of activeIds) {
+          const current = polled.find(entry => label(entry.id, "") === id);
+          const up = current?.upgrade ? object(current.upgrade) : undefined;
+          const rtUpdate = current?.runtimeUpdate ? object(current.runtimeUpdate) : undefined;
+          const stillRunning = up?.state === "running" || (rtUpdate !== undefined && typeof rtUpdate.error !== "string");
+          if (!stillRunning) {
+            if (current && up?.state === "completed" && typeof up.id === "string" && !announcedUpgrades.has(up.id)) {
+              const tracked = trackedUpgrades.get(id);
+              announcedUpgrades.add(up.id);
+              trackedUpgrades.delete(id);
+              say(upgradeDoneMessage(current, tracked?.mode ?? "recipe"));
+            } else if (up?.state === "failed") {
+              trackedUpgrades.delete(id);
+            }
+            shouldRefresh = true;
+          } else if (typeof up?.phase === "string") {
+            const phaseNode = phaseNodes.get(id);
+            if (phaseNode) phaseNode.textContent = `${up.phase}…`;
+          }
+        }
+        if (shouldRefresh) {
+          context.refresh();
+          return;
+        }
+      }
+    }));
+  }
+
   return page(...sections);
 });
 
-function projectCard(context: ScreenContext, project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, versions?: Record<string, unknown>, retained: readonly Record<string, unknown>[] = []) {
+function projectCard(context: ScreenContext, project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, phaseNodes: Map<string, HTMLElement>, versions?: Record<string, unknown>) {
   const api = context.config.api.basePath;
   const id = label(project.id, "");
   const name = label(project.name);
@@ -160,17 +250,19 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   const status = label(runtime.status, "stopped");
   const deletion = project.deletion ? object(project.deletion) : undefined;
   const update = project.runtimeUpdate ? object(project.runtimeUpdate) : undefined;
+  const upgrade = project.upgrade ? object(project.upgrade) : undefined;
+  const upgrading = upgrade?.state === "running";
   const recipeStatus = project.recipeStatus ? object(project.recipeStatus) : undefined;
   const capabilities = object(project.capabilities);
   const running = status === "running" && !deletion;
   const site = siteUrl(project, context.url);
   const preview = object(project.preview);
-  const blocked = !!deletion || !!update;
+  const blocked = !!deletion || !!update || upgrading;
   const allowed = (permission: string) => canAccess(context.config.access, { permissions: [permission], scope: { type: "project", projectId: id } });
   const managesRuntime = allowed("project.runtime.manage");
 
   const body: Node[] = [
-    node("div", { class: "toolbar" }, node("div", {}, node("h2", {}, name), node("code", {}, id)), badge(runtimeStatusText(status))),
+    node("div", { class: "toolbar" }, node("div", {}, node("h2", {}, name), node("code", {}, id)), badge(upgrading ? "upgrading" : runtimeStatusText(status))),
     facts([
       ["Recipe", `${label(recipe.title, label(recipe.name))}${recipe.version ? ` ${label(recipe.version)}` : ""}`],
       ["Runtime", `${label(project.runtimeKind, "native")} · ${label(runtime.driver)}`],
@@ -187,10 +279,11 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   if (typeof runtime.error === "string") body.push(message(runtime.error, true));
   if (typeof preview.error === "string") body.push(message(preview.error, true));
 
-  if (managesRuntime && (update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout)) body.push(upgradeNotice(project, recipes, act, path));
+  if (managesRuntime && (upgrading || upgrade?.state === "failed" || update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout)) {
+    body.push(upgradeNotice(project, recipes, act, path, phaseNodes));
+  }
 
   if (versions) body.push(versionPanel(context, project, path, act, versions));
-  if (retained.length > 0) body.push(retainedPanel(project, retained, act, path, blocked, managesRuntime));
 
   const actions: HTMLElement[] = [];
   if (managesRuntime && recipe.name === "@zelavis/app" && capabilities.independentRuntimeVersion) {
@@ -198,84 +291,80 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   }
   if (allowed("project.view")) actions.push(running ? link("Open", `/projects/${encodeURIComponent(id)}`, { class: "primary" }) : button("Open", () => {}, { disabled: "", title: "Start the Project to open it" }));
   if (managesRuntime) {
-    actions.push(button(running ? "Stop" : "Start", () => act(request(`${path}/${running ? "stop" : "start"}`, "POST", {}), () => `${name} ${running ? "stopped" : "started"}.`), blocked && !running || deletion || update && !running ? { disabled: "" } : {}));
-    actions.push(button("Restart", () => act(request(`${path}/restart`, "POST", {}), () => `${name} restarted.`), blocked || status === "provisioning" ? { disabled: "" } : {}));
+    actions.push(button(running ? "Stop" : "Start", () => act(request(`${path}/${running ? "stop" : "start"}`, "POST", {}, undefined, 120), () => `${name} ${running ? "stopped" : "started"}.`), blocked && !running || deletion || (update || upgrading) ? { disabled: "" } : {}));
+    actions.push(button("Restart", () => act(request(`${path}/restart`, "POST", {}, undefined, 120), () => `${name} restarted.`), blocked || status === "provisioning" ? { disabled: "" } : {}));
   }
   if (allowed("project.delete")) actions.push(button(deletion ? "Retry deletion" : "Delete", () => {
-    if (window.confirm(deletion ? `Retry deletion of ${name}? This permanently removes the remaining project runtime, database, files, and metadata.` : `Delete ${name}? This permanently removes the project runtime, database, files, and metadata.`)) act(request(path, "DELETE"), () => `${name} was deleted.`);
-  }, { class: "danger" }));
+    if (window.confirm(deletion ? `Retry deletion of ${name}? This permanently removes the remaining project runtime, database, files, and metadata.` : `Delete ${name}? This permanently removes the project runtime, database, files, and metadata.`)) act(request(path, "DELETE", undefined, undefined, 120), () => `${name} was deleted.`);
+  }, { class: "danger", ...(upgrading ? { disabled: "" } : {}) }));
   if (allowed("project.view") && canAccess(context.config.access, { permissions: ["assistant.use"] })) actions.push(link("Ask Assistant", `/assistant?project=${encodeURIComponent(id)}`, { "aria-label": `Ask Assistant about ${name}` }));
   body.push(node("div", { class: "actions" }, ...actions));
   return node("article", { class: "k-card" }, ...body);
 }
 
-/** Data an upgrade's migration kept beside the Project's live data, with its size; removing one cannot be undone, so its exact name is typed to confirm. */
-function retainedPanel(project: Record<string, unknown>, entries: readonly Record<string, unknown>[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string, blocked: boolean, canRemove: boolean) {
-  const total = entries.reduce((sum, entry) => sum + Number(entry.bytes || 0), 0);
-  const rows = entries.map(entry => {
-    const name = label(entry.name, "");
-    const what = entry.kind === "set-aside-by-undo" ? "Migrated copy set aside when an upgrade was undone" : "Data as it was before an upgrade migrated it";
-    const remove = button("Remove", () => {
-      const typed = window.prompt(`${what}.\n\nRemoving ${name} frees ${formatBytes(Number(entry.bytes || 0))} and cannot be undone; ${label(project.name)}'s live data is not touched.\n\nType the name to confirm:`);
-      if (typed !== name) return;
-      act(request(`${path}/retained-data/${encodeURIComponent(name)}`, "DELETE"), () => `Removed ${name}.`);
-    }, { class: "danger", ...(blocked ? { disabled: "" } : {}), "aria-label": `Remove ${name}` });
-    return node("li", {}, node("code", {}, name), node("span", { class: "muted" }, ` · ${what} · ${formatBytes(Number(entry.bytes || 0))} `), canRemove ? remove : undefined);
-  });
-  return node("div", { class: "notice", "aria-label": "Retained data" },
-    node("strong", {}, `Retained data (${formatBytes(total)})`),
-    node("p", { class: "muted" }, "Kept so an upgrade that migrated this Project's data can be undone by hand. It is never removed automatically."),
-    node("ul", {}, ...rows));
-}
-
-/** What a data-layout migration changed, for the line shown after an upgrade; an upgrade that migrated nothing leaves the data as it was. */
-function migrationSummary(value: unknown): string {
-  const migration = object(value);
-  if (migration.retained === undefined) return "Its data is unchanged.";
-  const restarted = Number(migration.documentsWithHistoryDropped);
-  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated with their versions, ${label(migration.eventsCarried)} change events carried${restarted > 0 ? `; ${restarted} documents of compacted Tenants kept their versions without their earlier change history` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
-}
-
-function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string) {
-  const name = label(project.name);
+function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string, phaseNodes: Map<string, HTMLElement>) {
+  const id = label(project.id, "");
   const runtime = object(project.runtime);
   const capabilities = object(project.capabilities);
   const status = object(project.recipeStatus);
+  const activeUpgrade = project.upgrade ? object(project.upgrade) : undefined;
   const idle = runtime.status === "stopped" || runtime.status === "failed";
   const live = runtime.status === "running" && capabilities.zeroDowntimeUpdates === true;
   const integration = capabilities.recipeUpdateMode === "integration";
   const restarts = runtime.status === "running" && !live && !integration;
   const canUpgrade = idle || live || restarts;
-  const upgrade = (recipeName?: string) => act(request(`${path}/upgrade`, "POST", { restart: true, ...(recipeName ? { recipeName } : {}) }), result => {
+  const upgrade = (recipeName?: string) => act(request(`${path}/upgrade`, "POST", { restart: true, async: true, ...(recipeName ? { recipeName } : {}) }), result => {
     const upgraded = object(result.project ?? result);
-    const next = object(upgraded.recipe);
-    return `${name} now uses ${label(next.name)}${next.version ? ` ${label(next.version)}` : ""}. ${migrationSummary(object(result.project ?? result).dataMigration)} ${object(upgraded.runtime).status === "running" ? "It is running at the same address." : "Start it when you are ready."}`;
+    const up = upgraded.upgrade ? object(upgraded.upgrade) : undefined;
+    if (up?.state === "running" && typeof up.id === "string") {
+      trackedUpgrades.set(id, { id: up.id, mode: "recipe" });
+      return undefined;
+    }
+    return upgradeDoneMessage(upgraded, "recipe");
   });
   if (project.deletion) return node("div");
+  if (activeUpgrade?.state === "running") {
+    const phase = node("p", { class: "muted" }, typeof activeUpgrade.phase === "string" ? `${activeUpgrade.phase}…` : "Applying update…");
+    phaseNodes.set(id, phase);
+    return node("div", { class: "notice", "aria-label": "Project upgrade in progress" },
+      node("strong", {}, "Upgrade in progress"),
+      phase);
+  }
   if (project.runtimeUpdate) {
     const update = object(project.runtimeUpdate);
     return node("div", { class: "notice", "aria-label": "Project update" }, node("strong", {}, update.error ? "Update recovery required" : "Update in progress"),
       ...(typeof update.error === "string" ? [node("p", { class: "danger" }, update.error), button("Retry update", () => upgrade())] : []));
   }
+  const failedUpgrade = activeUpgrade?.state === "failed" && typeof activeUpgrade.error === "string" ? activeUpgrade.error : undefined;
   const layout = object(project.dataLayout);
+  const needsAction = layout.state === "upgradeRequired" || status.state === "upgradeAvailable" || status.state === "unavailable";
+  if (!needsAction && failedUpgrade) {
+    return node("div", { class: "notice error", "aria-label": "Recipe upgrade failed" },
+      node("strong", {}, "Upgrade failed"),
+      node("p", {}, failedUpgrade));
+  }
   const copy = layout.state === "upgradeRequired"
-    ? `This app's Zelavis data is in an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating moves it to format ${label(layout.to)}: your data, its document versions and its change history are kept (a compacted history keeps what compaction left), and the previous data is retained until you remove it.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
+    ? `This app's Zelavis data uses an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating migrates it to format ${label(layout.to)}, preserving your data and keeping a pre-upgrade backup under Project Settings if any data was present.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
     : status.state === "upgradeAvailable"
     ? integration
       ? `A newer recipe is available: ${label(status.version)}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
       : `A newer recipe is available: ${label(status.version)}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`
     : `${label(status.reason, "")} Choose a recipe to move this Project to; its data is kept${restarts ? ", and it is restarted for the move" : ""}.`;
   const target = dropdown({ label: "Recipe to move to" }, recipes.map(recipe => ({ value: recipe.name, label: recipe.title })));
-  const go = button(integration ? "Update recipe" : "Upgrade recipe", () => upgrade(status.state === "unavailable" ? target.value : undefined));
+  const go = button(failedUpgrade ? "Retry update" : integration ? "Update recipe" : "Upgrade recipe", () => upgrade(status.state === "unavailable" ? target.value : undefined));
   if (!canUpgrade || status.state === "unavailable" && recipes.length === 0) go.setAttribute("disabled", "");
-  return node("div", { class: "notice", "aria-label": "Recipe upgrade" }, node("p", {}, copy), ...(status.state === "unavailable" ? [target] : []), go,
+  return node("div", { class: failedUpgrade ? "notice error" : "notice", "aria-label": "Recipe upgrade" },
+    ...(failedUpgrade ? [node("strong", {}, "Last upgrade failed"), node("p", {}, failedUpgrade)] : []),
+    node("p", {}, copy), ...(status.state === "unavailable" ? [target] : []), go,
     ...(canUpgrade ? [] : [node("span", { class: "muted" }, "Wait for the Project to finish starting or stopping.")]));
 }
 
 function versionPanel(context: ScreenContext, project: Record<string, unknown>, path: string, act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, versions: Record<string, unknown>) {
+  const id = label(project.id, "");
   const current = typeof versions.current === "string" ? versions.current : "";
   const choice = context.url.searchParams.get("engineVersion") ?? "";
-  const blocked = !!project.deletion || !!project.runtimeUpdate || versions.selectable !== true;
+  const upgrading = object(project.upgrade).state === "running";
+  const blocked = !!project.deletion || !!project.runtimeUpdate || upgrading || versions.selectable !== true;
   const pick = select("version", "Zelavis version", [...(current ? [] : [["", "Choose a version"] as const]), ...array(versions.versions).map(object).map(entry => [label(entry.version, ""), `${label(entry.version)}${entry.status !== "available" ? " (unavailable)" : ""}`, entry.status !== "available"] as const)], choice || current);
   if (blocked) pick.setAttribute("disabled", "");
   pick.addEventListener("change", () => context.setSearch({ engineVersion: pick.value || undefined }));
@@ -286,13 +375,20 @@ function versionPanel(context: ScreenContext, project: Record<string, unknown>, 
   const name = label(project.name);
   const apply = crossesLayout
     ? button("Stop, migrate and switch", () => {
-      if (!window.confirm(`Stop ${name}, move its data from layout ${label(versions.currentDataFormat)} to ${label(chosen?.dataFormat)} and start it on Zelavis ${choice}? It is unavailable while this runs; the previous data is kept until you remove it.`)) return;
-      act(request(`${path}/upgrade`, "POST", { engineVersion: choice, restart: true }), result => {
-        const upgraded = object(result.project ?? result);
-        return `${name} now uses Zelavis ${label(upgraded.engineVersion, choice)}. ${migrationSummary(upgraded.dataMigration)}`;
+      if (!window.confirm(`Stop ${name}, move its data from layout ${label(versions.currentDataFormat)} to ${label(chosen?.dataFormat)} and start it on Zelavis ${choice}? It is unavailable while this runs. A pre-upgrade backup is kept under Project Settings if any data was present.`)) return;
+      context.run(request(`${path}/upgrade`, "POST", { engineVersion: choice, restart: true, async: true }), result => {
+        const upgraded = object(object(result).project ?? result);
+        const up = upgraded.upgrade ? object(upgraded.upgrade) : undefined;
+        if (up?.state === "running" && typeof up.id === "string") {
+          trackedUpgrades.set(id, { id: up.id, mode: "version" });
+          context.setSearch({ versionProject: undefined, engineVersion: undefined });
+          return;
+        }
+        setFlash(upgradeDoneMessage(upgraded, "version", choice));
+        context.setSearch({ versionProject: undefined, engineVersion: undefined });
       });
     }, { class: "primary", ...(blocked ? { disabled: "" } : {}) })
-    : button("Switch version", () => act(request(`${path}/version`, "POST", { version: pick.value }), result => `${name} now uses Zelavis ${label(object(result.project).engineVersion, pick.value)}.`), { class: "primary", ...(blocked || !choice || choice === current ? { disabled: "" } : {}) });
+    : button("Switch version", () => act(request(`${path}/version`, "POST", { version: pick.value }, undefined, 120), result => `${name} now uses Zelavis ${label(object(result.project).engineVersion, pick.value)}.`), { class: "primary", ...(blocked || !choice || choice === current ? { disabled: "" } : {}) });
   return node("div", { class: "notice", "aria-label": "App version" },
     node("p", {}, `Current Zelavis version: ${current || label(project.engineVersion, "Unavailable")}`),
     node("p", { class: "muted" }, crossesLayout

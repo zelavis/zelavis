@@ -6409,11 +6409,13 @@ function resolvePlatformEndpointGroup(
                   },
                   engineVersion: { type: "string", description: "Exact installed native App engine; defaults to the latest qualified engine." },
                   restart: { type: "boolean", description: "Stop a running Project that cannot be upgraded live, and start it again afterwards." },
+                  async: { type: "boolean", description: "Start the upgrade in the background and return immediately with live upgrade status." },
                 },
               },
             },
             responses: {
               200: { description: "Project upgraded" },
+              202: { description: "Project upgrade started in the background" },
               400: { description: "Recipe not shipped, or not usable for this Project" },
               404: { description: "No such Project" },
               409: { description: "Project cannot upgrade in its current lifecycle state, or already uses that selection" },
@@ -6435,21 +6437,26 @@ function resolvePlatformEndpointGroup(
             if (!projects) {
               return unavailableProjectsResponse();
             }
-              const input = yield* evaluate(() => body === undefined || body === null || body === "" ? {} : readBodyObject(body));
-              const recipeName = typeof input.recipeName === "string" ? input.recipeName : undefined;
-              if (input.restart !== undefined && typeof input.restart !== "boolean") {
-                return yield* Effect.fail(new ZelavisProjectValidationError("restart must be true or false."));
-              }
-              return {
-                status: 200,
-                body: {
-                  project: yield* integration(() => projects!.upgrade(params.projectId ?? "", {
-                    ...(recipeName ? { recipeName } : {}),
-                    ...(input.restart === true ? { restart: true } : {}),
-                    ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
-                  })),
-                },
-              };
+            const input = yield* evaluate(() => body === undefined || body === null || body === "" ? {} : readBodyObject(body));
+            const recipeName = typeof input.recipeName === "string" ? input.recipeName : undefined;
+            if (input.restart !== undefined && typeof input.restart !== "boolean") {
+              return yield* Effect.fail(new ZelavisProjectValidationError("restart must be true or false."));
+            }
+            if (input.async !== undefined && typeof input.async !== "boolean") {
+              return yield* Effect.fail(new ZelavisProjectValidationError("async must be true or false."));
+            }
+            const asyncMode = input.async === true;
+            return {
+              status: asyncMode ? 202 : 200,
+              body: {
+                project: yield* integration(() => projects!.upgrade(params.projectId ?? "", {
+                  ...(recipeName ? { recipeName } : {}),
+                  ...(input.restart === true ? { restart: true } : {}),
+                  ...(asyncMode ? { async: true } : {}),
+                  ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
+                })),
+              },
+            };
           }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {

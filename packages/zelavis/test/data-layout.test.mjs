@@ -142,3 +142,35 @@ test("retained data is listed with its size and removed only by an exact name, n
     assert.equal(await shard(join(paths.zelavis, "data", "primary", "shards"), "new.sqlite"), "format four", "removing retained data never touches the live data");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("finalizeMigration auto-cleans empty pre-upgrade backups after commit but keeps non-empty backups", async () => {
+  const { listRetainedData } = await import("../dist/adapters/_node-data-layout.js");
+  const { finalizeMigration } = await import("../dist/adapters/_node-project-runtime.js");
+
+  // Empty migrated database: auto-cleaned after commit, retained omitted from report, live data untouched.
+  const emptyCase = await project();
+  try {
+    const { retained } = await run(swapInMigratedData(emptyCase.paths, { migratedShards: emptyCase.migrated, from: 2, to: 5, stamp: "empty1" }));
+    await run(commitDataSwap(emptyCase.paths));
+    const report = await run(finalizeMigration(emptyCase.paths, {
+      empty: true,
+      report: { from: 2, to: 5, tenants: 0, collections: 0, documents: 0, eventsCarried: 0, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 0, retained },
+    }));
+    assert.equal(report?.retained, undefined, "empty backup name is omitted once auto-cleaned");
+    assert.deepEqual(await run(listRetainedData(emptyCase.paths)), [], "empty backup directory is removed after commit");
+    assert.equal(await shard(join(emptyCase.paths.zelavis, "data", "primary", "shards"), "new.sqlite"), "format four", "live data stays intact");
+  } finally { await rm(emptyCase.root, { recursive: true, force: true }); }
+
+  // Non-empty migrated database: backup stays on disk and retained is reported.
+  const dataCase = await project();
+  try {
+    const { retained } = await run(swapInMigratedData(dataCase.paths, { migratedShards: dataCase.migrated, from: 2, to: 5, stamp: "data1" }));
+    await run(commitDataSwap(dataCase.paths));
+    const report = await run(finalizeMigration(dataCase.paths, {
+      empty: false,
+      report: { from: 2, to: 5, tenants: 1, collections: 1, documents: 3, eventsCarried: 3, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 0, retained },
+    }));
+    assert.equal(report?.retained, retained, "non-empty backup name is preserved");
+    assert.deepEqual((await run(listRetainedData(dataCase.paths))).map((entry) => entry.name), [retained], "non-empty backup directory stays on disk");
+  } finally { await rm(dataCase.root, { recursive: true, force: true }); }
+});

@@ -636,7 +636,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.ok(created?.id && created.runtime.status === "running");
   console.log("Action: native Projects create form preserves URL-backed input and creates a real App runtime.");
 
-  // Data a migration kept beside a Project's live data is listed on its card with its size, and removed only by typing its exact name.
+  // Pre-upgrade backups stay off the /projects overview cards and live under Project Settings with plain-language confirm deletion.
   const retainedName = "data.format-2-20261101T000000Z";
   const retainedDir = join(data, "projects", "parity-lab", ".zelavis", retainedName);
   yield* io(() => mkdir(join(retainedDir, "primary", "shards"), { recursive: true }));
@@ -644,17 +644,21 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* visit("/projects");
   yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).fill("Parity laboratory"));
   yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).press("Enter"));
-  const panel = page.getByLabel("Retained data", { exact: true });
-  yield* io(() => panel.getByText(retainedName, { exact: true }).waitFor());
-  assert.match(yield* io(() => panel.innerText()), /2(\.0)? KB|2048 B|2 KiB/i, "the panel shows what the kept data weighs");
-  const wrongName = yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { resolve(dialog.message()); dialog.accept("not the name"); }); panel.getByRole("button", { name: `Remove ${retainedName}`, exact: true }).click(); }));
-  assert.match(wrongName, new RegExp(retainedName), "the prompt names what is being removed");
-  assert.ok(yield* io(() => stat(retainedDir).then(() => true, () => false)), "a wrong confirmation removes nothing");
-  yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { dialog.accept(retainedName); resolve(); }); panel.getByRole("button", { name: `Remove ${retainedName}`, exact: true }).click(); }));
-  yield* io(() => page.getByText(`Removed ${retainedName}.`, { exact: true }).waitFor());
-  assert.ok(!(yield* io(() => stat(retainedDir).then(() => true, () => false))), "typing the exact name removes the directory");
-  assert.equal(yield* io(() => page.getByLabel("Retained data", { exact: true }).count()), 0, "the panel goes with the data");
-  console.log("Action: a Project card lists retained data with its size and removes it only after its exact name is typed.");
+  assert.equal(yield* io(() => page.getByText(retainedName, { exact: false }).count()), 0, "overview cards do not show pre-upgrade backups");
+  yield* visit("/projects/parity-lab/settings");
+  const backupHeading = page.getByRole("heading", { name: /Pre-upgrade backups \(2(\.0)? KB\)/i });
+  yield* io(() => backupHeading.waitFor());
+  const backupCard = backupHeading.locator("..");
+  yield* io(() => backupCard.getByText("Pre-upgrade backup (format 2)", { exact: true }).waitFor());
+  const deleteButton = backupCard.getByRole("button", { name: `Delete backup ${retainedName}`, exact: true });
+  const dismissed = yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { resolve(dialog.message()); dialog.dismiss(); }); deleteButton.click(); }));
+  assert.match(dismissed, /pre-upgrade backup/i, "the confirm dialog explains what is being deleted");
+  assert.ok(yield* io(() => stat(retainedDir).then(() => true, () => false)), "canceling the dialog removes nothing");
+  yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { dialog.accept(); resolve(); }); deleteButton.click(); }));
+  yield* io(() => page.getByText("Pre-upgrade backup deleted.", { exact: true }).waitFor());
+  assert.ok(!(yield* io(() => stat(retainedDir).then(() => true, () => false))), "confirming deletes the backup directory");
+  assert.equal(yield* io(() => page.getByRole("heading", { name: /Pre-upgrade backups/i }).count()), 0, "the card disappears once all backups are deleted");
+  console.log("Action: pre-upgrade backups appear in Project Settings (not /projects cards) and delete cleanly after confirm.");
 
   yield* visit("/settings/appearance");
   yield* io(() => page.getByLabel("Theme", { exact: true }).click());
@@ -704,7 +708,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.getByRole("button", { name: "Stop, migrate and switch", exact: true }).click());
   yield* io(() => page.getByText("now uses Zelavis 2.0.0-alpha.43", { exact: false }).first().waitFor());
   yield* io(() => page.getByText("9 change events carried", { exact: false }).first().waitFor());
-  assert.deepEqual(upgrades, [{ engineVersion: "2.0.0-alpha.43", restart: true }], "Crossing a data layout sends the restarting upgrade with the chosen engine");
+  assert.deepEqual(upgrades, [{ engineVersion: "2.0.0-alpha.43", restart: true, async: true }], "Crossing a data layout sends the async restarting upgrade with the chosen engine");
   yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/upgrade", upgradeRequests));
   yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/versions", versionChoices));
   console.log("Action: Manage version sends a switch across a data layout as the restarting upgrade, and a same-layout switch as the plain one.");

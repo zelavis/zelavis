@@ -1523,8 +1523,10 @@ export interface ZelavisProjectsClient {
    * `restart: true` takes a running Project down for an upgrade that cannot be done live, and starts
    * it again afterwards (also when the upgrade fails). Without it that upgrade is refused (409)
    * until the Project is stopped.
+   * `async: true` starts the upgrade in the background (HTTP 202) and returns immediately with
+   * `project.upgrade.state === "running"` so callers can poll `list()` or `get(projectId)`.
    */
-  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string; readonly restart?: boolean }): Promise<ZelavisProjectRecord>;
+  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string; readonly restart?: boolean; readonly async?: boolean }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;

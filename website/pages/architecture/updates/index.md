@@ -291,13 +291,13 @@ entries per shard for a backup export. The migration refuses an export at that l
 engine's own document reads. Compacting on the earlier engine allows a final-state migration when the compacted
 export fits. The migration also requires free space of about 3.5 times the size of the source.
 
-The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
+Non-empty pre-upgrade backups are never removed automatically (an empty migrated database cleans up its empty backup
+once the swap commits). List retained backups with `client.projects.retainedData(id)`,
 `GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
 `client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
 `zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
 `project.runtime.manage`. Removal cannot be undone. It is refused while a migration is unsettled or the Project has an unfinished update,
-and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
-its exact name is typed.
+and never touches the live data. In the dashboard, non-empty backups appear under **Project → Settings → Pre-upgrade backups** where you can delete them after verifying your app works normally.
 
 ### Checklist for moving Projects to layout 5
 

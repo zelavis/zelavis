@@ -92,6 +92,28 @@ const RECIPE_CONTRACT_SINCE: Readonly<Record<number, string>> = { 1: "0.0.0", 2:
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_SHUTDOWN_CONCURRENCY = 8;
 const DEFAULT_LOG_LIMIT = 500;
+export interface PendingDataMigration {
+    readonly report: ZelavisProjectDataMigration;
+    readonly empty: boolean;
+}
+/**
+ * Called only after `commitDataSwap` succeeds. An empty migrated database (zero documents, schemas,
+ * carried events, or dropped entries) has no user data worth keeping as a manual pre-upgrade backup,
+ * so remove the empty backup directory once the swap is safely committed. Non-empty databases keep
+ * their pre-upgrade backup until the user deletes it explicitly.
+ */
+export const finalizeMigration = Effect.fn("NodeProjects.finalizeMigration")(function* (
+    paths: { readonly zelavis: string },
+    pending: PendingDataMigration | undefined,
+): Effect.fn.Return<ZelavisProjectDataMigration | undefined> {
+    if (!pending) return undefined;
+    if (pending.empty && pending.report.retained) {
+        yield* removeRetainedData(paths, pending.report.retained).pipe(Effect.orElseSucceed(() => undefined));
+        const { retained: _retained, ...cleaned } = pending.report;
+        return cleaned;
+    }
+    return pending.report;
+});
 function isMissingFileError(error: unknown): boolean {
     error = unwrapFailure(error);
     return Boolean(error &&
@@ -347,7 +369,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }
         });
     /** The migration a native App's `prepare` made, until the upgrade that needed it is recorded and `commitUpgrade` reports it. */
-    const migrations = new Map<string, ZelavisProjectDataMigration>();
+    const migrations = new Map<string, PendingDataMigration>();
     /**
      * What `prepareData` verified for a Project's coming migration and start, made before its requests are held. It is read only by
      * that Project's own migration and start, dropped when the migration ends, and ignored once five minutes old: the next
@@ -391,9 +413,13 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         // What the migration changed that a person should know: kept with the retained data, shown by the dashboard.
         yield* integration(() => writeFile(join(root, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
         yield* integration(() => rm(work, { recursive: true, force: true }));
-        return { from, to, tenants: report.tenants, collections: report.collections, documents: report.documents,
+        const empty = report.documents === 0 && report.schemas === 0 && report.eventsCarried === 0 && Object.keys(report.dropped).length === 0;
+        const summary: ZelavisProjectDataMigration = {
+            from, to, tenants: report.tenants, collections: report.collections, documents: report.documents,
             eventsCarried: report.eventsCarried, tenantsWithoutHistory: report.tenantsWithoutHistory,
-            documentsWithHistoryDropped: report.documentsWithHistoryDropped, retained } satisfies ZelavisProjectDataMigration;
+            documentsWithHistoryDropped: report.documentsWithHistoryDropped, retained,
+        };
+        return { report: summary, empty } satisfies PendingDataMigration;
     });
     const launch = Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1], role: ProjectLeaseRole, startOptions?: ZelavisProjectStartOptions) {
             if (closed) {
@@ -868,9 +894,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 existing.snapshot = stoppedSnapshot(existing);
             }
             phase("stop bound host");
-            const report = yield* migrateLayout(root, catalog, held, { version: ZELAVIS_VERSION }, phase);
+            const pending = yield* migrateLayout(root, catalog, held, { version: ZELAVIS_VERSION }, phase);
             phase("report and clean up");
-            const migrated = report !== undefined;
+            const migrated = pending !== undefined;
             const paths = { zelavis: root };
             // The host now starts on the Platform's engine; if it cannot, the old data and the engine that wrote it return.
             // A stopped Project's host stays stopped; its next start follows the layout on disk.
@@ -882,15 +908,16 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             phase("start bound host");
             yield* commitDataSwap(paths);
             phase("commit swap");
-            return report;
+            return yield* finalizeMigration(paths, pending);
         }, (operation, project) => operation.pipe(Effect.ensuring(Effect.sync(() => { prefetchedEngines.delete(project.id); })))),
         // The upgrade was recorded, or was not: either way the swap it made is settled, never half-kept.
         commitUpgrade: Effect.fn("NodeProjects.commitUpgrade")(function* (projectId: string) {
             if (options.integrationOnly) return undefined;
-            yield* commitDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") });
-            const report = migrations.get(projectId);
+            const paths = { zelavis: join(projectDirectory(projectId), ".zelavis") };
+            yield* commitDataSwap(paths);
+            const pending = migrations.get(projectId);
             migrations.delete(projectId);
-            return report;
+            return yield* finalizeMigration(paths, pending);
         }),
         retainedData: Effect.fn("NodeProjects.retainedData")(function* (projectId: string) {
             return yield* listRetainedData({ zelavis: dataRoot(projectId) });

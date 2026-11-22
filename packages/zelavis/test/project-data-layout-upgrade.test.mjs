@@ -91,3 +91,101 @@ test("a failed migration leaves the Project on its old engine and running again"
   assert.equal(selected.get("old"), "1.0.0");
   assert.ok(!calls.some(call => call[0] === "commit"), "nothing is committed");
 });
+
+test("async upgrade returns HTTP 202 immediately, reports live status without blocking, rejects concurrent upgrades with 409, and completes cleanly", async t => {
+  const store = createMemorySystemStore(), selected = new Map(), running = new Set(), data = new Map(), reports = new Map();
+  let releasePrepare;
+  let prepareStarted;
+  const prepareReady = new Promise(resolve => { prepareStarted = resolve; });
+  const prepareGate = new Promise(resolve => { releasePrepare = resolve; });
+  const runtime = {
+    name: "qualified-fixture", runtimeKinds: ["native"],
+    capabilities: () => ({ zeroDowntimeUpdates: true, independentRuntimeVersion: true }), supportsLiveUpdate: () => true,
+    async versions(project) {
+      const current = project ? selected.get(project.id) : undefined;
+      return { selectable: true, current, ...(current ? { currentDataFormat: data.get(project.id) ?? formats[current] } : {}), latest: "2.0.1",
+        versions: Object.keys(formats).map(version => ({ version, status: "available", dataFormat: formats[version] })) };
+    },
+    async resolveVersion(_project, version = "2.0.1") { return { engineVersion: version, recipe: recipe(version) }; },
+    async prepare(project) {
+      const before = selected.get(project.id);
+      if (before !== undefined && formats[before] !== formats[project.engineVersion]) {
+        prepareStarted();
+        await prepareGate;
+        data.set(project.id, formats[project.engineVersion]);
+        reports.set(project.id, { from: formats[before], to: formats[project.engineVersion], tenants: 1, collections: 1, documents: 3, eventsCarried: 7, tenantsWithoutHistory: 0, documentsWithHistoryDropped: 0, retained: "data.format-2-x" });
+      }
+      selected.set(project.id, project.engineVersion);
+    },
+    async commitUpgrade(id) { return reports.get(id); },
+    async abandonUpgrade() {},
+    async start(project) { running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
+    async stop(id) { running.delete(id); return { status: "stopped" }; },
+    async status(id) { return { status: running.has(id) ? "running" : "stopped", ...(running.has(id) ? { url: "http://127.0.0.1:1" } : {}) }; },
+    async prepareUpdate() { throw Error("not live"); }, async applyUpdate() { throw Error("not live"); }, async recoverUpdate() { return "previous"; },
+    async logs() { return []; }, async destroy() {}, async close() {},
+  };
+  const catalog = Object.keys(formats).map(version => ({ service: { ...recipe(version), kind: "app", project: { runtimeKinds: ["native"] } }, specifier: "@zelavis/app", source: "official", status: "available" }));
+  const zv = await zelavis({ systemStore: store, projectRuntime: runtime, serviceRegistry: { catalog: [catalog[2]] } });
+  t.after(() => zv.close());
+  const client = createZelavisClient({ baseUrl: "http://localhost", fetch: (url, init) => zv.fetch(new Request(url, init), { principal: owner }) });
+
+  await client.projects.create({ id: "slow", name: "Slow", engineVersion: "1.0.0" });
+  try {
+    const response = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/slow/upgrade", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ restart: true, async: true }),
+    }), { principal: owner });
+    assert.equal(response.status, 202, "async upgrade responds with 202 Accepted immediately");
+    const started = (await response.json()).project;
+    assert.equal(started.upgrade?.state, "running");
+    assert.ok(started.upgrade?.id);
+
+    await prepareReady;
+    const duringGet = await client.projects.get("slow");
+    assert.equal(duringGet.upgrade?.state, "running", "GET /projects/:id returns immediately with running status");
+    assert.equal(duringGet.upgrade?.phase, "Migrating data", "GET /projects/:id exposes the current upgrade phase");
+    const duringList = (await client.projects.list()).projects.find(entry => entry.id === "slow");
+    assert.equal(duringList?.upgrade?.state, "running", "GET /projects returns running status");
+
+    const conflict = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/slow/upgrade", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ restart: true, async: true }),
+    }), { principal: owner });
+    assert.equal(conflict.status, 409, "a second upgrade while one is running is rejected with 409");
+
+    releasePrepare();
+    let final;
+    for (let i = 0; i < 40; i++) {
+      final = await client.projects.get("slow");
+      if (final.upgrade?.state !== "running") break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(final?.upgrade?.state, "completed");
+    assert.equal(final?.engineVersion, "2.0.1");
+    assert.equal(final?.runtime.status, "running");
+    assert.equal(final?.upgrade?.dataMigration?.documents, 3);
+    assert.equal(final?.dataMigration, undefined, "dataMigration stays on upgrade status, not stored on project");
+  } finally {
+    releasePrepare();
+  }
+});
+
+test("async upgrade records failure status when migration fails", async t => {
+  const { client } = await platform(t, { failPrepare: true });
+  await client.projects.create({ id: "fail-async", name: "Fail Async", engineVersion: "1.0.0" });
+  const started = await client.projects.upgrade("fail-async", { restart: true, async: true });
+  assert.equal(started.upgrade?.state, "running");
+  let final;
+  for (let i = 0; i < 40; i++) {
+    final = await client.projects.get("fail-async");
+    if (final.upgrade?.state !== "running") break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.equal(final?.upgrade?.state, "failed");
+  assert.match(final?.upgrade?.error ?? "", /migration failed/);
+  assert.equal(final?.engineVersion, "1.0.0");
+  assert.equal(final?.runtime.status, "running");
+});
