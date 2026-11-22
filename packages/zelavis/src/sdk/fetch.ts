@@ -1526,7 +1526,7 @@ export interface ZelavisProjectsClient {
    * `async: true` starts the upgrade in the background (HTTP 202) and returns immediately with
    * `project.upgrade.state === "running"` so callers can poll `list()` or `get(projectId)`.
    */
-  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string; readonly restart?: boolean; readonly async?: boolean }): Promise<ZelavisProjectRecord>;
+  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string; readonly restart?: boolean; readonly async?: boolean; readonly dataLayoutOnly?: boolean }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;

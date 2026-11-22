@@ -343,9 +343,20 @@ const boundRoot = join(wpProject, '.zelavis/integration');
 const releaseFormat = async version => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
 const [formatFrom, formatTo] = [await releaseFormat(from), await releaseFormat(to)];
 if (formatFrom !== formatTo) {
-  const held = JSON.parse(await readFile(join(boundRoot, 'runtime-handover.json'), 'utf8'));
-  assert.equal(held.selected.version, from, 'The bound App keeps the engine that wrote its data until migration');
-  assert.deepEqual((await client.projects.get(wp.id)).dataLayout, { state: 'upgradeRequired', from: formatFrom, to: formatTo });
+  const autoStarted = Date.now();
+  const autoDeadline = autoStarted + 75_000;
+  let current = await client.projects.get(wp.id);
+  while (current.dataLayout !== undefined && Date.now() < autoDeadline) {
+    assert.notEqual(current.dataLayout.autoMigration?.state, 'failed', `Managed app automatic integration migration failed: ${current.dataLayout.autoMigration?.error}`);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    current = await client.projects.get(wp.id);
+  }
+  assert.equal(current.dataLayout, undefined, `WordPress bound integration data did not auto-migrate within 75s (${JSON.stringify(current.dataLayout)})`);
+  const migrated = JSON.parse(await readFile(join(boundRoot, 'runtime-handover.json'), 'utf8'));
+  assert.equal(migrated.selected.version, to, 'The bound App follows the Platform engine automatically after auto-migration');
+  assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `Auto-migration brought the bound App data to layout ${formatTo}`);
+  assert.equal((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), false, 'An empty bound integration store cleans up its pre-upgrade backup automatically');
+  console.log(`PASS: WordPress bound integration store auto-migrated from format ${formatFrom} to ${formatTo} in ${Date.now() - autoStarted}ms without a manual upgrade.`);
 }
 for (const capability of [beforeIntegration.capabilities.auth ?? beforeIntegration.capabilities.identity,
   beforeIntegration.capabilities.database, beforeIntegration.capabilities.storage, beforeIntegration.capabilities.workloads]) {
@@ -355,48 +366,27 @@ for (const capability of [beforeIntegration.capabilities.auth ?? beforeIntegrati
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
 const integrationBefore = await identities();
-const appIdentitiesBefore = identities(value => !isBoundHost(value));
-const hostIdentitiesBefore = await identities(isBoundHost);
 const contractBefore = await wpContract();
 
 const upgradeStarted = Date.now();
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
 const upgradeMillis = Date.now() - upgradeStarted;
-// Where the combined upgrade spent its time, from the Project log (each phase is logged with its duration).
 const upgradeLog = await client.projects.logs(wp.id);
 for (const entry of upgradeLog) {
   if (Date.parse(entry.timestamp) >= upgradeStarted - 1_000 || /Staying on Zelavis/.test(entry.message)) console.log(`UPGRADE LOG ${entry.timestamp} ${entry.stream} ${entry.message.slice(0, 400)}`);
 }
-console.log(`UPGRADE: the combined data migration and recipe upgrade took ${upgradeMillis}ms (${new Date(upgradeStarted).toISOString()} to ${new Date(upgradeStarted + upgradeMillis).toISOString()})`);
-// A regression bound tighter than the request deadline above, which stays 90 s. Verifying the two engines the migration runs is
-// most of the upgrade (the Project log says how long it took). It runs on a worker thread; on the main event loop under this
-// traffic it took 52 to 89 s and the whole upgrade 75 to 89 s, which this bound refuses.
-assert.ok(upgradeMillis < 70_000, `The combined data migration and recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
+console.log(`UPGRADE: the recipe upgrade took ${upgradeMillis}ms (${new Date(upgradeStarted).toISOString()} to ${new Date(upgradeStarted + upgradeMillis).toISOString()})`);
+assert.ok(upgradeMillis < 70_000, `The recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
 assert.equal(integration.runtime.status, 'running');
-// One normal request did both: the bound App's data is in the Platform's layout (with empty pre-upgrade backups
-// cleaned up automatically when the two releases write different layouts), and the recipe moved.
-assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
-if (formatFrom !== formatTo) {
-  assert.deepEqual([integration.dataMigration?.from, integration.dataMigration?.to], [formatFrom, formatTo], 'The upgrade migrates the bound App data across the layout change');
-  assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `The same request brings the bound App data to layout ${formatTo}`);
-  assert.equal((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), false, 'An empty bound integration store cleans up its pre-upgrade backup');
-} else {
-  assert.equal(integration.dataMigration, undefined, `Both releases write layout ${formatTo}: the upgrade migrates nothing`);
-}
+assert.notEqual(integration.recipe.version, wp.recipe.version, 'The upgrade moves the recipe');
+assert.equal(integration.dataMigration, undefined, `Bound integration data is already on layout ${formatTo}: the recipe upgrade migrates nothing`);
 assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
 assert.equal(integration.runtimeUpdate, undefined);
 const contractAfter = await wpContract();
-if (contractAfter === contractBefore && integration.dataMigration === undefined) {
-  assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
-} else if (contractAfter === contractBefore) {
-  // The data migration stopped the bound host to move its database to the Platform's layout and started it again on the Platform's
-  // engine, so that one process is replaced. The application itself is untouched: every other process keeps its identity.
-  const keepsApp = value => !isBoundHost(value);
-  assert.deepEqual(await identities(keepsApp), await appIdentitiesBefore, 'The migration replaces only the bound host; app processes keep their identities');
-  assert.notDeepEqual(await identities(isBoundHost), hostIdentitiesBefore, 'The bound host was replaced by the migration');
-  console.log('PASS: the combined migration and recipe upgrade replaced only the bound integration host and kept every app process.');
+if (contractAfter === contractBefore) {
+  assert.deepEqual(await identities(), integrationBefore, 'Integration recipe update must retain app and integration host process identities');
 } else {
   // Moving to the layout where app/ is the application alone changes where the servers read their configuration,
   // so their processes are replaced while requests wait (the traffic above proves none failed).

@@ -227,10 +227,19 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   /** Recipe upgrades this Project has been through, oldest first, most recent ten. */
   recipeHistory?: readonly ZelavisProjectRecipeUpgrade[];
   /**
-   * Present on a managed app whose bound App still holds data in an earlier layout than the Platform writes. It stays on the engine
-   * that wrote that data until the Project's upgrade migrates it. Derived on every read, never stored.
+   * Present on a managed app whose bound App still holds data in an earlier layout than the Platform writes.
+   * Managed apps migrate this automatically in the background; `autoMigration` reports in-flight or failed state.
+   * Derived on every read, never stored.
    */
-  dataLayout?: { readonly state: "upgradeRequired"; readonly from: number; readonly to: number };
+  dataLayout?: {
+    readonly state: "upgradeRequired";
+    readonly from: number;
+    readonly to: number;
+    readonly autoMigration?: {
+      readonly state: "running" | "failed";
+      readonly error?: string;
+    };
+  };
   /** Where the Project's standby runs, for a lease-guarded Project that has one. Read from the standby record, never stored with the Project. */
   readonly standby?: ZelavisProjectStandby;
   /** Present only on the response of the upgrade that migrated this Project's data; never stored. */
@@ -583,8 +592,10 @@ export interface ZelavisProjectManager {
    * Without it, such an upgrade is refused until the Project is stopped.
    * `async`: validate and start the upgrade in the background, returning immediately with
    * `project.upgrade.state === "running"` so callers can poll `list()` or `get(id)` for progress.
+   * `dataLayoutOnly`: for a managed app, migrate only its bound `.zelavis/integration` data layout
+   * without changing its recipe.
    */
-  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean; async?: boolean }): Promise<ZelavisProjectRecord>;
+  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean; async?: boolean; dataLayoutOnly?: boolean }): Promise<ZelavisProjectRecord>;
   switchVersion(id: string, version: string): Promise<ZelavisProjectRecord>;
   /** Data an upgrade's migration kept beside this Project's live data. */
   retainedData(id: string): Promise<readonly ZelavisProjectRetainedData[]>;
@@ -1296,6 +1307,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             : undefined;
     }
     const reconciliationRuns = new Map<string, Deferred.Deferred<void, TaggedFailure>>();
+    const autoMigrationRuns = new Map<string, Deferred.Deferred<void, TaggedFailure>>();
+    const autoMigrationBackoff = new Map<string, { readonly failures: number; readonly nextAttemptAt: number }>();
+    const autoMigrationFailures = new Map<string, string>();
+    const AUTO_MIGRATION_BACKOFF_BASE_MS = 15_000;
+    const AUTO_MIGRATION_BACKOFF_MAX_MS = 300_000;
     const closeRuns = new Map<string, Deferred.Deferred<void, TaggedFailure>>();
     const deletionRuns = new Map<string, Deferred.Deferred<boolean, TaggedFailure>>();
     const cleanupParticipants = [
@@ -1640,13 +1656,32 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const status = activeUpgradeStatus(project.id);
         return status ? { ...project, upgrade: status } : project;
     };
-    /** A managed app whose data layout trails the Platform's says so, so its card can offer the upgrade that migrates it. */
+    /** A managed app whose bound integration data layout differs from the Platform's reports it along with automatic migration status. */
     const withDataLayout = Effect.fn("Projects.withDataLayout")(function* (project: ZelavisProjectRecord | undefined): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
         const listVersions = runtimeEffects.versions;
         if (!project || !project.recipe.managed || project.deletion || project.runtimeUpdate || isUpgradeRunning(project.id) || listVersions === undefined) return project;
         const versions = yield* Effect.orElseSucceed(listVersions(project), () => undefined);
-        if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat === versions.latestDataFormat) return project;
-        return { ...project, dataLayout: { state: "upgradeRequired" as const, from: versions.currentDataFormat, to: versions.latestDataFormat } };
+        if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat === versions.latestDataFormat) {
+            if (versions?.currentDataFormat !== undefined && versions.currentDataFormat === versions.latestDataFormat) {
+                autoMigrationFailures.delete(project.id);
+                autoMigrationBackoff.delete(project.id);
+            }
+            return project;
+        }
+        const autoMigration = autoMigrationRuns.has(project.id)
+            ? { state: "running" as const }
+            : autoMigrationFailures.has(project.id)
+                ? { state: "failed" as const, error: autoMigrationFailures.get(project.id)! }
+                : undefined;
+        return {
+            ...project,
+            dataLayout: {
+                state: "upgradeRequired" as const,
+                from: versions.currentDataFormat,
+                to: versions.latestDataFormat,
+                ...(autoMigration ? { autoMigration } : {}),
+            },
+        };
     });
     /** The standby record, when the Project has one, shown on the Project's read. */
     const withStandby = Effect.fn("Projects.withStandby")(function* (project: ZelavisProjectRecord | undefined): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
@@ -2140,6 +2175,63 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             yield* Effect.catch(runtimeEffects.stop(project.id), Effect.fn("Projects.recover")(function* () { return undefined; }));
         }
     });
+    const autoMigrateManagedLayout = Effect.fn("Projects.autoMigrateManagedLayout")(function* (projectId: string) {
+        yield* Effect.gen(function* () {
+            const ahead = yield* read(projectId);
+            if (closing || !ahead || !ahead.recipe.managed || ahead.deletion || ahead.runtimeUpdate || ahead.placement || isUpgradeRunning(projectId)) return;
+            if (!runtimeEffects.migrateData || !runtimeEffects.versions) return;
+            if (runtimeEffects.prepareData) {
+                yield* runtimeEffects.prepareData(ahead);
+            }
+            yield* withProjectLifecycle(projectId, Effect.fn("Projects.autoMigrate")(function* () {
+                const latest = yield* read(projectId);
+                if (closing || !latest || !latest.recipe.managed || latest.deletion || latest.runtimeUpdate || latest.placement || isUpgradeRunning(projectId)) return;
+                const versions = yield* Effect.orElseSucceed(runtimeEffects.versions!(latest), () => undefined);
+                if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat >= versions.latestDataFormat) {
+                    autoMigrationBackoff.delete(projectId);
+                    autoMigrationFailures.delete(projectId);
+                    return;
+                }
+                const report = yield* runtimeEffects.migrateData!(
+                    latest,
+                    latest.runtime.status === "running" ? yield* localPlacementToken(latest.id) : undefined,
+                );
+                autoMigrationBackoff.delete(projectId);
+                autoMigrationFailures.delete(projectId);
+                if (report) {
+                    yield* Effect.logInfo(`Migrated bound integration data for managed Project "${projectId}" from format ${report.from} to format ${report.to}.`);
+                }
+            }));
+        }).pipe(Effect.catch((error) => {
+            if (closing) return Effect.void;
+            const failure = unwrapFailure(error);
+            const message = (failure instanceof Error ? failure.message : String(failure)).slice(0, 4000);
+            autoMigrationFailures.set(projectId, message);
+            const failures = (autoMigrationBackoff.get(projectId)?.failures ?? 0) + 1;
+            const wait = Math.min(AUTO_MIGRATION_BACKOFF_BASE_MS * 2 ** Math.min(failures - 1, 10), AUTO_MIGRATION_BACKOFF_MAX_MS);
+            autoMigrationBackoff.set(projectId, { failures, nextAttemptAt: Date.now() + wait });
+            return Effect.logWarning(`Automatic integration data migration for managed Project "${projectId}" failed; it stays on its previous engine until retried`, failure);
+        }));
+    });
+    const scheduleAutoMigration = Effect.fn("Projects.scheduleAutoMigration")(function* (project: ZelavisProjectRecord) {
+        if (closing || !project.recipe.managed || project.deletion || project.runtimeUpdate || project.placement) return;
+        if (!runtimeEffects.migrateData || !runtimeEffects.versions) return;
+        if (isUpgradeRunning(project.id) || autoMigrationRuns.has(project.id)) return;
+        const backoff = autoMigrationBackoff.get(project.id);
+        if (backoff && Date.now() < backoff.nextAttemptAt) return;
+        const versions = yield* Effect.orElseSucceed(runtimeEffects.versions(project), () => undefined);
+        if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat >= versions.latestDataFormat) return;
+        const done = yield* Deferred.make<void, TaggedFailure>();
+        autoMigrationRuns.set(project.id, done);
+        yield* Effect.forkIn(
+            autoMigrateManagedLayout(project.id).pipe(
+                Effect.ensuring(Effect.sync(() => {
+                    if (autoMigrationRuns.get(project.id) === done) autoMigrationRuns.delete(project.id);
+                }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid)),
+            ),
+            lifecycleScope,
+        );
+    });
     const reconcileFleet = Effect.fn("Projects.reconcileFleet")(function* () {
                 const existing = (yield* store.list(PROJECTS_NAMESPACE));
                 const placement = (yield* resolvePlacementDecisions(existing));
@@ -2185,6 +2277,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                             // returns.
                             (yield* Effect.catch(manager.stop(project.id), Effect.fn("Projects.recover")(function* () { return undefined; })));
                         }
+                        if (!placement.blocked.has(project.id) && !placement.elsewhere.has(project.id)) {
+                            yield* scheduleAutoMigration(project);
+                        }
                         return;
                     }
                     // The backstop for a change of writer the lease routes' hook missed (a restart, a lost call).
@@ -2228,8 +2323,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                             const failures = (startBackoff.get(project.id)?.failures ?? 0) + 1;
                             const wait = Math.min(START_BACKOFF_BASE_MS * 2 ** Math.min(failures - 1, 20), START_BACKOFF_MAX_MS);
                             startBackoff.set(project.id, { failures, nextAttemptAt: Date.now() + wait });
+                            return;
                         }
                     }
+                    yield* scheduleAutoMigration(project);
                 })));
             });
     const startPlaced = Effect.fn("Projects.startPlaced")(function* (id: string) {
@@ -2407,7 +2504,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
             yield* refreshRecipes(RECIPE_LABEL_MAX_AGE_MS);
-            if (isUpgradeRunning(projectId)) return yield* refresh(projectId, false);
+            if (isUpgradeRunning(projectId) || autoMigrationRuns.has(projectId)) return yield* refresh(projectId, false);
             return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
         }),
         view: Effect.fn("Projects.view")(function* (id: Parameters<ZelavisProjectManager["view"]>[0]) {
@@ -2659,6 +2756,15 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
+            if (input?.dataLayoutOnly === true && (input.recipeName !== undefined || input.engineVersion !== undefined)) {
+                return yield* Effect.fail(new ZelavisProjectValidationError("dataLayoutOnly cannot be combined with recipeName or engineVersion."));
+            }
+            if (input?.dataLayoutOnly === true) {
+                const target = yield* requireProject(projectId);
+                if (!target.recipe.managed) {
+                    return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" is not a managed app and has no separate integration data migration.`));
+                }
+            }
             if (isUpgradeRunning(projectId)) {
                 return yield* Effect.fail(new ZelavisProjectConflictError(`Project "${projectId}" already has an upgrade in progress.`));
             }
@@ -2668,7 +2774,13 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 opId: string,
             ): Effect.Effect<ZelavisProjectRecord, TaggedFailure> => Effect.gen(function* () {
                 yield* clearStartBackoff(targetId);
-                if (options.acquireRecipe) {
+                autoMigrationBackoff.delete(targetId);
+                const inFlightAuto = autoMigrationRuns.get(targetId);
+                if (inFlightAuto) {
+                    setUpgradePhase(targetId, opId, "Waiting for background data migration");
+                    yield* Deferred.await(inFlightAuto).pipe(Effect.ignoreCause);
+                }
+                if (!upgradeInput?.dataLayoutOnly && options.acquireRecipe) {
                     setUpgradePhase(targetId, opId, "Checking recipe updates");
                     const target = upgradeInput?.recipeName?.trim() || (yield* requireProject(targetId)).recipe.name;
                     yield* integration(() => options.acquireRecipe!(target));
@@ -2681,7 +2793,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         yield* runtimeEffects.prepareData(ahead);
                     }
                 }
-                if (upgradeInput?.restart === true) {
+                if (upgradeInput?.restart === true && !upgradeInput.dataLayoutOnly) {
                     const current = yield* requireProject(targetId);
                     const liveCapable = runtime.supportsLiveUpdate?.(current) === true && !(yield* changesDataLayout(current, upgradeInput.engineVersion)) &&
                         runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
@@ -2714,12 +2826,20 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     if (upgradeInput?.engineVersion !== undefined && project.placement)
                         return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
                     // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
-                    // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
+                    // first, whether or not the recipe changes; with a current recipe (or dataLayoutOnly) that is the whole upgrade.
                     if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
                         setUpgradePhase(targetId, opId, "Migrating data");
                         const report = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
                         performed = report;
+                        autoMigrationFailures.delete(project.id);
+                        autoMigrationBackoff.delete(project.id);
+                        if (upgradeInput?.dataLayoutOnly === true) {
+                            return { ...(yield* refresh(project.id, false))!, ...(report ? { dataMigration: report } : {}) };
+                        }
                         if (report && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: report };
+                    }
+                    if (upgradeInput?.dataLayoutOnly === true) {
+                        return (yield* refresh(project.id, false))!;
                     }
                     return undefined;
                 }));
@@ -2962,6 +3082,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         remove: Effect.fn("Projects.remove")(function* (id: Parameters<ZelavisProjectManager["remove"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
             yield* clearStartBackoff(projectId);
+            autoMigrationBackoff.delete(projectId);
+            autoMigrationFailures.delete(projectId);
             const removed = yield* singleFlight(deletionRuns, projectId, () => withProjectLifecycle(projectId, () => deleteProject(projectId)));
             upgradeStates.delete(projectId);
             return removed;
@@ -2990,6 +3112,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 const active = reconciliationRuns.get("fleet");
                 if (active)
                     (yield* Deferred.await(active).pipe(Effect.ignoreCause));
+                for (const migration of [...autoMigrationRuns.values()]) {
+                    yield* Deferred.await(migration).pipe(Effect.ignoreCause);
+                }
                 (yield* runtimeEffects.close());
                 for (const token of runtime.custody?.preserveOnClose() ? [] : ownedPlacements.values()) {
                     if (token.nodeId === localPlacementNodeId) {

@@ -7,12 +7,14 @@ import { dropdown } from "./dropdown.ts";
 import { runtimeStatusText, standbyFact } from "./project-standby.ts";
 import { canAccess } from "./navigation-menu.ts";
 
+import { isManagedProject, shouldShowCardUpgradeNotice, upgradeDoneMessage } from "./project-upgrade-model.ts";
+
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
 
-const trackedUpgrades = new Map<string, { readonly id: string; readonly mode: "recipe" | "version" }>();
+const trackedUpgrades = new Map<string, { readonly id: string; readonly mode: "recipe" | "version" | "migration" }>();
 const announcedUpgrades = new Set<string>();
 
-interface Recipe {
+export interface Recipe {
   name: string;
   title: string;
   hostPackages: readonly string[];
@@ -21,7 +23,7 @@ interface Recipe {
   hasInstall: boolean;
 }
 
-const recipesOf = (config: ScreenContext["config"]): Recipe[] => array(config.serviceRegistry).map(object).filter(service => service.kind === "app").map(service => {
+export const recipesOf = (config: ScreenContext["config"]): Recipe[] => array(config.serviceRegistry).map(object).filter(service => service.kind === "app").map(service => {
   const project = object(service.project);
   const install = object(project.install);
   const marketplace = object(service.marketplace);
@@ -60,33 +62,6 @@ export function siteUrl(project: Record<string, unknown>, browser: URL): string 
 const dateText = (value: unknown) => { const date = new Date(label(value, "")); return Number.isNaN(date.getTime()) ? label(value) : date.toLocaleString(); };
 const select = (name: string, aria: string, options: readonly (readonly [value: string, text: string, disabled?: boolean])[], selected: string) =>
   dropdown({ name, label: aria, value: selected }, options.map(([value, text, disabled]) => ({ value, label: text, ...(disabled ? { disabled } : {}) })));
-
-/** What a data-layout migration changed, for the line shown after an upgrade; an upgrade that migrated nothing leaves the data as it was. */
-function migrationSummary(value: unknown): string {
-  const migration = object(value);
-  if (migration.from === undefined || migration.to === undefined) return "Its data is unchanged.";
-  const docs = Number(migration.documents ?? 0);
-  const events = Number(migration.eventsCarried ?? 0);
-  const restarted = Number(migration.documentsWithHistoryDropped ?? 0);
-  if (docs === 0 && events === 0 && migration.retained === undefined) {
-    return `Its data layout moved from format ${label(migration.from)} to format ${label(migration.to)}.`;
-  }
-  const backup = typeof migration.retained === "string"
-    ? " A pre-upgrade backup was kept under Project Settings until you delete it."
-    : "";
-  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${docs} documents recreated with their versions, ${events} change events carried${restarted > 0 ? `; ${restarted} documents of compacted Tenants kept their versions without their earlier change history` : ""}).${backup}`;
-}
-
-function upgradeDoneMessage(project: Record<string, unknown>, mode: "recipe" | "version", fallbackVersion?: string): string {
-  const name = label(project.name);
-  const upgrade = object(project.upgrade);
-  const migration = upgrade.dataMigration ?? project.dataMigration;
-  if (mode === "version") {
-    return `${name} now uses Zelavis ${label(project.engineVersion, fallbackVersion ?? "")}. ${migrationSummary(migration)}`;
-  }
-  const next = object(project.recipe);
-  return `${name} now uses ${label(next.name)}${next.version ? ` ${label(next.version)}` : ""}. ${migrationSummary(migration)} ${object(project.runtime).status === "running" ? "It is running at the same address." : "Start it when you are ready."}`;
-}
 
 export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*(context: ScreenContext) {
   const api = context.config.api.basePath;
@@ -279,7 +254,7 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   if (typeof runtime.error === "string") body.push(message(runtime.error, true));
   if (typeof preview.error === "string") body.push(message(preview.error, true));
 
-  if (managesRuntime && (upgrading || upgrade?.state === "failed" || update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout)) {
+  if (managesRuntime && shouldShowCardUpgradeNotice(project)) {
     body.push(upgradeNotice(project, recipes, act, path, phaseNodes));
   }
 
@@ -311,6 +286,7 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
   const idle = runtime.status === "stopped" || runtime.status === "failed";
   const live = runtime.status === "running" && capabilities.zeroDowntimeUpdates === true;
   const integration = capabilities.recipeUpdateMode === "integration";
+  const managedApp = isManagedProject(project);
   const restarts = runtime.status === "running" && !live && !integration;
   const canUpgrade = idle || live || restarts;
   const upgrade = (recipeName?: string) => act(request(`${path}/upgrade`, "POST", { restart: true, async: true, ...(recipeName ? { recipeName } : {}) }), result => {
@@ -321,6 +297,15 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
       return undefined;
     }
     return upgradeDoneMessage(upgraded, "recipe");
+  });
+  const retryMigration = () => act(request(`${path}/upgrade`, "POST", { restart: true, async: true, dataLayoutOnly: true }), result => {
+    const upgraded = object(result.project ?? result);
+    const up = upgraded.upgrade ? object(upgraded.upgrade) : undefined;
+    if (up?.state === "running" && typeof up.id === "string") {
+      trackedUpgrades.set(id, { id: up.id, mode: "migration" });
+      return undefined;
+    }
+    return upgradeDoneMessage(upgraded, "migration");
   });
   if (project.deletion) return node("div");
   if (activeUpgrade?.state === "running") {
@@ -337,6 +322,25 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
   }
   const failedUpgrade = activeUpgrade?.state === "failed" && typeof activeUpgrade.error === "string" ? activeUpgrade.error : undefined;
   const layout = object(project.dataLayout);
+  if (managedApp) {
+    if (failedUpgrade) {
+      return node("div", { class: "notice error", "aria-label": "Recipe upgrade failed" },
+        node("strong", {}, "Upgrade failed"),
+        node("p", {}, failedUpgrade),
+        link("Open Updates", `/projects/${encodeURIComponent(id)}/updates`));
+    }
+    const auto = object(layout.autoMigration);
+    if (layout.state === "upgradeRequired" && auto.state === "failed") {
+      const retry = button("Retry migration", retryMigration);
+      if (!canUpgrade) retry.setAttribute("disabled", "");
+      return node("div", { class: "notice error", "aria-label": "Integration data migration failed" },
+        node("strong", {}, "Integration data migration failed"),
+        ...(typeof auto.error === "string" ? [node("p", {}, auto.error)] : []),
+        node("p", {}, `This app keeps running on its previous Zelavis integration engine (format ${label(layout.from)}) until migration to format ${label(layout.to)} succeeds.`),
+        retry);
+    }
+    return node("div");
+  }
   const needsAction = layout.state === "upgradeRequired" || status.state === "upgradeAvailable" || status.state === "unavailable";
   if (!needsAction && failedUpgrade) {
     return node("div", { class: "notice error", "aria-label": "Recipe upgrade failed" },
@@ -346,12 +350,10 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
   const copy = layout.state === "upgradeRequired"
     ? `This app's Zelavis data uses an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating migrates it to format ${label(layout.to)}, preserving your data and keeping a pre-upgrade backup under Project Settings if any data was present.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
     : status.state === "upgradeAvailable"
-    ? integration
-      ? `A newer recipe is available: ${label(status.version)}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
-      : `A newer recipe is available: ${label(status.version)}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`
+    ? `A newer recipe is available: ${label(status.version)}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`
     : `${label(status.reason, "")} Choose a recipe to move this Project to; its data is kept${restarts ? ", and it is restarted for the move" : ""}.`;
   const target = dropdown({ label: "Recipe to move to" }, recipes.map(recipe => ({ value: recipe.name, label: recipe.title })));
-  const go = button(failedUpgrade ? "Retry update" : integration ? "Update recipe" : "Upgrade recipe", () => upgrade(status.state === "unavailable" ? target.value : undefined));
+  const go = button(failedUpgrade ? "Retry update" : "Upgrade recipe", () => upgrade(status.state === "unavailable" ? target.value : undefined));
   if (!canUpgrade || status.state === "unavailable" && recipes.length === 0) go.setAttribute("disabled", "");
   return node("div", { class: failedUpgrade ? "notice error" : "notice", "aria-label": "Recipe upgrade" },
     ...(failedUpgrade ? [node("strong", {}, "Last upgrade failed"), node("p", {}, failedUpgrade)] : []),

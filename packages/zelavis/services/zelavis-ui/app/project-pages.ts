@@ -8,8 +8,10 @@ import { ApiError, array, label, object, request, type Config, type Project } fr
 import { button, empty, field, link, message, node } from "./dom.ts";
 import { emailSettingsCards } from "./email-settings.ts";
 import { badge, card, columns, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
+import { dropdown } from "./dropdown.ts";
 import { notRunning, projectContext } from "./project-context.ts";
-import { siteUrl } from "./projects-pages.ts";
+import { recipesOf, siteUrl } from "./projects-pages.ts";
+import { upgradeDoneMessage } from "./project-upgrade-model.ts";
 import { providerCard } from "./settings-pages.ts";
 import { servicePageScreen } from "./service-pages.ts";
 import { formatBytes, mediaScreen, storageScreen } from "./storage-pages.ts";
@@ -193,14 +195,179 @@ const retainedBackupsCard = Effect.fn("ui.projectRetainedBackups")(function*(con
     ...rows);
 });
 
-const settingsScreen = Effect.fn("ui.projectSettings")(function*(context: ScreenContext, project: Project) {
-  const [provider, backups] = yield* Effect.all([
-    providerCard(context, project.id),
+const managedTrackedUpgrades = new Map<string, { readonly id: string; readonly mode: "recipe" | "migration" }>();
+
+/** Hosting recipe and bound integration engine status & update controls for managed apps (Updates and Settings). */
+const managedRecipeUpdatesCard = Effect.fn("ui.managedRecipeUpdates")(function*(context: ScreenContext, project: Project, title = "Hosting recipe & runtime") {
+  const path = `${context.config.api.basePath}/runtime/projects/${encodeURIComponent(project.id)}`;
+  const recipe = object(project.recipe);
+  const status = object(project.recipeStatus);
+  const capabilities = object(project.capabilities);
+  const activeUpgrade = project.upgrade ? object(project.upgrade) : undefined;
+  const rtUpdate = project.runtimeUpdate ? object(project.runtimeUpdate) : undefined;
+  const layout = project.dataLayout ? object(project.dataLayout) : undefined;
+  const auto = layout ? object(layout.autoMigration) : undefined;
+  const managesRuntime = canAccess(context.config.access, { permissions: ["project.runtime.manage"], scope: { type: "project", projectId: project.id } });
+  const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
+  const live = project.runtime.status === "running" && capabilities.zeroDowntimeUpdates === true;
+  const integration = capabilities.recipeUpdateMode === "integration";
+  const restarts = project.runtime.status === "running" && !live && !integration;
+  const canUpgrade = !project.deletion && (idle || live || restarts);
+  const upgrading = activeUpgrade?.state === "running";
+  const autoRunning = auto?.state === "running";
+  const activeUpdate = rtUpdate !== undefined && typeof rtUpdate.error !== "string";
+  const recipes = recipesOf(context.config);
+
+  const runUpgrade = (body: Record<string, unknown>, mode: "recipe" | "migration") => {
+    context.run(request(`${path}/upgrade`, "POST", body), result => {
+      const upgraded = object(object(result).project ?? result);
+      const up = upgraded.upgrade ? object(upgraded.upgrade) : undefined;
+      if (up?.state === "running" && typeof up.id === "string") {
+        managedTrackedUpgrades.set(project.id, { id: up.id, mode });
+      } else {
+        setFlash(upgradeDoneMessage(upgraded, mode));
+      }
+      context.refresh();
+    });
+  };
+
+  const statusBadge = upgrading
+    ? badge("upgrading")
+    : status.state === "upgradeAvailable"
+      ? badge("update available")
+      : status.state === "unavailable"
+        ? badge("unavailable")
+        : badge("current");
+
+  const items: (Node | undefined)[] = [
+    dataRow(
+      "Hosting recipe",
+      `${label(recipe.title, label(recipe.name))}${recipe.version ? ` ${label(recipe.version)}` : ""}`,
+      statusBadge,
+    ),
+  ];
+
+  let phaseNode: HTMLElement | undefined;
+  if (upgrading) {
+    phaseNode = node("p", { class: "muted" }, typeof activeUpgrade?.phase === "string" ? `${activeUpgrade.phase}…` : "Applying update…");
+    items.push(node("div", { class: "notice", "aria-label": "Project upgrade in progress" },
+      node("strong", {}, "Upgrade in progress"),
+      phaseNode));
+  } else if (rtUpdate) {
+    const retry = managesRuntime ? button("Retry update", () => runUpgrade({ restart: true, async: true }, "recipe")) : undefined;
+    items.push(node("div", { class: rtUpdate.error ? "notice error" : "notice", "aria-label": "Project update" },
+      node("strong", {}, rtUpdate.error ? "Update recovery required" : "Update in progress"),
+      ...(typeof rtUpdate.error === "string" ? [node("p", {}, rtUpdate.error), ...(retry ? [retry] : [])] : [])));
+  } else {
+    const failedUpgrade = activeUpgrade?.state === "failed" && typeof activeUpgrade.error === "string" ? activeUpgrade.error : undefined;
+    if (failedUpgrade) {
+      items.push(node("div", { class: "notice error", "aria-label": "Recipe upgrade failed" },
+        node("strong", {}, "Last recipe update failed"),
+        node("p", {}, failedUpgrade)));
+    }
+    if (status.state === "upgradeAvailable") {
+      const go = managesRuntime ? button(failedUpgrade ? "Retry update" : "Update recipe", () => runUpgrade({ restart: true, async: true }, "recipe")) : undefined;
+      if (go && !canUpgrade) go.setAttribute("disabled", "");
+      items.push(node("div", { class: "notice", "aria-label": "Recipe update available" },
+        node("p", {}, `A newer hosting recipe (${label(status.version)}) is available. Updates this app's Zelavis hosting integration while its service keeps running. The app manages its own software updates.`),
+        ...(go ? [go] : []),
+        ...(go && !canUpgrade ? [node("span", { class: "muted" }, "Wait for the Project to finish starting or stopping.")] : [])));
+    } else if (status.state === "unavailable") {
+      const target = dropdown({ label: "Recipe to move to" }, recipes.map(entry => ({ value: entry.name, label: entry.title })));
+      const go = managesRuntime ? button("Update recipe", () => runUpgrade({ restart: true, async: true, recipeName: target.value }, "recipe")) : undefined;
+      if (go && (!canUpgrade || recipes.length === 0)) go.setAttribute("disabled", "");
+      items.push(node("div", { class: "notice", "aria-label": "Recipe unavailable" },
+        node("p", {}, `${label(status.reason, "")} Choose a recipe to move this Project to; its data is kept.`),
+        ...(managesRuntime ? [target, ...(go ? [go] : [])] : [])));
+    } else {
+      items.push(node("p", { class: "muted" }, "This app's Zelavis hosting recipe is up to date."));
+    }
+  }
+
+  if (layout?.state === "upgradeRequired" && !upgrading && !rtUpdate) {
+    if (autoRunning) {
+      items.push(node("div", { class: "notice", "aria-label": "Integration data migration in progress" },
+        node("strong", {}, "Updating Zelavis integration data"),
+        node("p", { class: "muted" }, `Migrating bound integration data automatically from format ${label(layout.from)} to format ${label(layout.to)} while your app keeps running…`)));
+    } else if (auto?.state === "failed") {
+      const retry = managesRuntime ? button("Retry migration", () => runUpgrade({ restart: true, async: true, dataLayoutOnly: true }, "migration")) : undefined;
+      if (retry && !canUpgrade) retry.setAttribute("disabled", "");
+      items.push(node("div", { class: "notice error", "aria-label": "Integration data migration failed" },
+        node("strong", {}, "Integration data migration failed"),
+        ...(typeof auto.error === "string" ? [node("p", {}, auto.error)] : []),
+        node("p", {}, `This app keeps running on its previous Zelavis integration engine (format ${label(layout.from)}) until migration to format ${label(layout.to)} succeeds.`),
+        ...(retry ? [retry] : [])));
+    } else {
+      const migrate = managesRuntime ? button("Migrate integration data", () => runUpgrade({ restart: true, async: true, dataLayoutOnly: true }, "migration")) : undefined;
+      if (migrate && !canUpgrade) migrate.setAttribute("disabled", "");
+      items.push(node("div", { class: "notice", "aria-label": "Integration data migration pending" },
+        node("strong", {}, "Zelavis integration data layout"),
+        node("p", {}, `Bound integration data is on format ${label(layout.from)} and will migrate automatically to format ${label(layout.to)} without restarting your app.`),
+        ...(migrate ? [migrate] : [])));
+    }
+  }
+
+  if (upgrading || autoRunning || activeUpdate) {
+    yield* Effect.forkScoped(Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep("1500 millis");
+        const polled = yield* request(path).pipe(
+          Effect.map(result => object(object(result).project ?? result)),
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+        if (!polled) continue;
+        const up = polled.upgrade ? object(polled.upgrade) : undefined;
+        const rt = polled.runtimeUpdate ? object(polled.runtimeUpdate) : undefined;
+        const nextLayout = polled.dataLayout ? object(polled.dataLayout) : undefined;
+        const nextAuto = nextLayout ? object(nextLayout.autoMigration) : undefined;
+        const stillBusy = up?.state === "running" || nextAuto?.state === "running" || (rt !== undefined && typeof rt.error !== "string");
+        if (!stillBusy) {
+          if (up?.state === "completed" && typeof up.id === "string") {
+            const tracked = managedTrackedUpgrades.get(project.id);
+            if (tracked?.id === up.id) {
+              managedTrackedUpgrades.delete(project.id);
+              setFlash(upgradeDoneMessage(polled, tracked.mode));
+            }
+          } else if (up?.state === "failed") {
+            managedTrackedUpgrades.delete(project.id);
+          } else if (autoRunning && !nextLayout) {
+            setFlash(`${project.name}'s Zelavis integration data was migrated automatically.`);
+          }
+          context.refresh();
+          return;
+        }
+        if (phaseNode && typeof up?.phase === "string") {
+          phaseNode.textContent = `${up.phase}…`;
+        }
+      }
+    }));
+  }
+
+  return card(title, ...items);
+});
+
+const managedUpdatesScreen = Effect.fn("ui.managedUpdates")(function*(context: ScreenContext, project: Project) {
+  const [recipeCard, backups] = yield* Effect.all([
+    managedRecipeUpdatesCard(context, project, "Updates"),
     retainedBackupsCard(context, project),
   ], { concurrency: 2 });
   return page(
+    flashNotice("Updated"),
+    recipeCard,
+    backups,
+    resourceNotice("Application software updates", "Managed applications update their own software, themes, and plugins from inside the app. This page manages the Zelavis hosting recipe and integration engine around the app."));
+});
+
+const settingsScreen = Effect.fn("ui.projectSettings")(function*(context: ScreenContext, project: Project) {
+  const [provider, recipeCard, backups] = yield* Effect.all([
+    providerCard(context, project.id),
+    managed(project) ? managedRecipeUpdatesCard(context, project) : Effect.succeed(undefined),
+    retainedBackupsCard(context, project),
+  ], { concurrency: 3 });
+  return page(
     flashNotice("Saved"),
     provider,
+    recipeCard,
     backups,
     rowsCard("Project identity", dataRow("Project ID", project.id, badge("draft")), dataRow("Project type", project.runtimeKind === "managed" ? "Managed app" : "Zelavis-native app", badge("ready"))),
     rowsCard("Project bindings", dataRow("Database tenant", "Project-scoped data is isolated by tenant-aware storage.")),
@@ -210,6 +377,7 @@ const settingsScreen = Effect.fn("ui.projectSettings")(function*(context: Screen
 const managedScreen = Effect.fn("ui.managedSection")(function*(context: ScreenContext, project: Project, section: string, hosted: Record<string, unknown>) {
   const [title, detail] = MANAGED_SECTIONS[section];
   if (section === "setup") return yield* setupScreen(context, project);
+  if (section === "updates") return yield* managedUpdatesScreen(context, project);
   const site = siteUrl(project as unknown as Record<string, unknown>, context.url);
   const admin = typeof hosted.adminPath === "string" && section === "admin" && site
     ? [node("a", { class: "primary", href: `${site.replace(/\/$/, "")}${hosted.adminPath}`, target: "_blank", rel: "noreferrer" }, `Open ${label(hosted.adminTitle, "App Admin")}`)]

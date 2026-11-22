@@ -94,3 +94,136 @@ test("retained data is listed and removed through the Project manager, and a run
   await assert.rejects(manager.removeRetainedData("blogger", "data.format-2-20261101T000000Z"), /does not exist/);
   await assert.rejects(manager.retainedData("nobody"), /not found|No such|does not exist/i);
 });
+
+async function waitFor(predicate, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
+test("reconcile() automatically migrates a managed app's older integration layout in the background without restarting the app", async (t) => {
+  const fake = driver();
+  fake.runtime.prepareData = async (project) => { fake.calls.push(["prepareData", project.id]); };
+  const manager = await createProjectManager({ store: createMemorySystemStore(), projectRecipes: () => Promise.resolve([recipe("1.0.0")]), runtime: fake.runtime, autoReconcile: false,
+    installHost: async () => ({ drivers: ["js"], requirements: [] }), synchronizeIngress: async () => ({ status: "ready", port: 18081 }) });
+  t.after(() => manager.close());
+  await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
+  fake.calls.length = 0;
+
+  assert.deepEqual((await manager.get("blogger")).dataLayout, { state: "upgradeRequired", from: 2, to: 4 });
+  await manager.reconcile();
+  await waitFor(async () => (await manager.get("blogger")).dataLayout === undefined);
+
+  assert.equal(fake.layout.value, 4);
+  assert.deepEqual(fake.calls, [["prepareData", "blogger"], ["migrateData", "blogger"]], "runs prepareData + migrateData without recipe update or restart");
+  assert.equal((await manager.get("blogger")).runtime.status, "running");
+});
+
+test("failed automatic migration surfaces error on dataLayout, backs off on immediate reconcile, and recovers via dataLayoutOnly retry", async (t) => {
+  let shouldFail = true;
+  const fake = driver();
+  const baseMigrate = fake.runtime.migrateData;
+  fake.runtime.migrateData = async (project) => {
+    fake.calls.push(["migrateData", project.id]);
+    if (shouldFail) throw new Error("bound engine verification failed");
+    return baseMigrate.call(fake.runtime, project);
+  };
+  const manager = await createProjectManager({ store: createMemorySystemStore(), projectRecipes: () => Promise.resolve([recipe("1.0.0")]), runtime: fake.runtime, autoReconcile: false,
+    installHost: async () => ({ drivers: ["js"], requirements: [] }), synchronizeIngress: async () => ({ status: "ready", port: 18081 }) });
+  t.after(() => manager.close());
+  await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
+  fake.calls.length = 0;
+
+  await manager.reconcile();
+  const failed = await waitFor(async () => {
+    const project = await manager.get("blogger");
+    return project.dataLayout?.autoMigration?.state === "failed" ? project : undefined;
+  });
+  assert.deepEqual(failed.dataLayout, {
+    state: "upgradeRequired",
+    from: 2,
+    to: 4,
+    autoMigration: { state: "failed", error: "bound engine verification failed" },
+  });
+  assert.equal(fake.calls.length, 1);
+
+  // Immediate reconcile respects backoff and does not spam migrateData.
+  await manager.reconcile();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(fake.calls.length, 1);
+
+  // Explicit retry clears the failure and migrates.
+  shouldFail = false;
+  const retried = await manager.upgrade("blogger", { restart: true, dataLayoutOnly: true });
+  assert.equal(retried.dataLayout, undefined);
+  assert.equal(retried.dataMigration?.to, 4);
+  assert.equal((await manager.get("blogger")).dataLayout, undefined);
+});
+
+test("dataLayoutOnly migrates only integration data even when a newer recipe is available, and rejects invalid combinations", async (t) => {
+  let currentRecipeVersion = "1.0.0";
+  const fake = driver();
+  const manager = await createProjectManager({ store: createMemorySystemStore(), projectRecipes: () => Promise.resolve([recipe(currentRecipeVersion)]), runtime: fake.runtime, autoReconcile: false,
+    installHost: async () => ({ drivers: ["js"], requirements: [] }), synchronizeIngress: async () => ({ status: "ready", port: 18081 }) });
+  t.after(() => manager.close());
+  await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
+  currentRecipeVersion = "2.0.0";
+  fake.calls.length = 0;
+
+  await assert.rejects(manager.upgrade("blogger", { dataLayoutOnly: true, recipeName: "@acme/blog" }), /cannot be combined/);
+
+  const after = await manager.upgrade("blogger", { restart: true, dataLayoutOnly: true });
+  assert.equal(after.dataLayout, undefined);
+  assert.equal(after.dataMigration?.to, 4);
+  assert.equal(after.recipe.version, "1.0.0", "recipe version stays untouched on dataLayoutOnly retry");
+  assert.deepEqual(fake.calls, [["migrateData", "blogger"]]);
+});
+
+test("concurrent upgrade() awaits an in-flight automatic migration without conflict", async (t) => {
+  const fake = driver();
+  let release;
+  const started = new Promise((resolve) => {
+    const baseMigrate = fake.runtime.migrateData;
+    fake.runtime.migrateData = async (project) => {
+      if (fake.layout.value === 2) {
+        resolve();
+        await new Promise((done) => { release = done; });
+      }
+      return baseMigrate.call(fake.runtime, project);
+    };
+  });
+  const manager = await createProjectManager({ store: createMemorySystemStore(), projectRecipes: () => Promise.resolve([recipe("1.0.0")]), runtime: fake.runtime, autoReconcile: false,
+    installHost: async () => ({ drivers: ["js"], requirements: [] }), synchronizeIngress: async () => ({ status: "ready", port: 18081 }) });
+  t.after(() => manager.close());
+  await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
+  fake.calls.length = 0;
+
+  await manager.reconcile();
+  await started;
+  assert.equal((await manager.get("blogger")).dataLayout?.autoMigration?.state, "running");
+
+  const upgradePromise = manager.upgrade("blogger", { restart: true, dataLayoutOnly: true });
+  release();
+  const after = await upgradePromise;
+  assert.equal(after.dataLayout, undefined);
+  assert.equal(fake.layout.value, 4);
+});
+
+test("reconcile() never auto-migrates backwards when bound data layout is newer than the Platform's", async (t) => {
+  const fake = driver();
+  fake.layout.value = 6;
+  const manager = await createProjectManager({ store: createMemorySystemStore(), projectRecipes: () => Promise.resolve([recipe("1.0.0")]), runtime: fake.runtime, autoReconcile: false,
+    installHost: async () => ({ drivers: ["js"], requirements: [] }), synchronizeIngress: async () => ({ status: "ready", port: 18081 }) });
+  t.after(() => manager.close());
+  await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
+  fake.calls.length = 0;
+
+  await manager.reconcile();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.deepEqual(fake.calls, []);
+  assert.equal(fake.layout.value, 6);
+});

@@ -6445,6 +6445,9 @@ function resolvePlatformEndpointGroup(
             if (input.async !== undefined && typeof input.async !== "boolean") {
               return yield* Effect.fail(new ZelavisProjectValidationError("async must be true or false."));
             }
+            if (input.dataLayoutOnly !== undefined && typeof input.dataLayoutOnly !== "boolean") {
+              return yield* Effect.fail(new ZelavisProjectValidationError("dataLayoutOnly must be true or false."));
+            }
             const asyncMode = input.async === true;
             return {
               status: asyncMode ? 202 : 200,
@@ -6453,6 +6456,7 @@ function resolvePlatformEndpointGroup(
                   ...(recipeName ? { recipeName } : {}),
                   ...(input.restart === true ? { restart: true } : {}),
                   ...(asyncMode ? { async: true } : {}),
+                  ...(input.dataLayoutOnly === true ? { dataLayoutOnly: true } : {}),
                   ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
                 })),
               },

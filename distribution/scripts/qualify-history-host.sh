@@ -69,15 +69,15 @@ env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_HISTORY_TO="$TO" "$NODE" /workspac
 NODE=/opt/zelavis/current/runtime/node/bin/node
 check serving
 printf 'PASS: live update to the candidate %s; every site still serves.\n' "$TO"
-check held
+check auto-migrated
 check native-held
-# A restart of the whole Platform must keep a held app on its engine too: a cold start is the other way a host could be moved.
+# A restart of the whole Platform must keep a held native app on its engine and keep auto-migrated managed apps converged.
 systemctl restart zelavis.service
 ready
 check serving
-check held
+check auto-migrated
 check native-held
-printf 'PASS: after a Platform restart a held app is still on the engine that wrote its data.\n'
+printf 'PASS: after a Platform restart auto-migrated managed apps stay converged and held native apps stay on the engine that wrote their data.\n'
 # A server whose WordPress came with an earlier Platform holds it only as a Marketplace listing.
 systemctl stop zelavis.service zelavis.socket
 env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" /workspace/distribution/scripts/qualify-history.mjs unlist

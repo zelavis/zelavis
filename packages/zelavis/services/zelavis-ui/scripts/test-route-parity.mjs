@@ -671,21 +671,35 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   // qualifies their rendering without provisioning host packages or cloud servers.
   const managedProjects = async route => {
     const response = await route.fetch(); const data = await response.json();
-    data.projects = data.projects.map(project => project.id === "parity-lab" ? { ...project, recipe: { ...project.recipe, managed: { adminTitle: "App Admin", adminPath: "/admin" } } } : project);
+    data.projects = data.projects.map(project => project.id === "parity-lab" ? {
+      ...project,
+      recipe: { ...project.recipe, managed: { adminTitle: "App Admin", adminPath: "/admin" } },
+      capabilities: { ...project.capabilities, recipeUpdateMode: "integration" },
+      recipeStatus: { state: "upgradeAvailable", version: "9.9.9" },
+    } : project);
     await route.fulfill({ response, json: data });
   };
   yield* io(() => page.route("**/api/v1/runtime/projects", managedProjects));
+  yield* visit("/projects");
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Update recipe", exact: true }).count()), 0, "managed apps never show Update recipe on /projects cards");
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     yield* io(() => page.setViewportSize(viewport));
     for (const [section, title] of [["domains", "Connect a hostname"], ["files", "Files"], ["app-database", "App database"], ["setup", "Setup"], ["backups", "Backups"], ["logs", "Logs"], ["updates", "Updates"], ["admin", "App Admin"]]) {
       yield* visit("/projects/parity-lab/" + section);
       yield* io(() => page.locator(".content").getByText(title, { exact: true }).first().waitFor());
+      if (section === "updates") {
+        yield* io(() => page.getByRole("button", { name: "Update recipe", exact: true }).waitFor());
+      }
       assert.equal(errors.length, 0, errors.join("\n"));
       results.push({ path: "/projects/:projectId/" + section, viewport: viewport.width, status: "managed recipe UI fixture loaded; provisioning not exercised" });
     }
   }
-  yield* io(() => page.unroute("**/api/v1/runtime/projects", managedProjects));
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
+  yield* visit("/projects/parity-lab/settings");
+  yield* io(() => page.getByRole("heading", { name: "Hosting recipe & runtime", exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Update recipe", exact: true }).waitFor());
+  console.log("Action: managed apps keep /projects cards clean and expose recipe updates inside Project Updates and Settings.");
+  yield* io(() => page.unroute("**/api/v1/runtime/projects", managedProjects));
 
   // A source Platform has one engine, so the version choices are a fixture: an installed engine that writes another data
   // layout is reached by the restarting upgrade (the plain switch answers 409 across layouts), never by the plain switch.

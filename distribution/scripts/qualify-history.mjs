@@ -151,21 +151,28 @@ if (phase === 'create-wordpress') {
   assert.match(status.run.message, /Projects restarted once/);
   console.log('PASS: historical Agent conversion is explicit and desired Projects recovered.');
 
-} else if (phase === 'held') {
-  // The Platform moved to an engine that writes another data layout, at the candidate or at any release before it. A managed
-  // app's bound App does not follow it: its data stays in the layout it was written in, on the engine that wrote it (the last
-  // layout-2 engine the host ran, which need not be the previous release), and the Project says it can be upgraded.
+} else if (phase === 'auto-migrated' || phase === 'held') {
+  // The Platform moved to an engine that writes another data layout. A managed app's bound App migrates its integration data
+  // automatically in the background without restarting the app itself, cleaning up empty pre-upgrade backups and moving its
+  // bound host to the Platform's engine.
   const { client } = await sdk();
   const targetFormat = await releaseFormat(process.env.ZELAVIS_HISTORY_TO);
   assert.notEqual(targetFormat, 2, 'this fixture must cross a layout change');
   for (const site of sites(await readState())) {
-    const project = await client.projects.get(site.id);
-    assert.deepEqual(project.dataLayout, { state: 'upgradeRequired', from: 2, to: targetFormat }, `${site.id} offers the layout migration`);
-    const held = await bound(site.id);
-    assert.notEqual(held.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host does not follow the Platform across the layout change`);
-    assert.equal(await releaseFormat(held.engine), 2, `${site.id}: its host still runs an engine that writes the layout its data is in (${held.engine})`);
-    assert.equal(held.layout, undefined, `${site.id}: nothing has been migrated`);
-    console.log(`PASS: ${site.id} stays on ${held.engine} with its format-2 data; the Project offers the migration.`);
+    const deadline = Date.now() + 90_000;
+    let project = await client.projects.get(site.id);
+    while (project.dataLayout !== undefined && Date.now() < deadline) {
+      assert.notEqual(project.dataLayout.autoMigration?.state, 'failed', `${site.id}: automatic bound integration migration failed: ${project.dataLayout.autoMigration?.error}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      project = await client.projects.get(site.id);
+    }
+    assert.equal(project.dataLayout, undefined, `${site.id}: bound integration data did not auto-migrate (${JSON.stringify(project.dataLayout)})`);
+    const after = await bound(site.id);
+    assert.equal(after.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host follows the Platform engine after auto-migration`);
+    assert.deepEqual(after.layout, { format: targetFormat }, `${site.id}: the migrated data layout is recorded`);
+    const kept = after.retained.filter((name) => name.startsWith('data.format-2-'));
+    assert.equal(kept.length, 0, `${site.id}: empty integration store cleaned its pre-upgrade backup automatically (${after.retained})`);
+    console.log(`PASS: ${site.id} auto-migrated its bound integration store to ${after.engine} (format ${targetFormat}) without a manual upgrade.`);
   }
 } else if (phase === 'migrated') {
   const { cookie, client } = await sdk();
