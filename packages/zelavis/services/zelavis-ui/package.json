@@ -85,6 +85,7 @@
     "codemirror": "^6.0.2",
     "effect": "4.0.0",
     "fuzor": "0.7.0",
+    "fuzor-language-tools": "0.7.0",
     "lexical": "^0.53.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

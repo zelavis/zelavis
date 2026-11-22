@@ -24,6 +24,8 @@
     "behaviors/**/*.ts",
     "src/**/*.ts",
     "vite.config.ts",
-    "islands/**/*.tsx"
+    "islands/**/*.tsx",
+    "components/**/*.html",
+    "pages/**/*.html"
   ]
 }

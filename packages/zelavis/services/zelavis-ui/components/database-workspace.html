@@ -11,6 +11,7 @@
   onCleanup(() => disposeDatabaseWorkspace(host))
 </script>
 <script type="text/typescript">
+  import { object } from "../app/api.ts"
   import { syncDatabaseWorkspace } from "../app/database-workspace.ts"
   import { getRouter } from "fuzor/runtime"
   const workspace = fuzor.state("workspace", fuzor.props.workspace ?? null)
@@ -20,8 +21,10 @@
     return router?.navigate(router.url(), { focus: "preserve", scroll: "preserve" }).then(() => {})
   })
   fuzor.effect("draw", [workspace], context => {
+    const value = workspace.get()
+    if (!value || typeof value !== "object" || Array.isArray(value)) return
     const host = context.element.querySelector<HTMLElement>("[data-database-host]")!
-    syncDatabaseWorkspace(host, workspace.get())
+    syncDatabaseWorkspace(host, object(value))
     host.dispatchEvent(new CustomEvent("zelavis:database-drawn", { bubbles: true }))
   })
 </script>
