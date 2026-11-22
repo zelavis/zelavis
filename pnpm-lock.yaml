@@ -475,8 +475,8 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
       fuzor:
-        specifier: 0.6.0
-        version: 0.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+        specifier: 0.7.0
+        version: 0.7.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       lexical:
         specifier: ^0.53.0
         version: 0.53.0(typescript@6.0.3)
@@ -678,8 +678,8 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
       fuzor:
-        specifier: 0.6.0
-        version: 0.6.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+        specifier: 0.7.0
+        version: 0.7.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       shiki:
         specifier: 4.4.3
         version: 4.4.3
@@ -5929,8 +5929,8 @@ packages:
   functions-have-names@1.2.3:
     resolution: {integrity: sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ==}
 
-  fuzor@0.6.0:
-    resolution: {integrity: sha512-PaEY/M1Tz9d9BWQtXlwQkcNR+xQO/+Wux7mMjQJoHHyzwz45lYq4wKV2NlYhQz/sz3gzkHZbWqHbprbjuWcZ4w==}
+  fuzor@0.7.0:
+    resolution: {integrity: sha512-PxwmWYQ5hIwnMwC3jBZbQpIdwxTFkoHdxjvNjStod3ZrOv7tslBbiGtfLHem2WQ/Bxhqd5b0RHtaCPU78DLMMA==}
     engines: {node: ^22.15.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
@@ -13992,7 +13992,7 @@ snapshots:
 
   functions-have-names@1.2.3: {}
 
-  fuzor@0.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
+  fuzor@0.7.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
     dependencies:
       '@babel/parser': 7.29.9
       '@clack/prompts': 1.8.1
@@ -14066,7 +14066,7 @@ snapshots:
     transitivePeerDependencies:
       - octane
 
-  fuzor@0.6.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
+  fuzor@0.7.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
     dependencies:
       '@babel/parser': 7.29.9
       '@clack/prompts': 1.8.1

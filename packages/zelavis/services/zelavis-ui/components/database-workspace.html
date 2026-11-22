@@ -1,4 +1,4 @@
-<script server lang="ts">
+<script server type="text/typescript">
   import { readDatabaseWorkspace } from "../app/database-reads.ts"
   export default async (context) => {
     const workspace = await readDatabaseWorkspace(context)
@@ -6,11 +6,11 @@
     return { workspace, summary: `Server view · ${count} records · ${new Date().toISOString()}` }
   }
 </script>
-<script lang="ts">
+<script type="text/typescript">
   import { disposeDatabaseWorkspace } from "../app/database-workspace.ts"
   onCleanup(() => disposeDatabaseWorkspace(host))
 </script>
-<script lang="ts">
+<script type="text/typescript">
   import { syncDatabaseWorkspace } from "../app/database-workspace.ts"
   import { getRouter } from "fuzor/runtime"
   const workspace = fuzor.state("workspace", fuzor.props.workspace ?? null)
