@@ -78,16 +78,20 @@ if (!historicalConversion) {
   const settings = await client.json(registrationPath);
   await client.json(registrationPath, { method: "PUT", body: { enabled: true, expectedRevision: settings.revision } });
 }
+const projectClient = projectId => createZelavisClient({ ...config, rootPath: `/zelavis/api/v1/runtime/projects/${projectId}/proxy/zelavis` });
+const fromUsesZelavisAuth = Boolean((await projectClient(id).runtime.config()).capabilities?.auth);
 const legacyUsername = "qualification-app";
-const seeded = await appAuth("/sign-up/password", { identifier: legacyUsername, password: appPassword }, historicalConversion);
-assert.equal(seeded.status, 201, "The published App creates its original account");
-const originalAppAccount = (await seeded.json()).account.id;
+const seeded = fromUsesZelavisAuth
+  ? await appAuth("/username-password/sign-up", { username: legacyUsername, password: appPassword }, historicalConversion)
+  : await appAuth("/sign-up/password", { identifier: legacyUsername, password: appPassword }, historicalConversion);
+assert.equal(seeded.status, fromUsesZelavisAuth ? 200 : 201, "The published App creates its original account");
+const seededBody = await seeded.json();
+const originalAppAccount = fromUsesZelavisAuth ? seededBody.userId : seededBody.account.id;
 const data = () => client.data(id);
 await data().collections.create({ name: 'continuity' });
 await data().documents.insert('continuity', { id: 'stable', data: { value: 'retained across real engine versions' } });
 const descriptor = async projectId => JSON.parse(await readFile(`/var/lib/zelavis/projects/${projectId}/project.json`, 'utf8'));
 assert.equal((await descriptor(id)).engine.runtime.version, from);
-const projectClient = projectId => createZelavisClient({ ...config, rootPath: `/zelavis/api/v1/runtime/projects/${projectId}/proxy/zelavis` });
 const executingVersion = () => projectClient(id).plugins.engineproof.engine.get();
 assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
 // A genuine npm catalogue Project stays untouched by the historical fixture.
@@ -369,13 +373,13 @@ console.log(`UPGRADE: the combined data migration and recipe upgrade took ${upgr
 // traffic it took 52 to 89 s and the whole upgrade 75 to 89 s, which this bound refuses.
 assert.ok(upgradeMillis < 70_000, `The combined data migration and recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
 assert.equal(integration.runtime.status, 'running');
-// One normal request did both: the bound App's data is in the Platform's layout (migrated, with the earlier layout retained beside
-// it, when the two releases write different layouts), and the recipe moved.
+// One normal request did both: the bound App's data is in the Platform's layout (with empty pre-upgrade backups
+// cleaned up automatically when the two releases write different layouts), and the recipe moved.
 assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
 if (formatFrom !== formatTo) {
   assert.deepEqual([integration.dataMigration?.from, integration.dataMigration?.to], [formatFrom, formatTo], 'The upgrade migrates the bound App data across the layout change');
   assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `The same request brings the bound App data to layout ${formatTo}`);
-  assert.ok((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), 'The earlier data layout is retained beside the migrated data');
+  assert.equal((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), false, 'An empty bound integration store cleans up its pre-upgrade backup');
 } else {
   assert.equal(integration.dataMigration, undefined, `Both releases write layout ${formatTo}: the upgrade migrates nothing`);
 }
@@ -439,21 +443,32 @@ if (dataFormatOf(from) === dataFormatOf(to)) {
   await proveAppSignIn(legacyUsername, originalAppAccount);
   const binaryRollbackProbe = await appAuth("/username-password/sign-up", { username: "candidate-writer", password: appPassword });
   assert.equal(binaryRollbackProbe.status, 200, "Candidate Auth accepts a distinct disposable account write");
-  await binaryRollbackProbe.body?.cancel();
+  const candidateWriterId = (await binaryRollbackProbe.json()).userId;
   await verifySelected(await underTraffic(() => client.projects.switchVersion(id, from), "App rollback"), from, "live App selection");
   const rollbackUsername = "rollback-writer";
-  const rollbackAccount = await appAuth("/sign-up/password", { identifier: rollbackUsername, password: appPassword });
-  assert.equal(rollbackAccount.status, 201, "The prior engine can write after rollback");
-  const rollbackId = (await rollbackAccount.json()).account.id;
-  // Traffic was held open during the first upgrade and the rollback. Reopen from the prior engine's write
-  // and check which Auth records the candidate serves after rebuilding.
-  await verifySelected(await client.projects.upgrade(id, { engineVersion: to }), to, "App upgrade after rollback");
-  await proveAppSignIn(legacyUsername, originalAppAccount);
-  await proveAppSignIn(rollbackUsername, rollbackId);
-  const lostWrite = await appAuth("/username-password/sign-in", { username: "candidate-writer", password: appPassword });
-  assert.equal(lostWrite.status, 404, "The documented rebuild replaces candidate-only writes after the old engine writes");
-  await lostWrite.body?.cancel();
-  console.log("PASS: released App account signs in after upgrade and the rollback rebuild imports the prior engine's new account.");
+  if (fromUsesZelavisAuth) {
+    const rollbackAccount = await appAuth("/username-password/sign-up", { username: rollbackUsername, password: appPassword });
+    assert.equal(rollbackAccount.status, 200, "The prior engine can write after rollback");
+    const rollbackId = (await rollbackAccount.json()).userId;
+    await verifySelected(await client.projects.upgrade(id, { engineVersion: to }), to, "App upgrade after rollback");
+    await proveAppSignIn(legacyUsername, originalAppAccount);
+    await proveAppSignIn(rollbackUsername, rollbackId);
+    await proveAppSignIn("candidate-writer", candidateWriterId);
+    console.log("PASS: released App accounts survive upgrade, rollback and re-upgrade across Zelavis Auth releases.");
+  } else {
+    const rollbackAccount = await appAuth("/sign-up/password", { identifier: rollbackUsername, password: appPassword });
+    assert.equal(rollbackAccount.status, 201, "The prior engine can write after rollback");
+    const rollbackId = (await rollbackAccount.json()).account.id;
+    // Traffic was held open during the first upgrade and the rollback. Reopen from the prior engine's write
+    // and check which Auth records the candidate serves after rebuilding.
+    await verifySelected(await client.projects.upgrade(id, { engineVersion: to }), to, "App upgrade after rollback");
+    await proveAppSignIn(legacyUsername, originalAppAccount);
+    await proveAppSignIn(rollbackUsername, rollbackId);
+    const lostWrite = await appAuth("/username-password/sign-in", { username: "candidate-writer", password: appPassword });
+    assert.equal(lostWrite.status, 404, "The documented rebuild replaces candidate-only writes after the old engine writes");
+    await lostWrite.body?.cancel();
+    console.log("PASS: released App account signs in after upgrade and the rollback rebuild imports the prior engine's new account.");
+  }
 } else {
   // The two engines write different data layouts, so a running App is never switched in place: the plain request is refused and
   // the explicit restart stops the App, migrates its data (the earlier layout stays beside it) and starts it on the new engine.
@@ -464,6 +479,7 @@ if (dataFormatOf(from) === dataFormatOf(to)) {
   const crossed = await client.projects.upgrade(id, { engineVersion: to, restart: true });
   assert.ok(Date.now() - crossingStarted < 90_000, 'The restarting layout switch finishes within the deadline');
   assert.deepEqual([crossed.dataMigration?.from, crossed.dataMigration?.to], [dataFormatOf(from), dataFormatOf(to)], 'The migration is reported');
+  assert.ok((await readdir(`/var/lib/zelavis/projects/${id}/.zelavis`)).some(name => name.startsWith(`data.format-${dataFormatOf(from)}-`)), 'A non-empty App retains its pre-upgrade backup beside the migrated data');
   await verifySelected(crossed, to, 'App selection across a data layout change (stop, migrate, start)');
   await proveAppSignIn(legacyUsername, originalAppAccount);
 }
