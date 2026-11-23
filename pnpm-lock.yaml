@@ -768,8 +768,8 @@ importers:
         specifier: ^0.28.2
         version: 0.28.2
       stripe:
-        specifier: ^23.1.0
-        version: 23.1.0(@types/node@26.6.4)
+        specifier: ^23.2.0
+        version: 23.2.0(@types/node@26.6.4)
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -4340,9 +4340,6 @@ packages:
   '@shikijs/types@4.6.0':
     resolution: {integrity: sha512-+ENG1adsKt/X7cRYw1Nl7BEpBmPOjmQ7bR/eGmHuMlT8gtOFf3KEi5l31DJYyAWhW6Y6bjP1plU7FmaxWGENFw==}
     engines: {node: '>=20'}
-
-  '@shikijs/vscode-textmate@10.0.2':
-    resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
 
   '@shikijs/vscode-textmate@10.1.0':
     resolution: {integrity: sha512-cVBuhDQjBZaNMTwBquYfPydrUP+E3hE6oYGasx8h6ZrODIM7/r+gxLDXdd66oszbrggZHEntdE6j+5gYIVyMWQ==}
@@ -8421,8 +8418,8 @@ packages:
     resolution: {integrity: sha512-aulFJcD6YK8V1G7iRB5tigAP4TsHBZZrOV8pjV++zdUwmeV8uzbY7yn6h9MswN62adStNZFuCIx4haBnRuMDaw==}
     engines: {node: '>=18'}
 
-  stripe@23.1.0:
-    resolution: {integrity: sha512-fVUfMSfTPoukfoV//MUKAx2+YxyKmYaYtnAL9VkfnHfaPNQylFdWZMD+zgUFerI8rjbaiER8Vzj2XEUQ2AhAsQ==}
+  stripe@23.2.0:
+    resolution: {integrity: sha512-0W0J4yA9qFO2rnF61v8Y62OiO2SmAR+Cv04VJaFUMpCxiq8lG5bxEYbeSMSpMDR9ofFZGd+Z/iUIgSFbOolmUw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@types/node': '>=20'
@@ -12676,9 +12673,9 @@ snapshots:
     dependencies:
       '@shikijs/primitive': 4.4.3
       '@shikijs/types': 4.4.3
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
       '@types/hast': 3.0.5
-      hast-util-to-html: 9.0.5
+      hast-util-to-html: 9.0.6
 
   '@shikijs/core@4.6.0':
     dependencies:
@@ -12691,7 +12688,7 @@ snapshots:
   '@shikijs/engine-javascript@4.4.3':
     dependencies:
       '@shikijs/types': 4.4.3
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
       oniguruma-to-es: 4.3.6
 
   '@shikijs/engine-javascript@4.6.0':
@@ -12703,7 +12700,7 @@ snapshots:
   '@shikijs/engine-oniguruma@4.4.3':
     dependencies:
       '@shikijs/types': 4.4.3
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
 
   '@shikijs/engine-oniguruma@4.6.0':
     dependencies:
@@ -12721,7 +12718,7 @@ snapshots:
   '@shikijs/primitive@4.4.3':
     dependencies:
       '@shikijs/types': 4.4.3
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
       '@types/hast': 3.0.5
 
   '@shikijs/primitive@4.6.0':
@@ -12740,15 +12737,13 @@ snapshots:
 
   '@shikijs/types@4.4.3':
     dependencies:
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
       '@types/hast': 3.0.5
 
   '@shikijs/types@4.6.0':
     dependencies:
       '@shikijs/vscode-textmate': 10.1.0
       '@types/hast': 3.0.5
-
-  '@shikijs/vscode-textmate@10.0.2': {}
 
   '@shikijs/vscode-textmate@10.1.0': {}
 
@@ -17732,7 +17727,7 @@ snapshots:
       '@shikijs/langs': 4.4.3
       '@shikijs/themes': 4.4.3
       '@shikijs/types': 4.4.3
-      '@shikijs/vscode-textmate': 10.0.2
+      '@shikijs/vscode-textmate': 10.1.0
       '@types/hast': 3.0.5
 
   shiki@4.6.0:
@@ -17913,7 +17908,7 @@ snapshots:
 
   strip-final-newline@4.0.0: {}
 
-  stripe@23.1.0(@types/node@26.6.4):
+  stripe@23.2.0(@types/node@26.6.4):
     optionalDependencies:
       '@types/node': 26.6.4
 
@@ -18351,7 +18346,7 @@ snapshots:
       lightningcss: 1.33.0
       picomatch: 4.0.7
       postcss: 8.5.28
-      rolldown: 1.2.16
+      rolldown: 1.2.19
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 26.6.4

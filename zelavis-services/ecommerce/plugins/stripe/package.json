@@ -60,7 +60,7 @@
   "devDependencies": {
     "@zelavis/ecommerce": "workspace:*",
     "esbuild": "^0.28.2",
-    "stripe": "^23.1.0",
+    "stripe": "^23.2.0",
     "typescript": "^7.0.2",
     "zelavis": "workspace:*"
   },
