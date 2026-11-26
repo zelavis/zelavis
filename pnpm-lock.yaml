@@ -475,11 +475,11 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
       fuzor:
-        specifier: 0.7.0
-        version: 0.7.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+        specifier: 0.8.0
+        version: 0.8.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       fuzor-language-tools:
-        specifier: 0.7.0
-        version: 0.7.0(typescript@6.0.3)
+        specifier: 0.8.0
+        version: 0.8.0(typescript@6.0.3)
       lexical:
         specifier: ^0.53.0
         version: 0.53.0(typescript@6.0.3)
@@ -681,8 +681,8 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
       fuzor:
-        specifier: 0.7.0
-        version: 0.7.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+        specifier: 0.8.0
+        version: 0.8.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       shiki:
         specifier: 4.4.3
         version: 4.4.3
@@ -5954,15 +5954,15 @@ packages:
   functions-have-names@1.2.3:
     resolution: {integrity: sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ==}
 
-  fuzor-language-tools@0.7.0:
-    resolution: {integrity: sha512-Tdx4OmBcvz6eMuYo/IxZud/72TFrlw8Pwzg/dzRIwliF4QoBiHtK5vew/aOLQd/CGm97Vr9wpFvJFSRgHFUMjw==}
+  fuzor-language-tools@0.8.0:
+    resolution: {integrity: sha512-ThpW7vqlB6tM23h6rZQXxa57baz60WqpW6keaNeLpv6EPSwZ0X5idI7BJI6gFdqc6S/GwnNxS/pAJjcHWPZa6A==}
     engines: {node: ^22.15.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
       typescript: ^6.0.3
 
-  fuzor@0.7.0:
-    resolution: {integrity: sha512-PxwmWYQ5hIwnMwC3jBZbQpIdwxTFkoHdxjvNjStod3ZrOv7tslBbiGtfLHem2WQ/Bxhqd5b0RHtaCPU78DLMMA==}
+  fuzor@0.8.0:
+    resolution: {integrity: sha512-Sv/ocZT/fXSriD/rmNQdSW7Ruc05cxXrmmyieuReuCKm57nm7SSoBvInoSpa3P/mqCTrjYhT7iuH5FO20ZfOWA==}
     engines: {node: ^22.15.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
@@ -14064,14 +14064,14 @@ snapshots:
 
   functions-have-names@1.2.3: {}
 
-  fuzor-language-tools@0.7.0(typescript@6.0.3):
+  fuzor-language-tools@0.8.0(typescript@6.0.3):
     dependencies:
       '@volar/language-core': 2.4.31
       '@volar/typescript': 2.4.31(typescript@6.0.3)
       parse5: 8.0.1
       typescript: 6.0.3
 
-  fuzor@0.7.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
+  fuzor@0.8.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
     dependencies:
       '@babel/parser': 7.29.9
       '@clack/prompts': 1.8.1
@@ -14145,7 +14145,7 @@ snapshots:
     transitivePeerDependencies:
       - octane
 
-  fuzor@0.7.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
+  fuzor@0.8.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
     dependencies:
       '@babel/parser': 7.29.9
       '@clack/prompts': 1.8.1
